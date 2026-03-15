@@ -1,4 +1,4 @@
-﻿# 经管实证论文 AI Agent
+# 经管实证论文 AI Agent
 
 Monorepo for the MVP web product described in `经管科研论文_agent_prd_与部署方案.md`.
 GitHub `main` is the source of truth for the current Vercel frontend and Railway backend deployments.
@@ -75,3 +75,8 @@ Bundle-based fallback flow:
 
 The fallback script uses [scripts/prepare-railway-api-bundle.ps1](/D:/Courses/常用/Codex/科研论文agent/scripts/prepare-railway-api-bundle.ps1) to stage a backend-only bundle and [scripts/deploy-railway-api.ps1](/D:/Courses/常用/Codex/科研论文agent/scripts/deploy-railway-api.ps1) to deploy it.
 
+## GitHub Deploys
+
+- Vercel frontend is connected to GitHub and auto-deploys from `main` using `apps/web` as the root directory.
+- Railway backend is connected to GitHub, and [deploy-railway-api.yml](/D:/Courses/常用/Codex/科研论文agent/.github/workflows/deploy-railway-api.yml) triggers a service-scoped production deploy on every backend-relevant push to `main`.
+- Add a repository secret named `RAILWAY_TOKEN` in GitHub Actions before relying on the backend workflow.

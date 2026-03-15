@@ -1,0 +1,160 @@
+name: Deploy Railway API
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/api/**"
+      - "packages/shared/**"
+      - "packages/prompts/**"
+      - "Dockerfile.api"
+      - "railway.json"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.base.json"
+      - ".github/workflows/deploy-railway-api.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: railway-api-production
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_PROJECT_ID: 62d66176-9af4-429e-8002-b79611c09639
+      RAILWAY_ENVIRONMENT_ID: f7420c48-8665-46ff-babb-d39b1320297c
+      RAILWAY_SERVICE_ID: 1e685f9a-85c5-45c0-9277-bc8344952356
+      RAILWAY_GRAPHQL_URL: https://backboard.railway.app/graphql/v2
+      TARGET_SHA: ${{ github.sha }}
+    steps:
+      - name: Trigger service-scoped Railway deploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${RAILWAY_TOKEN:-}" ]]; then
+            echo "Missing GitHub secret: RAILWAY_TOKEN" >&2
+            exit 1
+          fi
+
+          run_graphql() {
+            local query="$1"
+            local variables="$2"
+
+            local payload
+            payload="$(jq -cn --arg query "$query" --argjson variables "$variables" '{query: $query, variables: $variables}')"
+
+            local response
+            response="$(curl --silent --show-error --fail \
+              -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "$payload" \
+              "${RAILWAY_GRAPHQL_URL}")"
+
+            local errors
+            errors="$(jq -r '.errors[0].message // empty' <<<"$response")"
+            if [[ -n "$errors" ]]; then
+              echo "$response" >&2
+              return 1
+            fi
+
+            echo "$response"
+          }
+
+          deploy_query='mutation Deploy($environmentId: String!, $serviceId: String!, $commitSha: String) { serviceInstanceDeploy(environmentId: $environmentId, serviceId: $serviceId, commitSha: $commitSha) }'
+          fallback_query='mutation Deploy($environmentId: String!, $serviceId: String!, $latestCommit: Boolean) { serviceInstanceDeploy(environmentId: $environmentId, serviceId: $serviceId, latestCommit: $latestCommit) }'
+          status_query='query Instance($environmentId: String!, $serviceId: String!) { serviceInstance(environmentId: $environmentId, serviceId: $serviceId) { latestDeployment { id status createdAt updatedAt meta } } }'
+
+          deploy_started=false
+          for attempt in $(seq 1 18); do
+            echo "Attempt ${attempt}: asking Railway to deploy commit ${TARGET_SHA}"
+
+            variables="$(jq -cn \
+              --arg environmentId "${RAILWAY_ENVIRONMENT_ID}" \
+              --arg serviceId "${RAILWAY_SERVICE_ID}" \
+              --arg commitSha "${TARGET_SHA}" \
+              '{environmentId: $environmentId, serviceId: $serviceId, commitSha: $commitSha}')"
+
+            response="$(curl --silent --show-error \
+              -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "$(jq -cn --arg query "$deploy_query" --argjson variables "$variables" '{query: $query, variables: $variables}')" \
+              "${RAILWAY_GRAPHQL_URL}")"
+
+            error_message="$(jq -r '.errors[0].message // empty' <<<"$response")"
+
+            if [[ -z "$error_message" ]]; then
+              deploy_started=true
+              echo "Railway accepted commit-scoped deploy."
+              break
+            fi
+
+            if [[ "$error_message" == "Commit not found" ]]; then
+              echo "Railway has not indexed ${TARGET_SHA} yet; waiting 10s."
+              sleep 10
+              continue
+            fi
+
+            echo "$response" >&2
+            exit 1
+          done
+
+          if [[ "$deploy_started" != true ]]; then
+            echo "Commit-specific deploy never became available; falling back to latestCommit deploy."
+            fallback_variables="$(jq -cn \
+              --arg environmentId "${RAILWAY_ENVIRONMENT_ID}" \
+              --arg serviceId "${RAILWAY_SERVICE_ID}" \
+              '{environmentId: $environmentId, serviceId: $serviceId, latestCommit: true}')"
+            run_graphql "$fallback_query" "$fallback_variables" >/dev/null
+          fi
+
+          deployment_id=""
+          deployment_status=""
+
+          for poll in $(seq 1 30); do
+            echo "Polling Railway deployment status (${poll}/30)"
+
+            variables="$(jq -cn \
+              --arg environmentId "${RAILWAY_ENVIRONMENT_ID}" \
+              --arg serviceId "${RAILWAY_SERVICE_ID}" \
+              '{environmentId: $environmentId, serviceId: $serviceId}')"
+
+            response="$(run_graphql "$status_query" "$variables")"
+            deployment_id="$(jq -r '.data.serviceInstance.latestDeployment.id // empty' <<<"$response")"
+            deployment_status="$(jq -r '.data.serviceInstance.latestDeployment.status // empty' <<<"$response")"
+            deployment_sha="$(jq -r '.data.serviceInstance.latestDeployment.meta.commitHash // empty' <<<"$response")"
+            deployment_message="$(jq -r '.data.serviceInstance.latestDeployment.meta.commitMessage // empty' <<<"$response")"
+
+            echo "Latest deployment: ${deployment_id} ${deployment_status} ${deployment_sha} ${deployment_message}"
+
+            if [[ "$deployment_sha" != "$TARGET_SHA" ]]; then
+              sleep 10
+              continue
+            fi
+
+            if [[ "$deployment_status" == "SUCCESS" ]]; then
+              echo "Railway API deploy succeeded for ${TARGET_SHA}."
+              exit 0
+            fi
+
+            case "$deployment_status" in
+              FAILED|CRASHED|REMOVED)
+                echo "Railway API deploy ended in ${deployment_status} for ${TARGET_SHA}." >&2
+                exit 1
+                ;;
+            esac
+
+            sleep 10
+          done
+
+          echo "Timed out waiting for Railway to deploy ${TARGET_SHA}." >&2
+          exit 1
