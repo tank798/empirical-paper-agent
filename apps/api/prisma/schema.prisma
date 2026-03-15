@@ -1,0 +1,134 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id              String              @id @default(uuid())
+  title           String
+  topicRaw        String              @map("topic_raw")
+  topicNormalized String?             @map("topic_normalized")
+  currentStep     String              @map("current_step")
+  status          String
+  researchSummary String?             @map("research_summary")
+  lastSkillName   String?             @map("last_skill_name")
+  resumeTokenHash String              @map("resume_token_hash")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+  steps           ProjectStep[]
+  messages        Message[]
+  researchProfile ResearchProfile?
+  skillRuns       SkillRun[]
+  codeBlocks      CodeBlock[]
+  exportState     ProjectExportState?
+  exports         Export[]
+
+  @@map("projects")
+}
+
+model ProjectStep {
+  id          String    @id @default(uuid())
+  projectId   String    @map("project_id")
+  step        String
+  status      String
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  metadataJson Json     @default("{}") @map("metadata_json")
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, step])
+  @@map("project_steps")
+}
+
+model Message {
+  id          String    @id @default(uuid())
+  projectId   String    @map("project_id")
+  role        String
+  messageType String    @map("message_type")
+  step        String?
+  contentText String?   @map("content_text")
+  contentJson Json      @map("content_json")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+model ResearchProfile {
+  id                  String   @id @default(uuid())
+  projectId           String   @unique @map("project_id")
+  normalizedTopic     String   @default("") @map("normalized_topic")
+  independentVariable String   @default("") @map("independent_variable")
+  dependentVariable   String   @default("") @map("dependent_variable")
+  researchObject      String   @default("") @map("research_object")
+  relationship        String   @default("")
+  controls            String[] @default([])
+  fixedEffects        String[] @default([]) @map("fixed_effects")
+  clusterVar          String?  @map("cluster_var")
+  panelId             String?  @map("panel_id")
+  timeVar             String?  @map("time_var")
+  sampleScope         String?  @map("sample_scope")
+  notes               String?
+  project             Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("research_profiles")
+}
+
+model SkillRun {
+  id            String   @id @default(uuid())
+  projectId      String   @map("project_id")
+  skillName      String   @map("skill_name")
+  step           String
+  inputJson      Json     @map("input_json")
+  outputJson     Json?    @map("output_json")
+  errorJson      Json?    @map("error_json")
+  promptVersion  String   @map("prompt_version")
+  model          String
+  status         String
+  createdAt      DateTime @default(now()) @map("created_at")
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("skill_runs")
+}
+
+model CodeBlock {
+  id              String   @id @default(uuid())
+  projectId        String   @map("project_id")
+  moduleName       String   @map("module_name")
+  language         String
+  code             String
+  explanationJson  Json     @map("explanation_json")
+  exportCode       String?  @map("export_code")
+  createdAt        DateTime @default(now()) @map("created_at")
+  project          Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("code_blocks")
+}
+
+model ProjectExportState {
+  id                        String   @id @default(uuid())
+  projectId                 String   @unique @map("project_id")
+  defaultExportPath         String   @map("default_export_path")
+  defaultExportFileName     String   @map("default_export_file_name")
+  hasWrittenRegressionTable Boolean  @default(false) @map("has_written_regression_table")
+  nextWriteMode             String   @map("next_write_mode")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+  project                   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_export_states")
+}
+
+model Export {
+  id        String   @id @default(uuid())
+  projectId String   @map("project_id")
+  type      String
+  fileUrl   String?  @map("file_url")
+  createdAt DateTime @default(now()) @map("created_at")
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("exports")
+}

@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1.7
+FROM node:20-bookworm-slim
+
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+WORKDIR /app
+
+RUN apt-get update -y \
+ && apt-get install -y --no-install-recommends openssl \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY apps/api/package.json apps/api/package.json
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/prompts/package.json packages/prompts/package.json
+
+RUN pnpm install --frozen-lockfile
+
+COPY apps/api ./apps/api
+COPY packages/shared ./packages/shared
+COPY packages/prompts ./packages/prompts
+
+RUN pnpm --filter @empirical/shared build \
+ && pnpm --filter @empirical/prompts build \
+ && pnpm --filter api prisma:generate \
+ && pnpm --filter api build
+
+ENV NODE_ENV=production
+ENV PORT=4000
+ENV PROMPTS_DIR=/app/packages/prompts
+
+EXPOSE 4000
+
+CMD ["sh", "-c", "pnpm --filter api exec prisma migrate deploy && node apps/api/dist/apps/api/src/main.js"]

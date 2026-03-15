@@ -1,0 +1,395 @@
+﻿import { Injectable } from "@nestjs/common";
+import {
+  AssistantMessageType,
+  ProjectStepStatus,
+  SkillName,
+  WorkflowStep
+} from "@empirical/shared";
+import { MessagesService } from "../messages/messages.service";
+import { ProjectsService } from "../projects/projects.service";
+import { ResearchProfileService } from "../research-profile/research-profile.service";
+import { SkillsService } from "../skills/skills.service";
+
+@Injectable()
+export class WorkflowService {
+  constructor(
+    private readonly projectsService: ProjectsService,
+    private readonly messagesService: MessagesService,
+    private readonly researchProfileService: ResearchProfileService,
+    private readonly skillsService: SkillsService
+  ) {}
+
+  async handleNext(params: {
+    projectId: string;
+    resumeToken?: string;
+    userMessage: string;
+    requestedStep?: WorkflowStep;
+    payload?: Record<string, unknown>;
+  }) {
+    const project = await this.projectsService.assertProjectAccess(
+      params.projectId,
+      params.resumeToken
+    );
+
+    await this.messagesService.createMessage({
+      projectId: params.projectId,
+      role: "user",
+      messageType: AssistantMessageType.SYSTEM_NOTICE,
+      step: project.currentStep as WorkflowStep,
+      contentText: params.userMessage,
+      contentJson: {
+        userMessage: params.userMessage,
+        payload: params.payload ?? {}
+      }
+    });
+
+    if (Object.keys(params.payload ?? {}).length > 0) {
+      await this.researchProfileService.mergeExplicitUpdates(params.projectId, params.payload ?? {});
+    }
+
+    if (this.looksLikeStataError(params.userMessage)) {
+      return this.runSideSkill(
+        params.projectId,
+        project.currentStep as WorkflowStep,
+        SkillName.STATA_ERROR_DEBUG,
+        { userMessage: params.userMessage, ...params.payload }
+      );
+    }
+
+    if (this.looksLikeRegressionResult(params.userMessage)) {
+      return this.runSideSkill(
+        params.projectId,
+        project.currentStep as WorkflowStep,
+        SkillName.RESULT_INTERPRET,
+        {
+          userMessage: params.userMessage,
+          currentModule: project.currentStep,
+          ...params.payload
+        }
+      );
+    }
+
+    const currentStep = (params.requestedStep ?? project.currentStep) as WorkflowStep;
+
+    switch (currentStep) {
+      case WorkflowStep.TOPIC_DETECT:
+        return this.handleTopicEntry(params.projectId, params.userMessage);
+      case WorkflowStep.TOPIC_NORMALIZE:
+        return this.handleTopicConfirmation(params.projectId, params.userMessage);
+      case WorkflowStep.SOP_GUIDE:
+        return this.handleSopGuide(params.projectId);
+      case WorkflowStep.DATA_CLEANING:
+        return this.handleDataCleaning(params.projectId, params.userMessage, params.payload ?? {});
+      case WorkflowStep.DATA_CHECK:
+        return this.handleDataCheck(params.projectId, params.userMessage, params.payload ?? {});
+      case WorkflowStep.BASELINE_REGRESSION:
+        return this.handleBaseline(params.projectId, params.payload ?? {});
+      default:
+        return this.runSystemNotice(params.projectId, currentStep, {
+          message: "该步骤已在 workflow 中预留，但当前 MVP 先实现到基准回归及辅助技能。"
+        });
+    }
+  }
+
+  private async handleTopicEntry(projectId: string, userMessage: string) {
+    const detect = await this.skillsService.executeSkill({
+      projectId,
+      skillName: SkillName.TOPIC_DETECT,
+      step: WorkflowStep.TOPIC_DETECT,
+      payload: { userInput: userMessage }
+    });
+
+    if (!detect.data.isValidTopic || detect.data.topicType === "not_topic") {
+      return this.runSystemNotice(projectId, WorkflowStep.TOPIC_DETECT, detect.data);
+    }
+
+    const normalized = await this.skillsService.executeSkill({
+      projectId,
+      skillName: SkillName.TOPIC_NORMALIZE,
+      step: WorkflowStep.TOPIC_DETECT,
+      payload: { rawTopic: userMessage }
+    });
+
+    await this.projectsService.updateTopic(projectId, normalized.data.normalizedTopic);
+    await this.projectsService.updateStepStatus(projectId, WorkflowStep.TOPIC_DETECT, ProjectStepStatus.COMPLETED, {
+      topicType: detect.data.topicType
+    });
+    await this.projectsService.updateStepStatus(projectId, WorkflowStep.TOPIC_NORMALIZE, ProjectStepStatus.IN_PROGRESS, {});
+    await this.projectsService.updateCurrentStep(projectId, WorkflowStep.TOPIC_NORMALIZE, SkillName.TOPIC_NORMALIZE);
+
+    const assistantMessage = await this.messagesService.createMessage({
+      projectId,
+      role: "assistant",
+      messageType: normalized.messageType,
+      step: WorkflowStep.TOPIC_NORMALIZE,
+      contentText: normalized.data.confirmationMessage,
+      contentJson: normalized.data
+    });
+
+    return {
+      projectId,
+      currentStep: WorkflowStep.TOPIC_NORMALIZE,
+      assistantMessage
+    };
+  }
+
+  private async handleTopicConfirmation(projectId: string, userMessage: string) {
+    if (!this.isConfirmation(userMessage)) {
+      return this.handleTopicEntry(projectId, userMessage);
+    }
+
+    const messages = await this.messagesService.getRecentMessages(projectId);
+    const latestConfirm = [...messages]
+      .reverse()
+      .find((message) => message.messageType === AssistantMessageType.TOPIC_CONFIRM);
+    const content = (latestConfirm?.contentJson ?? {}) as Record<string, string>;
+
+    await this.researchProfileService.initializeFromNormalization(projectId, {
+      normalizedTopic: content.normalizedTopic ?? "",
+      independentVariable: content.independentVariable ?? "",
+      dependentVariable: content.dependentVariable ?? "",
+      researchObject: content.researchObject ?? "A-share listed firms",
+      relationship: content.relationship ?? "causal effect"
+    });
+
+    const sop = await this.skillsService.executeSkill({
+      projectId,
+      skillName: SkillName.SOP_GUIDE,
+      step: WorkflowStep.SOP_GUIDE,
+      payload: {
+        normalizedTopic: content.normalizedTopic,
+        researchObject: content.researchObject
+      }
+    });
+
+    await this.projectsService.updateStepStatus(projectId, WorkflowStep.TOPIC_NORMALIZE, ProjectStepStatus.COMPLETED, {});
+    await this.projectsService.updateStepStatus(projectId, WorkflowStep.SOP_GUIDE, ProjectStepStatus.IN_PROGRESS, {});
+    await this.projectsService.updateCurrentStep(projectId, WorkflowStep.SOP_GUIDE, SkillName.SOP_GUIDE);
+
+    const assistantMessage = await this.messagesService.createMessage({
+      projectId,
+      role: "assistant",
+      messageType: sop.messageType,
+      step: WorkflowStep.SOP_GUIDE,
+      contentText: sop.data.message,
+      contentJson: sop.data
+    });
+
+    return {
+      projectId,
+      currentStep: WorkflowStep.SOP_GUIDE,
+      assistantMessage
+    };
+  }
+
+  private async handleSopGuide(projectId: string) {
+    const run = await this.skillsService.executeSkill({
+      projectId,
+      skillName: SkillName.DATA_CLEANING,
+      step: WorkflowStep.DATA_CLEANING,
+      payload: {}
+    });
+
+    await this.projectsService.updateStepStatus(projectId, WorkflowStep.SOP_GUIDE, ProjectStepStatus.COMPLETED, {});
+    await this.projectsService.updateStepStatus(projectId, WorkflowStep.DATA_CLEANING, ProjectStepStatus.IN_PROGRESS, {});
+    await this.projectsService.updateCurrentStep(projectId, WorkflowStep.DATA_CLEANING, SkillName.DATA_CLEANING);
+
+    const assistantMessage = await this.messagesService.createMessage({
+      projectId,
+      role: "assistant",
+      messageType: run.messageType,
+      step: WorkflowStep.DATA_CLEANING,
+      contentText: "已进入数据清洗阶段。",
+      contentJson: run.data
+    });
+
+    return { projectId, currentStep: WorkflowStep.DATA_CLEANING, assistantMessage };
+  }
+
+  private async handleDataCleaning(
+    projectId: string,
+    userMessage: string,
+    payload: Record<string, unknown>
+  ) {
+    if (this.wantsNext(userMessage) || this.wantsDataCheck(userMessage)) {
+      const run = await this.skillsService.executeSkill({
+        projectId,
+        skillName: SkillName.DATA_CHECK,
+        step: WorkflowStep.DATA_CHECK,
+        payload
+      });
+
+      await this.projectsService.updateStepStatus(projectId, WorkflowStep.DATA_CLEANING, ProjectStepStatus.COMPLETED, {});
+      await this.projectsService.updateStepStatus(projectId, WorkflowStep.DATA_CHECK, ProjectStepStatus.IN_PROGRESS, {});
+      await this.projectsService.updateCurrentStep(projectId, WorkflowStep.DATA_CHECK, SkillName.DATA_CHECK);
+
+      const assistantMessage = await this.messagesService.createMessage({
+        projectId,
+        role: "assistant",
+        messageType: run.messageType,
+        step: WorkflowStep.DATA_CHECK,
+        contentText: "已进入数据检查阶段。",
+        contentJson: run.data
+      });
+
+      return { projectId, currentStep: WorkflowStep.DATA_CHECK, assistantMessage };
+    }
+
+    const run = await this.skillsService.executeSkill({
+      projectId,
+      skillName: SkillName.DATA_CLEANING,
+      step: WorkflowStep.DATA_CLEANING,
+      payload
+    });
+
+    const assistantMessage = await this.messagesService.createMessage({
+      projectId,
+      role: "assistant",
+      messageType: run.messageType,
+      step: WorkflowStep.DATA_CLEANING,
+      contentText: "已更新数据清洗建议。",
+      contentJson: run.data
+    });
+
+    return { projectId, currentStep: WorkflowStep.DATA_CLEANING, assistantMessage };
+  }
+
+  private async handleDataCheck(
+    projectId: string,
+    userMessage: string,
+    payload: Record<string, unknown>
+  ) {
+    if (this.wantsNext(userMessage) || this.wantsBaseline(userMessage)) {
+      const run = await this.skillsService.executeSkill({
+        projectId,
+        skillName: SkillName.BASELINE_REGRESSION,
+        step: WorkflowStep.BASELINE_REGRESSION,
+        payload
+      });
+
+      await this.projectsService.updateStepStatus(projectId, WorkflowStep.DATA_CHECK, ProjectStepStatus.COMPLETED, {});
+      await this.projectsService.updateStepStatus(projectId, WorkflowStep.BASELINE_REGRESSION, ProjectStepStatus.IN_PROGRESS, {});
+      await this.projectsService.updateCurrentStep(projectId, WorkflowStep.BASELINE_REGRESSION, SkillName.BASELINE_REGRESSION);
+
+      const assistantMessage = await this.messagesService.createMessage({
+        projectId,
+        role: "assistant",
+        messageType: run.messageType,
+        step: WorkflowStep.BASELINE_REGRESSION,
+        contentText: "已进入基准回归阶段。",
+        contentJson: run.data
+      });
+
+      return { projectId, currentStep: WorkflowStep.BASELINE_REGRESSION, assistantMessage };
+    }
+
+    const run = await this.skillsService.executeSkill({
+      projectId,
+      skillName: SkillName.DATA_CHECK,
+      step: WorkflowStep.DATA_CHECK,
+      payload
+    });
+
+    const assistantMessage = await this.messagesService.createMessage({
+      projectId,
+      role: "assistant",
+      messageType: run.messageType,
+      step: WorkflowStep.DATA_CHECK,
+      contentText: "已更新数据检查建议。",
+      contentJson: run.data
+    });
+
+    return { projectId, currentStep: WorkflowStep.DATA_CHECK, assistantMessage };
+  }
+
+  private async handleBaseline(projectId: string, payload: Record<string, unknown>) {
+    const run = await this.skillsService.executeSkill({
+      projectId,
+      skillName: SkillName.BASELINE_REGRESSION,
+      step: WorkflowStep.BASELINE_REGRESSION,
+      payload
+    });
+
+    const assistantMessage = await this.messagesService.createMessage({
+      projectId,
+      role: "assistant",
+      messageType: run.messageType,
+      step: WorkflowStep.BASELINE_REGRESSION,
+      contentText: "已更新基准回归建议。",
+      contentJson: run.data
+    });
+
+    return { projectId, currentStep: WorkflowStep.BASELINE_REGRESSION, assistantMessage };
+  }
+
+  private async runSideSkill(
+    projectId: string,
+    currentStep: WorkflowStep,
+    skillName: typeof SkillName.RESULT_INTERPRET | typeof SkillName.STATA_ERROR_DEBUG,
+    payload: Record<string, unknown>
+  ) {
+    const run = await this.skillsService.executeSkill({
+      projectId,
+      skillName,
+      step: currentStep,
+      payload
+    });
+
+    const assistantMessage = await this.messagesService.createMessage({
+      projectId,
+      role: "assistant",
+      messageType: run.messageType,
+      step: currentStep,
+      contentText:
+        skillName === SkillName.RESULT_INTERPRET
+          ? (run.data.plainExplanation as string)
+          : (run.data.explanation as string),
+      contentJson: run.data
+    });
+
+    return { projectId, currentStep, assistantMessage };
+  }
+
+  private async runSystemNotice(
+    projectId: string,
+    currentStep: WorkflowStep,
+    payload: Record<string, unknown>
+  ) {
+    const assistantMessage = await this.messagesService.createMessage({
+      projectId,
+      role: "system",
+      messageType: AssistantMessageType.SYSTEM_NOTICE,
+      step: currentStep,
+      contentText: (payload.message as string) ?? (payload.reason as string) ?? "系统提示",
+      contentJson: payload
+    });
+
+    return { projectId, currentStep, assistantMessage };
+  }
+
+  private isConfirmation(text: string) {
+    return /^(yes|ok|okay|confirm|start|continue|go|\u662f|\u597d|\u597d\u7684|\u786e\u8ba4)$/i.test(text.trim());
+  }
+
+  private wantsNext(text: string) {
+    return /(next|continue|start|go|\u4e0b\u4e00\u6b65|\u7ee7\u7eed|\u5f00\u59cb)/i.test(text);
+  }
+
+  private wantsDataCheck(text: string) {
+    return /(data check|describe|summarize|\u6570\u636e\u68c0\u67e5)/i.test(text);
+  }
+
+  private wantsBaseline(text: string) {
+    return /(baseline|regression|reghdfe|\u57fa\u51c6\u56de\u5f52|\u56de\u5f52)/i.test(text);
+  }
+
+  private looksLikeStataError(text: string) {
+    return /(not found|invalid syntax|error|r\(\d+\)|\u62a5\u9519|\u627e\u4e0d\u5230)/i.test(text);
+  }
+
+  private looksLikeRegressionResult(text: string) {
+    return /(R.?2|Adj|coef\.|t\)|P>|\*\*\*|Number of obs|reghdfe)/i.test(text);
+  }
+}
+
+

@@ -1,0 +1,12 @@
+node_modules
+pnpm-store
+.pnpm-store
+.git
+.next
+apps/web/.next
+apps/api/dist
+coverage
+.tmp*
+apps/web
+packages/shared/dist
+packages/prompts/dist
