@@ -1,6 +1,8 @@
 ﻿# 经管实证论文 AI Agent
 
 Monorepo for the MVP web product described in `经管科研论文_agent_prd_与部署方案.md`.
+GitHub `main` is the source of truth for the current Vercel frontend and Railway backend deployments.
+
 
 ## Packages
 
@@ -72,3 +74,4 @@ Bundle-based fallback flow:
 3. Add `-PrepareOnly` if you only want to inspect the staged bundle at `.tmp-railway-api-bundle`.
 
 The fallback script uses [scripts/prepare-railway-api-bundle.ps1](/D:/Courses/常用/Codex/科研论文agent/scripts/prepare-railway-api-bundle.ps1) to stage a backend-only bundle and [scripts/deploy-railway-api.ps1](/D:/Courses/常用/Codex/科研论文agent/scripts/deploy-railway-api.ps1) to deploy it.
+
