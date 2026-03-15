@@ -1,3 +1,4 @@
+# Workflow note: this deploy path is service-scoped to avoid Railway repo-trigger drift.
 name: Deploy Railway API
 
 on:
