@@ -1,5 +1,4 @@
 # syntax=docker/dockerfile:1.7
-# Railway GitHub autodeploy probe: harmless Dockerfile comment for webhook verification.
 FROM node:20-bookworm-slim
 
 ENV PNPM_HOME="/pnpm"
