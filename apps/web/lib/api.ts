@@ -1,6 +1,6 @@
 import type { ApiResponse, WorkflowStreamEvent } from "@empirical/shared";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000/api";
+const API_BASE_URL = "/api/proxy";
 
 function createHeaders(options: RequestInit & { token?: string }) {
   const headers = new Headers(options.headers ?? {});

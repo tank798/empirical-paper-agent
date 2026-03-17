@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { type KeyboardEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiRequest } from "../lib/api";
 import { saveStoredProject } from "../lib/storage";
@@ -48,6 +48,21 @@ export function HomeHero() {
     }
   };
 
+  const handleTopicKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      event.key !== "Enter" ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    void createProject();
+  };
+
   return (
     <section className="relative overflow-hidden rounded-[40px] border border-white/70 px-5 py-8 sm:px-8 sm:py-10 lg:px-12 lg:py-12">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(150,193,255,0.28),transparent_24%),radial-gradient(circle_at_84%_16%,rgba(225,240,167,0.34),transparent_22%),radial-gradient(circle_at_50%_68%,rgba(255,255,255,0.92),transparent_38%)]" />
@@ -84,16 +99,13 @@ export function HomeHero() {
               onBlur={() => setFocused(false)}
               onChange={(event) => setTopic(event.target.value)}
               onFocus={() => setFocused(true)}
+              onKeyDown={handleTopicKeyDown}
             />
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-4 px-1">
-            <button
-              className="text-sm font-medium text-slate-500 transition hover:text-slate-900"
-              onClick={() => router.push("/projects")}
-              type="button"
-            >
-              查看已保存项目
+            <button className="text-sm font-medium text-slate-500 transition hover:text-slate-900" type="button">
+              Enter发送，Ctrl+Enter换行
             </button>
 
             <button

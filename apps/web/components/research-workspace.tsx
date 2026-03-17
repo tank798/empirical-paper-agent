@@ -871,7 +871,13 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   };
 
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (
+      event.key === "Enter" &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.shiftKey &&
+      !event.altKey
+    ) {
       event.preventDefault();
       void streamMessage(input, { attachment });
     }
@@ -1036,7 +1042,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
               <PlusIcon />
             </button>
             <div className="min-w-0">
-              <p className="text-xs font-normal text-slate-400">{"Enter ???Shift + Enter ???"}</p>
+              <p className="text-xs font-normal text-slate-400">{"Enter???Ctrl+Enter??"}</p>
               {composerError ? (
                 <p className="mt-1 text-xs font-normal text-rose-500">{composerError}</p>
               ) : attachment ? (

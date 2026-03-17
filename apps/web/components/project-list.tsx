@@ -36,14 +36,7 @@ export function ProjectList() {
 
   return (
     <section className="rounded-[2rem] border border-white/70 bg-[var(--card)] p-8 shadow-card backdrop-blur">
-      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="text-xs uppercase tracking-[0.25em] text-slate-500">项目库</p>
-          <h1 className="mt-3 text-3xl">继续你已经开始的研究项目</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-7 text-slate-600">
-            这里展示当前浏览器中保存的匿名项目。你可以继续推进 workflow，也可以回看历史消息和研究设定。
-          </p>
-        </div>
+      <div className="mb-6 flex justify-end">
         <Link className="rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white" href="/">
           新建项目
         </Link>
