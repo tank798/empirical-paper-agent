@@ -1,285 +1,1086 @@
-﻿"use client";
+"use client";
 
+import clsx from "clsx";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import type { AssistantMessageEnvelope, ProjectDetail } from "@empirical/shared";
-import { apiRequest } from "../lib/api";
+import { useRouter } from "next/navigation";
 import {
-  formatDateTime,
-  formatWriteMode,
-  getFutureSteps,
-  getStepProgress,
-  quickActionMap,
-  stepStatusMeta,
-  workflowStepMeta
-} from "../lib/presentation";
-import { getStoredProject } from "../lib/storage";
+  type ChangeEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react";
+import {
+  WorkflowStep,
+  WorkflowStreamPhase,
+  type AssistantMessageEnvelope,
+  type ProjectDetail,
+  type WorkflowStreamPhase as WorkflowStreamPhaseValue
+} from "@empirical/shared";
+import { apiRequest, streamApiRequest } from "../lib/api";
+import { normalizeAssistantCopy, normalizeResearchObjectText } from "../lib/message-display";
+import { getStoredProject, getStoredProjects } from "../lib/storage";
 import { MessageCard } from "./message-card";
 
-function displayValue(value: string | string[] | null | undefined) {
-  if (Array.isArray(value)) {
-    return value.length > 0 ? value.join("、") : "待补充";
+type StageDefinition = {
+  id: "topic" | "data" | "baseline" | "robustness" | "iv" | "mechanism" | "heterogeneity";
+  label: string;
+  steps: WorkflowStep[];
+};
+
+type StageId = StageDefinition["id"];
+
+type LiveTurnState = {
+  id: string;
+  userMessage: AssistantMessageEnvelope;
+  assistantMessage: AssistantMessageEnvelope | null;
+  phase: WorkflowStreamPhaseValue;
+  statusText: string;
+  streamingText: string;
+  error: string | null;
+};
+
+type ComposerAttachment = {
+  name: string;
+  mimeType: string;
+  size: number;
+  content: string;
+  truncated: boolean;
+};
+
+type SpeechRecognitionAlternativeLike = {
+  transcript: string;
+};
+
+type SpeechRecognitionResultLike = {
+  isFinal?: boolean;
+  length: number;
+  [index: number]: SpeechRecognitionAlternativeLike;
+};
+
+type SpeechRecognitionEventLike = Event & {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionResultLike>;
+};
+
+type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onend: (() => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+type SpeechRecognitionConstructorLike = new () => SpeechRecognitionLike;
+
+const WORKFLOW_STAGES: StageDefinition[] = [
+  { id: "topic", label: "主题确认", steps: [WorkflowStep.TOPIC_DETECT, WorkflowStep.TOPIC_NORMALIZE] },
+  { id: "data", label: "数据处理", steps: [WorkflowStep.SOP_GUIDE, WorkflowStep.DATA_CLEANING, WorkflowStep.DATA_CHECK] },
+  { id: "baseline", label: "基准回归", steps: [WorkflowStep.BASELINE_REGRESSION] },
+  { id: "robustness", label: "稳健性检验", steps: [WorkflowStep.ROBUSTNESS] },
+  { id: "iv", label: "内生性分析", steps: [WorkflowStep.IV] },
+  { id: "mechanism", label: "机制分析", steps: [WorkflowStep.MECHANISM] },
+  { id: "heterogeneity", label: "异质性分析", steps: [WorkflowStep.HETEROGENEITY] }
+];
+
+const STAGE_ID_BY_STEP: Record<WorkflowStep, StageId> = {
+  [WorkflowStep.TOPIC_DETECT]: "topic",
+  [WorkflowStep.TOPIC_NORMALIZE]: "topic",
+  [WorkflowStep.SOP_GUIDE]: "data",
+  [WorkflowStep.DATA_CLEANING]: "data",
+  [WorkflowStep.DATA_CHECK]: "data",
+  [WorkflowStep.BASELINE_REGRESSION]: "baseline",
+  [WorkflowStep.ROBUSTNESS]: "robustness",
+  [WorkflowStep.MECHANISM]: "mechanism",
+  [WorkflowStep.HETEROGENEITY]: "heterogeneity",
+  [WorkflowStep.IV]: "iv",
+  [WorkflowStep.EXPORT_TABLE]: "baseline"
+};
+
+const SUPPORTED_ATTACHMENT_EXTENSIONS = new Set([
+  "txt",
+  "md",
+  "csv",
+  "json",
+  "log",
+  "yml",
+  "yaml",
+  "xml",
+  "html",
+  "htm",
+  "js",
+  "ts",
+  "tsx",
+  "jsx",
+  "py",
+  "r",
+  "sql",
+  "tex",
+  "do",
+  "pdf",
+  "docx",
+  "xls",
+  "xlsx"
+]);
+
+const MAX_ATTACHMENT_CHARACTERS = 20000;
+const MAX_SPREADSHEET_ROWS = 80;
+const MAX_SPREADSHEET_SHEETS = 4;
+
+function textValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function listValue(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as string[];
   }
 
-  return value && value.trim() ? value : "待补充";
+  return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function createLocalUserMessage(message: string, step: WorkflowStep | null | undefined): AssistantMessageEnvelope {
+  return {
+    role: "user",
+    messageType: "system_notice",
+    step: step ?? null,
+    contentText: message,
+    contentJson: { userMessage: message },
+    createdAt: new Date().toISOString()
+  };
+}
+
+function getFileExtension(fileName: string) {
+  const segments = fileName.toLowerCase().split(".");
+  return segments.length > 1 ? segments[segments.length - 1] ?? "" : "";
+}
+
+function normalizeAttachmentText(rawContent: string) {
+  return rawContent
+    .replace(/\u0000/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function buildAttachment(file: File, mimeType: string, rawContent: string, truncated = false): ComposerAttachment {
+  const normalized = normalizeAttachmentText(rawContent);
+
+  if (!normalized) {
+    throw new Error("??????????????Tank ????????");
+  }
+
+  return {
+    name: file.name,
+    mimeType,
+    size: file.size,
+    content: normalized.slice(0, MAX_ATTACHMENT_CHARACTERS),
+    truncated: truncated || normalized.length > MAX_ATTACHMENT_CHARACTERS
+  };
+}
+
+function canReadAttachment(file: File) {
+  const extension = getFileExtension(file.name);
+  return file.type.startsWith("text/") || SUPPORTED_ATTACHMENT_EXTENSIONS.has(extension);
+}
+
+async function readPlainTextAttachment(file: File): Promise<ComposerAttachment> {
+  const rawContent = await file.text();
+  return buildAttachment(file, file.type || "text/plain", rawContent);
+}
+
+async function readPdfAttachment(file: File): Promise<ComposerAttachment> {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+
+  if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+      "pdfjs-dist/legacy/build/pdf.worker.mjs",
+      import.meta.url
+    ).toString();
+  }
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const document = await pdfjs.getDocument({ data: bytes }).promise;
+  const pageTexts: string[] = [];
+  let totalLength = 0;
+  let truncated = false;
+
+  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    const page = await document.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+    const pageText = (textContent.items as Array<{ str?: string }>)
+      .map((item) => item.str ?? "")
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!pageText) {
+      continue;
+    }
+
+    const nextChunk = "?" + pageNumber + "?\n" + pageText;
+    totalLength += nextChunk.length;
+    pageTexts.push(nextChunk);
+
+    if (
+      totalLength >= MAX_ATTACHMENT_CHARACTERS ||
+      (pageNumber < document.numPages && totalLength >= MAX_ATTACHMENT_CHARACTERS * 0.9)
+    ) {
+      truncated = pageNumber < document.numPages;
+      break;
+    }
+  }
+
+  return buildAttachment(file, file.type || "application/pdf", pageTexts.join("\n\n"), truncated);
+}
+
+async function readDocxAttachment(file: File): Promise<ComposerAttachment> {
+  const mammoth = (await import("mammoth")) as {
+    extractRawText: (input: { arrayBuffer: ArrayBuffer }) => Promise<{ value: string }>;
+  };
+  const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+  return buildAttachment(
+    file,
+    file.type || "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    result.value
+  );
+}
+
+async function readSpreadsheetAttachment(file: File): Promise<ComposerAttachment> {
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", raw: false });
+  const sheetTexts: string[] = [];
+  let truncated = workbook.SheetNames.length > MAX_SPREADSHEET_SHEETS;
+  let totalLength = 0;
+
+  for (const sheetName of workbook.SheetNames.slice(0, MAX_SPREADSHEET_SHEETS)) {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) {
+      continue;
+    }
+
+    const rows = XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      blankrows: false,
+      raw: false,
+      defval: ""
+    }) as Array<Array<string | number | boolean | null>>;
+
+    if (rows.length > MAX_SPREADSHEET_ROWS) {
+      truncated = true;
+    }
+
+    const previewRows = rows.slice(0, MAX_SPREADSHEET_ROWS).map((row) =>
+      row
+        .map((cell) => String(cell ?? "").trim())
+        .filter(Boolean)
+        .join(" | ")
+    );
+    const body = previewRows.filter(Boolean).join("\n").trim();
+
+    if (!body) {
+      continue;
+    }
+
+    const nextChunk = "????" + sheetName + "\n" + body;
+    totalLength += nextChunk.length;
+    sheetTexts.push(nextChunk);
+
+    if (totalLength >= MAX_ATTACHMENT_CHARACTERS) {
+      truncated = true;
+      break;
+    }
+  }
+
+  return buildAttachment(
+    file,
+    file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    sheetTexts.join("\n\n"),
+    truncated
+  );
+}
+
+async function readComposerAttachment(file: File): Promise<ComposerAttachment> {
+  if (!canReadAttachment(file)) {
+    throw new Error("???? txt?md?csv?json?pdf?docx?xls?xlsx ?????????");
+  }
+
+  const extension = getFileExtension(file.name);
+
+  if (extension === "pdf") {
+    return readPdfAttachment(file);
+  }
+
+  if (extension === "docx") {
+    return readDocxAttachment(file);
+  }
+
+  if (extension === "xls" || extension === "xlsx") {
+    return readSpreadsheetAttachment(file);
+  }
+
+  return readPlainTextAttachment(file);
+}
+
+function formatAttachmentSize(size: number) {
+  if (size < 1024) {
+    return size + " B";
+  }
+
+  if (size < 1024 * 1024) {
+    return (size / 1024).toFixed(1) + " KB";
+  }
+
+  return (size / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function buildComposerSubmission(rawMessage: string, attachment: ComposerAttachment | null) {
+  const baseMessage = rawMessage.trim() || (attachment ? "????????????????????" : "");
+
+  if (!attachment) {
+    return {
+      userMessage: baseMessage,
+      payload: {} as Record<string, unknown>
+    };
+  }
+
+  const attachmentLines = [
+    "????" + attachment.name,
+    "???" + attachment.mimeType,
+    "???" + formatAttachmentSize(attachment.size),
+    attachment.truncated ? "?????????????????" : "????????????",
+    attachment.content
+  ];
+
+  return {
+    userMessage: [baseMessage, "[????]", attachmentLines.join("\n")].filter(Boolean).join("\n\n"),
+    payload: {
+      attachment: {
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        truncated: attachment.truncated
+      }
+    }
+  };
+}
+
+function PlusIcon() {
+  return (
+    <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
+      <path
+        d="M8 3.333v9.334M3.333 8h9.334"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+    </svg>
+  );
+}
+
+function MicIcon() {
+  return (
+    <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
+      <path
+        d="M8 2.667A1.833 1.833 0 0 0 6.167 4.5v3A1.833 1.833 0 0 0 8 9.333 1.833 1.833 0 0 0 9.833 7.5v-3A1.833 1.833 0 0 0 8 2.667Z"
+        stroke="currentColor"
+        strokeWidth="1.4"
+      />
+      <path
+        d="M4.833 6.833a3.167 3.167 0 1 0 6.334 0M8 10.667v2.666M5.667 13.333h4.666"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.4"
+      />
+    </svg>
+  );
+}
+
+function FileIcon() {
+  return (
+    <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
+      <path
+        d="M5 2.667h4.333L12.667 6v7.333A1.333 1.333 0 0 1 11.333 14.667H5A1.333 1.333 0 0 1 3.667 13.333V4A1.333 1.333 0 0 1 5 2.667Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.3"
+      />
+      <path d="M9.333 2.667V6h3.334" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.3" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 16 16">
+      <path d="m4 4 8 8M12 4 4 12" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+function buildStreamPreview(message: AssistantMessageEnvelope) {
+  const json = message.contentJson as Record<string, unknown>;
+
+  if (message.messageType === "topic_confirm") {
+    return [
+      textValue(json.normalizedTopic) || "已生成标准化题目。",
+      textValue(json.independentVariable) ? `核心解释变量：${textValue(json.independentVariable)}` : "",
+      textValue(json.dependentVariable) ? `被解释变量：${textValue(json.dependentVariable)}` : "",
+      normalizeResearchObjectText(json.researchObject) ? `研究对象：${normalizeResearchObjectText(json.researchObject)}` : "",
+      "如果没有问题，直接确认主题即可。"
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (message.messageType === "sop_guide") {
+    const steps = listValue(json.steps).map((step, index) => `${index + 1}. ${step}`);
+    return [normalizeAssistantCopy(message.contentText) || "已生成研究推进路径。", ...steps].filter(Boolean).join("\n");
+  }
+
+  if (message.messageType === "skill_output") {
+    const variableDesign = listValue(json.variableDesign);
+    const readingGuide = listValue(json.interpretationGuide || json.checkItems);
+
+    return [
+      textValue(json.purpose) || normalizeAssistantCopy(message.contentText) || "已生成这一轮结果。",
+      textValue(json.meaning),
+      variableDesign.length > 0 ? `变量与模型：${variableDesign.join("；")}` : "",
+      readingGuide.length > 0 ? `阅读重点：${readingGuide.slice(0, 3).join("；")}` : "",
+      textValue(json.nextSuggestion)
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  if (message.messageType === "research_chat") {
+    const actions = listValue(json.suggestedNextActions);
+    return [
+      normalizeAssistantCopy(message.contentText) || textValue(json.answer) || "已完成研究问答。",
+      actions.length > 0 ? `建议下一步：${actions.join("；")}` : ""
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  if (message.messageType === "result_interpret") {
+    return [
+      textValue(json.plainExplanation) || normalizeAssistantCopy(message.contentText) || "已完成结果解读。",
+      textValue(json.paperStyleExplanation),
+      textValue(json.nextSuggestion)
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  if (message.messageType === "stata_error_fix") {
+    return [
+      textValue(json.errorType) ? `错误类型：${textValue(json.errorType)}` : "",
+      textValue(json.explanation) || normalizeAssistantCopy(message.contentText) || "已定位报错原因。",
+      textValue(json.retryMessage)
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  return normalizeAssistantCopy(message.contentText) || normalizeAssistantCopy(textValue(json.message)) || textValue(json.reason) || "Tank 已完成这一轮输出。";
+}
+
+function getStageMessages(messages: AssistantMessageEnvelope[], stage: StageDefinition) {
+  return messages.filter(
+    (message) => message.role !== "user" && Boolean(message.step) && stage.steps.includes(message.step as WorkflowStep)
+  );
+}
+
+function getStageMeta(detail: ProjectDetail | null, activeStageId: StageId) {
+  const activeIndex = WORKFLOW_STAGES.findIndex((stage) => stage.id === activeStageId);
+  const stepStatusMap = new Map((detail?.steps ?? []).map((step) => [step.step, step.status]));
+
+  return WORKFLOW_STAGES.map((stage, index) => {
+    const relevantStatuses = stage.steps.map((step) => stepStatusMap.get(step)).filter(Boolean);
+    const isActive = stage.id === activeStageId;
+    const isCompleted =
+      !isActive &&
+      (relevantStatuses.length > 0
+        ? relevantStatuses.every((status) => status === "COMPLETED" || status === "SKIPPED")
+        : index < activeIndex);
+
+    return {
+      ...stage,
+      isActive,
+      isCompleted
+    };
+  });
+}
+
+function WorkspacePlaceholder({ children }: { children: ReactNode }) {
+  return (
+    <div className="mx-auto max-w-[1100px] px-6 pb-8 pt-6">
+      <div className="rounded-[20px] border border-slate-200 bg-white p-6 text-sm font-normal text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+        {children}
+      </div>
+    </div>
+  );
 }
 
 export function ResearchWorkspace({ projectId }: { projectId: string }) {
-  const stored = useMemo(() => getStoredProject(projectId), [projectId]);
+  const router = useRouter();
+  const [stored, setStored] = useState<ReturnType<typeof getStoredProject> | undefined>(undefined);
+  const [availableProjects, setAvailableProjects] = useState<ReturnType<typeof getStoredProjects>>([]);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [messages, setMessages] = useState<AssistantMessageEnvelope[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [composerError, setComposerError] = useState("");
+  const [attachment, setAttachment] = useState<ComposerAttachment | null>(null);
+  const [listening, setListening] = useState(false);
+  const [selectedStageId, setSelectedStageId] = useState<StageId>("topic");
+  const [liveTurn, setLiveTurn] = useState<LiveTurnState | null>(null);
+  const finalizedTurnIdRef = useRef<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const speechBaseTextRef = useRef("");
 
   useEffect(() => {
-    const load = async () => {
-      if (!stored) {
-        setLoading(false);
-        return;
-      }
+    setStored(getStoredProject(projectId));
+    setAvailableProjects(getStoredProjects());
+    setLiveTurn(null);
+    setError("");
+    setComposerError("");
+    setInput("");
+    setAttachment(null);
+    setListening(false);
+    setSelectedStageId("topic");
+    finalizedTurnIdRef.current = null;
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+  }, [projectId]);
 
+  useEffect(() => {
+    if (stored !== null || availableProjects.length !== 1) {
+      return;
+    }
+
+    const fallbackProject = availableProjects[0];
+    if (!fallbackProject || fallbackProject.id === projectId) {
+      return;
+    }
+
+    router.replace(`/projects/${fallbackProject.id}`);
+  }, [availableProjects, projectId, router, stored]);
+
+  useEffect(() => {
+    return () => {
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (stored === undefined) {
+      return;
+    }
+
+    if (!stored) {
+      setLoading(false);
+      return;
+    }
+
+    let ignore = false;
+
+    const load = async () => {
       try {
+        setLoading(true);
         const [detailData, messageData] = await Promise.all([
           apiRequest<ProjectDetail>(`/projects/${projectId}`, { token: stored.token }),
           apiRequest<AssistantMessageEnvelope[]>(`/projects/${projectId}/messages`, { token: stored.token })
         ]);
+
+        if (ignore) {
+          return;
+        }
+
         setDetail(detailData);
         setMessages(messageData);
+        setError("");
       } catch (requestError) {
-        setError(requestError instanceof Error ? requestError.message : "加载项目失败，请稍后重试。");
+        if (!ignore) {
+          setError(requestError instanceof Error ? requestError.message : "加载项目失败，请稍后重试。");
+        }
       } finally {
-        setLoading(false);
+        if (!ignore) {
+          setLoading(false);
+        }
       }
     };
 
     void load();
+
+    return () => {
+      ignore = true;
+    };
   }, [projectId, stored]);
 
-  const currentStep = detail?.project.currentStep;
-  const currentStepMeta = currentStep ? workflowStepMeta[currentStep] : null;
-  const quickActions = currentStep ? quickActionMap[currentStep] ?? [] : [];
-  const progress = getStepProgress(detail?.steps);
-  const futureSteps = getFutureSteps(detail?.steps);
+  const currentStep = detail?.project.currentStep ?? WorkflowStep.TOPIC_DETECT;
+  const activeStageId = STAGE_ID_BY_STEP[currentStep] ?? "topic";
 
-  const sendMessage = async (message: string) => {
-    if (!stored || !message.trim()) {
+  useEffect(() => {
+    setSelectedStageId(activeStageId);
+  }, [activeStageId]);
+
+  const selectedStage = useMemo(
+    () => WORKFLOW_STAGES.find((stage) => stage.id === selectedStageId) ?? WORKFLOW_STAGES[0],
+    [selectedStageId]
+  );
+  const stageMeta = useMemo(() => getStageMeta(detail, activeStageId), [activeStageId, detail]);
+  const selectedStageMessages = useMemo(() => getStageMessages(messages, selectedStage), [messages, selectedStage]);
+  const selectedStageIsActive = selectedStage.id === activeStageId;
+  const topicNeedsConfirmation = currentStep === WorkflowStep.TOPIC_NORMALIZE;
+
+
+  useEffect(() => {
+    if (!liveTurn || !liveTurn.assistantMessage || !stored || finalizedTurnIdRef.current === liveTurn.id) {
       return;
     }
 
+
+    finalizedTurnIdRef.current = liveTurn.id;
+    const userMessage = liveTurn.userMessage;
+    const assistantMessage = liveTurn.assistantMessage;
+    let ignore = false;
+
+    setMessages((current) => [...current, userMessage, assistantMessage]);
+    setLiveTurn(null);
+    setSending(false);
+
+    void (async () => {
+      try {
+        const nextDetail = await apiRequest<ProjectDetail>(`/projects/${projectId}`, { token: stored.token });
+        if (!ignore) {
+          setDetail(nextDetail);
+          setError("");
+        }
+      } catch (requestError) {
+        if (!ignore) {
+          setError(requestError instanceof Error ? requestError.message : "刷新项目状态失败，请稍后重试。");
+        }
+      }
+    })();
+
+    return () => {
+      ignore = true;
+    };
+  }, [liveTurn, projectId, stored]);
+
+  const streamMessage = async (
+    rawMessage: string,
+    options: { attachment?: ComposerAttachment | null; payload?: Record<string, unknown> } = {}
+  ) => {
+    const resolvedAttachment = options.attachment ?? null;
+    const submission = buildComposerSubmission(rawMessage, resolvedAttachment);
+
+    if (!stored || !submission.userMessage.trim() || sending) {
+      return;
+    }
+
+    const localUserMessage = createLocalUserMessage(submission.userMessage, detail?.project.currentStep ?? null);
+    const liveTurnId = Date.now() + "-" + Math.random().toString(16).slice(2);
+
+    finalizedTurnIdRef.current = null;
+    setLiveTurn({
+      id: liveTurnId,
+      userMessage: localUserMessage,
+      assistantMessage: null,
+      phase: WorkflowStreamPhase.THINKING,
+      statusText: "Tank ????????...",
+      streamingText: "",
+      error: null
+    });
+    setSending(true);
+    setError("");
+    setComposerError("");
+    setInput("");
+    setAttachment(null);
+
     try {
-      setSending(true);
-      setError("");
-      const response = await apiRequest<{
-        projectId: string;
-        currentStep: string;
-        assistantMessage: AssistantMessageEnvelope;
-      }>(`/projects/${projectId}/workflow/next`, {
-        method: "POST",
+      await streamApiRequest(`/projects/${projectId}/workflow/stream`, {
         token: stored.token,
-        body: JSON.stringify({ userMessage: message, payload: {} })
+        body: {
+          userMessage: submission.userMessage,
+          payload: {
+            ...submission.payload,
+            ...(options.payload ?? {})
+          }
+        },
+        onEvent: (event) => {
+          if (event.type === "status") {
+            setLiveTurn((current) => {
+              if (!current || current.id !== liveTurnId) {
+                return current;
+              }
+
+              return {
+                ...current,
+                phase: event.phase,
+                statusText: event.message
+              };
+            });
+            return;
+          }
+
+          if (event.type === "message") {
+            setLiveTurn((current) => {
+              if (!current || current.id !== liveTurnId) {
+                return current;
+              }
+
+              return {
+                ...current,
+                assistantMessage: event.response.assistantMessage,
+                phase: WorkflowStreamPhase.TYPING,
+                statusText: "Tank ????...",
+                streamingText: buildStreamPreview(event.response.assistantMessage)
+              };
+            });
+            return;
+          }
+
+          if (event.type === "error") {
+            throw new Error(event.message);
+          }
+        }
       });
-      const userMessage: AssistantMessageEnvelope = {
-        role: "user",
-        messageType: "system_notice",
-        step: detail?.project.currentStep ?? null,
-        contentText: message,
-        contentJson: { userMessage: message },
-        createdAt: new Date().toISOString()
-      };
-      setMessages((current) => [...current, userMessage, response.assistantMessage]);
-      const nextDetail = await apiRequest<ProjectDetail>(`/projects/${projectId}`, { token: stored.token });
-      setDetail(nextDetail);
-      setInput("");
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。");
-    } finally {
+      const messageText = requestError instanceof Error ? requestError.message : "???????????";
+
+      setLiveTurn((current) => {
+        if (!current || current.id !== liveTurnId) {
+          return current;
+        }
+
+        return {
+          ...current,
+          phase: WorkflowStreamPhase.COMPLETE,
+          statusText: "????????",
+          streamingText: messageText,
+          error: messageText
+        };
+      });
+      setError(messageText);
       setSending(false);
     }
   };
 
+  const confirmTopic = async () => {
+    await streamMessage("????");
+  };
+
+  const handleAttachmentPick = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      setComposerError("");
+      const nextAttachment = await readComposerAttachment(file);
+      setAttachment(nextAttachment);
+    } catch (attachmentError) {
+      setAttachment(null);
+      setComposerError(
+        attachmentError instanceof Error ? attachmentError.message : "????????????????"
+      );
+    }
+  };
+
+  const handleMicClick = () => {
+    if (sending) {
+      return;
+    }
+
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+
+    const speechWindow = window as typeof window & {
+      SpeechRecognition?: SpeechRecognitionConstructorLike;
+      webkitSpeechRecognition?: SpeechRecognitionConstructorLike;
+    };
+    const SpeechRecognitionCtor = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+
+    if (!SpeechRecognitionCtor) {
+      setComposerError("??????????????????????");
+      return;
+    }
+
+    const recognition = new SpeechRecognitionCtor();
+    speechBaseTextRef.current = input.trim();
+    setComposerError("");
+    setListening(true);
+    recognitionRef.current = recognition;
+    recognition.lang = "zh-CN";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+
+    recognition.onresult = (event) => {
+      const pieces: string[] = [];
+
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const chunk = event.results[index]?.[0]?.transcript?.trim();
+        if (chunk) {
+          pieces.push(chunk);
+        }
+      }
+
+      const transcript = pieces.join("").trim();
+      if (!transcript) {
+        return;
+      }
+
+      const baseText = speechBaseTextRef.current;
+      setInput([baseText, transcript].filter(Boolean).join(baseText && transcript ? "\n" : ""));
+    };
+
+    recognition.onerror = (event) => {
+      setComposerError(
+        event.error === "not-allowed"
+          ? "???????????????????????"
+          : "?????????????"
+      );
+    };
+
+    recognition.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+
+    recognition.start();
+  };
+
+  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void streamMessage(input, { attachment });
+    }
+  };
+
+  const helperText = topicNeedsConfirmation
+    ? "如需修改题目，可直接补充；否则点击上方确认主题。"
+    : "继续补充研究问题、结果解释或 Stata 报错。";
+  const placeholderText = topicNeedsConfirmation
+    ? "例如：把研究对象改为中国A股上市公司\n例如：改成数字金融对企业创新的影响"
+    : "继续描述变量、结果或 Stata 报错。";
+
+  if (stored === undefined || loading) {
+    return <WorkspacePlaceholder>Tank 正在恢复当前对话...</WorkspacePlaceholder>;
+  }
+
+  if (!stored && availableProjects.length === 1) {
+    return <WorkspacePlaceholder>正在切换到最近的项目...</WorkspacePlaceholder>;
+  }
+
   if (!stored) {
     return (
-      <div className="glass-panel rounded-[28px] border border-dashed border-slate-300 p-8 text-slate-700 shadow-card">
-        当前浏览器没有这个项目的恢复令牌，因此无法继续编辑。请回到项目库，使用同一浏览器打开已保存的项目。
+      <div className="mx-auto max-w-[1100px] px-6 pb-8 pt-6">
+        <div className="rounded-[20px] border border-dashed border-slate-300 bg-white p-6 text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+          <p className="text-base font-semibold text-slate-950">这个链接不在当前浏览器保存的项目列表里。</p>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <Link
+              className="inline-flex h-10 items-center rounded-[10px] bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-900"
+              href="/projects"
+            >
+              打开项目库
+            </Link>
+            <Link
+              className="inline-flex h-10 items-center rounded-[10px] border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              href="/"
+            >
+              新建项目
+            </Link>
+          </div>
+        </div>
       </div>
     );
   }
 
-  if (loading) {
-    return <div className="glass-panel rounded-[28px] p-8 shadow-card">正在加载项目...</div>;
-  }
-
   return (
-    <section className="grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)_320px]">
-      <aside className="space-y-5 xl:sticky xl:top-4 xl:h-fit">
-        <div className="glass-panel surface-outline rounded-[30px] border border-white/80 p-5 shadow-card">
-          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">项目概览</p>
-          <h1 className="mt-3 text-2xl leading-10 text-slate-950">{detail?.project.topicNormalized || detail?.project.topicRaw}</h1>
-          <p className="mt-3 text-sm leading-7 text-slate-600">当前阶段：{currentStepMeta?.label ?? "待识别"}</p>
-          <p className="mt-1 text-sm leading-7 text-slate-600">最近更新：{formatDateTime(detail?.project.updatedAt)}</p>
-          <div className="mt-5 flex flex-wrap gap-2 text-sm">
-            <Link className="rounded-full border border-slate-300 bg-white/80 px-4 py-2 font-semibold text-slate-700 transition hover:bg-white" href="/projects">
-              返回项目库
-            </Link>
-            <Link className="rounded-full border border-slate-300 bg-white/80 px-4 py-2 font-semibold text-slate-700 transition hover:bg-white" href={`/projects/${projectId}/export`}>
-              导出中心
-            </Link>
-          </div>
-        </div>
+    <section className="mx-auto max-w-[1100px] space-y-6 px-6 pb-8 pt-6">
+      <div className="border-b border-slate-200 pb-4">
+        <div className="flex flex-wrap gap-[10px] sm:gap-3">
+          {stageMeta.map((stage, index) => {
+            const isSelected = selectedStage.id === stage.id;
 
-        <div className="glass-panel surface-outline rounded-[30px] border border-white/80 p-5 shadow-card">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs uppercase tracking-[0.24em] text-slate-500">研究设定</p>
-            <span className="rounded-full bg-white/90 px-3 py-1 text-xs text-slate-500">baseline 优先读取</span>
-          </div>
-          <div className="mt-4 space-y-3 text-sm leading-7 text-slate-700">
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">解释变量</p>
-              <p>{displayValue(detail?.researchProfile?.independentVariable)}</p>
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">被解释变量</p>
-              <p>{displayValue(detail?.researchProfile?.dependentVariable)}</p>
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">控制变量</p>
-              <p>{displayValue(detail?.researchProfile?.controls)}</p>
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">固定效应</p>
-              <p>{displayValue(detail?.researchProfile?.fixedEffects)}</p>
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">聚类变量</p>
-              <p>{displayValue(detail?.researchProfile?.clusterVar)}</p>
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">样本范围</p>
-              <p>{displayValue(detail?.researchProfile?.sampleScope)}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="glass-panel surface-outline rounded-[30px] border border-white/80 p-5 shadow-card">
-          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">导出状态</p>
-          <div className="mt-4 space-y-2 text-sm leading-7 text-slate-700">
-            <p>默认文件：{displayValue(detail?.exportState?.defaultExportFileName)}</p>
-            <p>默认路径：{displayValue(detail?.exportState?.defaultExportPath)}</p>
-            <p>下一次写入：{formatWriteMode(detail?.exportState?.nextWriteMode)}</p>
-            <p>最近更新：{formatDateTime(detail?.exportState?.updatedAt)}</p>
-          </div>
-        </div>
-      </aside>
-
-      <div className="glass-panel surface-outline rounded-[32px] border border-white/80 p-4 shadow-card sm:p-5 lg:p-6">
-        <div className="rounded-[28px] border border-white/80 bg-white/72 p-5 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-slate-500">研究对话工作台</p>
-              <h2 className="mt-2 text-3xl leading-tight text-slate-950">{currentStepMeta?.label ?? "研究流程"}</h2>
-              <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">{currentStepMeta?.description}</p>
-            </div>
-            <div className="rounded-[20px] bg-slate-950 px-4 py-3 text-sm text-white shadow-floating">
-              已完成 {progress.completed} / {progress.total} 个 MVP 阶段
-            </div>
-          </div>
-
-          <div className="mt-5 h-2 rounded-full bg-slate-100">
-            <div className="h-2 rounded-full bg-accent transition-all" style={{ width: `${progress.percent}%` }} />
-          </div>
-        </div>
-
-        <div className="mt-5 rounded-[30px] border border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.85),rgba(246,249,255,0.72))] p-4 shadow-sm sm:p-5">
-          <div className="space-y-4">
-            {messages.length === 0 ? (
-              <div className="rounded-[24px] border border-dashed border-slate-300 bg-white/72 p-8 text-sm leading-7 text-slate-600">
-                这里会按消息流展示主题确认、SOP 指引、代码生成、结果解读和报错修复卡片。
-              </div>
-            ) : (
-              messages.map((message, index) => (
-                <MessageCard key={`${message.messageType}-${message.createdAt ?? index}`} message={message} />
-              ))
-            )}
-          </div>
-        </div>
-
-        <div className="mt-5 rounded-[30px] border border-white/80 bg-white/86 p-4 shadow-floating sm:p-5">
-          <div className="mb-4 flex flex-wrap gap-2">
-            {quickActions.map((prompt) => (
+            return (
               <button
-                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 transition hover:border-slate-300 hover:bg-white"
-                key={prompt.label}
-                onClick={() => setInput(prompt.value)}
+                key={stage.id}
+                className={clsx(
+                  "inline-flex h-[38px] items-center rounded-full border px-3 text-[13px] font-medium whitespace-nowrap transition focus:outline-none focus:ring-2 focus:ring-slate-200",
+                  stage.isActive
+                    ? "border-slate-950 bg-slate-950 text-white"
+                    : "border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100",
+                  isSelected && !stage.isActive ? "border-slate-300 bg-white text-slate-700" : ""
+                )}
+                onClick={() => setSelectedStageId(stage.id)}
                 type="button"
               >
-                {prompt.label}
+                <span>{`0${index + 1} ${stage.label}`}</span>
               </button>
-            ))}
-          </div>
-
-          <textarea
-            className="h-36 w-full resize-none rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff,#fbfdff)] p-4 text-[15px] leading-7 outline-none placeholder:text-slate-400"
-            placeholder="继续推进当前步骤，或直接粘贴回归结果、Stata 报错、变量补充说明。"
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-          />
-
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs leading-6 text-slate-500">
-              支持直接粘贴回归结果做解释，也支持粘贴 Stata 报错做修复建议。
-            </p>
-            <button
-              className="rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white shadow-floating transition hover:bg-slate-800 disabled:opacity-60"
-              disabled={sending || !input.trim()}
-              onClick={() => void sendMessage(input)}
-              type="button"
-            >
-              {sending ? "正在发送..." : "发送到当前步骤"}
-            </button>
-          </div>
-          {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
+            );
+          })}
         </div>
       </div>
 
-      <aside className="space-y-5 xl:sticky xl:top-4 xl:h-fit">
-        <div className="glass-panel surface-outline rounded-[30px] border border-white/80 p-5 shadow-card">
-          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">流程进度</p>
-          <div className="mt-4 space-y-3">
-            {detail?.steps.map((step) => {
-              const stepMeta = workflowStepMeta[step.step];
-              const statusMeta = stepStatusMeta[step.status];
-              return (
-                <div className="rounded-[22px] border border-white/80 bg-white/76 p-4" key={step.step}>
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-slate-800">{stepMeta.label}</p>
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusMeta.tone}`}>
-                      {statusMeta.label}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-xs leading-6 text-slate-500">{stepMeta.description}</p>
-                </div>
-              );
-            })}
+      <div className="space-y-6">
+        {error ? (
+          <div className="rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-normal leading-7 text-rose-700">
+            {error}
           </div>
-        </div>
+        ) : null}
 
-        <div className="glass-panel surface-outline rounded-[30px] border border-white/80 p-5 shadow-card">
-          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">后续模块骨架</p>
-          <div className="mt-4 space-y-3">
-            {futureSteps.map((step) => (
-              <div className="rounded-[22px] border border-dashed border-slate-300 bg-white/70 p-4" key={step.step}>
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-slate-800">{workflowStepMeta[step.step].label}</p>
-                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600">已预留</span>
-                </div>
-                <p className="mt-2 text-xs leading-6 text-slate-500">{workflowStepMeta[step.step].description}</p>
-              </div>
+        {selectedStageMessages.length > 0 ? (
+          <div className="space-y-6">
+            {selectedStageMessages.map((message, index) => (
+              <MessageCard
+                key={message.id ?? `${message.messageType}-${message.createdAt ?? index}`}
+                canConfirmTopic={
+                  selectedStageIsActive &&
+                  currentStep === WorkflowStep.TOPIC_NORMALIZE &&
+                  message.messageType === "topic_confirm"
+                }
+                fullWidth
+                message={message}
+                onConfirmTopic={() => void confirmTopic()}
+                topicConfirmPending={sending}
+              />
             ))}
           </div>
+        ) : (
+          <div className="rounded-[20px] border border-slate-200 bg-white p-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+            <p className="text-base font-semibold text-slate-950">
+              {selectedStageIsActive ? "这个环节还没有产出内容" : "这个环节暂时没有历史内容"}
+            </p>
+            <p className="mt-2 text-sm font-normal leading-7 text-slate-600">
+              {selectedStageIsActive
+                ? "Tank 进入该环节后，会在这里显示结构化结果。"
+                : "点击其他流程块，可以继续回看已经完成的研究环节。"}
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-[20px] border border-[#e5e7eb] bg-white p-6 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+        <h3 className="mb-3 text-base font-semibold text-slate-950">AI ???</h3>
+        <p className="mb-3.5 text-sm font-normal leading-[1.6] text-slate-600">{helperText}</p>
+
+        {attachment ? (
+          <div className="mb-3 flex items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.06)]">
+                <FileIcon />
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-slate-900">{attachment.name}</p>
+                <p className="mt-1 text-xs font-normal text-slate-500">
+                  {formatAttachmentSize(attachment.size)}
+                  {attachment.truncated ? " ? ?????????" : " ? ????????"}
+                </p>
+              </div>
+            </div>
+            <button
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
+              onClick={() => setAttachment(null)}
+              type="button"
+            >
+              <CloseIcon />
+            </button>
+          </div>
+        ) : null}
+
+        <textarea
+          className="min-h-[120px] w-full resize-y rounded-[14px] border border-slate-200 bg-white px-4 py-3.5 text-sm font-normal leading-[1.7] text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-300 focus:ring-4 focus:ring-slate-200/60 disabled:cursor-not-allowed disabled:bg-slate-50"
+          disabled={sending}
+          onChange={(event) => setInput(event.target.value)}
+          onKeyDown={handleComposerKeyDown}
+          placeholder={placeholderText}
+          value={input}
+        />
+
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <input
+              accept=".txt,.md,.csv,.json,.log,.yml,.yaml,.xml,.html,.htm,.js,.ts,.tsx,.jsx,.py,.r,.sql,.tex,.do,.pdf,.docx,.xls,.xlsx,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              className="hidden"
+              onChange={handleAttachmentPick}
+              ref={fileInputRef}
+              type="file"
+            />
+            <button
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={sending}
+              onClick={() => fileInputRef.current?.click()}
+              type="button"
+            >
+              <PlusIcon />
+            </button>
+            <div className="min-w-0">
+              <p className="text-xs font-normal text-slate-400">{"Enter ???Shift + Enter ???"}</p>
+              {composerError ? (
+                <p className="mt-1 text-xs font-normal text-rose-500">{composerError}</p>
+              ) : attachment ? (
+                <p className="mt-1 truncate text-xs font-normal text-slate-500">
+                  ??? {attachment.name}????????? Tank ???
+                </p>
+              ) : listening ? (
+                <p className="mt-1 text-xs font-normal text-slate-500">?????????????????</p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              className={clsx(
+                "inline-flex h-10 w-10 items-center justify-center rounded-full border text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                listening
+                  ? "border-slate-900 bg-slate-900 text-white shadow-[0_8px_18px_rgba(15,23,42,0.18)]"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+              )}
+              disabled={sending}
+              onClick={handleMicClick}
+              type="button"
+            >
+              <MicIcon />
+            </button>
+            <button
+              className={clsx(
+                "inline-flex h-10 items-center justify-center rounded-[10px] px-[18px] text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-60",
+                sending ? "agent-breathing-button bg-slate-950 hover:bg-slate-950" : "bg-slate-950 hover:bg-[#111827]"
+              )}
+              disabled={sending || (!input.trim() && !attachment)}
+              onClick={() => void streamMessage(input, { attachment })}
+              type="button"
+            >
+              {sending ? "Tank?????" : "??"}
+            </button>
+          </div>
         </div>
-      </aside>
+      </div>
     </section>
   );
 }
+
+
+
+

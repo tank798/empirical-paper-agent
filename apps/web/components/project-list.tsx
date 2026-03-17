@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import type { ProjectDetail } from "@empirical/shared";
 import { apiRequest } from "../lib/api";
 import { formatDateTime, stepStatusMeta, workflowStepMeta } from "../lib/presentation";
-import { getStoredProjects } from "../lib/storage";
+import { getStoredProjects, removeStoredProject } from "../lib/storage";
 
 export function ProjectList() {
   const [projects, setProjects] = useState<ProjectDetail["project"][]>([]);
@@ -28,6 +28,11 @@ export function ProjectList() {
 
     void load();
   }, []);
+
+  const handleDeleteProject = (projectId: string) => {
+    removeStoredProject(projectId);
+    setProjects((current) => current.filter((project) => project.id !== projectId));
+  };
 
   return (
     <section className="rounded-[2rem] border border-white/70 bg-[var(--card)] p-8 shadow-card backdrop-blur">
@@ -56,24 +61,35 @@ export function ProjectList() {
         {projects.map((project) => {
           const stepMeta = workflowStepMeta[project.currentStep];
           return (
-            <Link
+            <div
               className="rounded-[1.75rem] border border-slate-200 bg-white/80 p-5 transition hover:-translate-y-0.5 hover:shadow-card"
-              href={`/projects/${project.id}`}
               key={project.id}
             >
               <div className="flex items-center justify-between gap-3">
                 <span className={`rounded-full px-3 py-1 text-xs font-semibold ${stepStatusMeta.IN_PROGRESS.tone}`}>
                   {stepMeta.short}
                 </span>
-                <span className="text-xs text-slate-500">{formatDateTime(project.updatedAt)}</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-500">{formatDateTime(project.updatedAt)}</span>
+                  <button
+                    className="text-xs font-medium text-slate-400 transition hover:text-rose-600"
+                    onClick={() => handleDeleteProject(project.id)}
+                    type="button"
+                  >
+                    删除项目
+                  </button>
+                </div>
               </div>
-              <h2 className="mt-4 text-xl leading-8 text-slate-900">{project.topicNormalized || project.topicRaw}</h2>
-              <p className="mt-3 text-sm leading-7 text-slate-600">{stepMeta.description}</p>
-              <div className="mt-5 flex items-center justify-between text-sm">
-                <span className="text-rust">当前阶段：{stepMeta.label}</span>
-                <span className="font-semibold text-slate-800">继续研究</span>
-              </div>
-            </Link>
+
+              <Link className="block" href={`/projects/${project.id}`}>
+                <h2 className="mt-4 text-xl leading-8 text-slate-900">{project.topicNormalized || project.topicRaw}</h2>
+                <p className="mt-3 text-sm leading-7 text-slate-600">{stepMeta.description}</p>
+                <div className="mt-5 flex items-center justify-between text-sm">
+                  <span className="text-rust">当前阶段：{stepMeta.label}</span>
+                  <span className="font-semibold text-slate-800">继续研究</span>
+                </div>
+              </Link>
+            </div>
           );
         })}
       </div>

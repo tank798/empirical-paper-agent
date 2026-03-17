@@ -1,4 +1,4 @@
-export const WorkflowStep = {
+﻿export const WorkflowStep = {
   TOPIC_DETECT: "TOPIC_DETECT",
   TOPIC_NORMALIZE: "TOPIC_NORMALIZE",
   SOP_GUIDE: "SOP_GUIDE",
@@ -50,6 +50,7 @@ export const AssistantMessageType = {
   TOPIC_CONFIRM: "topic_confirm",
   SOP_GUIDE: "sop_guide",
   SKILL_OUTPUT: "skill_output",
+  RESEARCH_CHAT: "research_chat",
   RESULT_INTERPRET: "result_interpret",
   STATA_ERROR_FIX: "stata_error_fix",
   SYSTEM_NOTICE: "system_notice"
@@ -69,6 +70,8 @@ export const SkillName = {
   MECHANISM: "mechanism",
   HETEROGENEITY: "heterogeneity",
   IV: "iv",
+  WORKFLOW_INPUT_INTERPRETER: "workflow_input_interpreter",
+  GENERAL_RESEARCH_CHAT: "general_research_chat",
   RESULT_INTERPRET: "result_interpret",
   STATA_ERROR_DEBUG: "stata_error_debug",
   EXPORT_TABLE: "export_table"

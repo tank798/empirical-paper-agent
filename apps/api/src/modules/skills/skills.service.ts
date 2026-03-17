@@ -1,4 +1,4 @@
-﻿import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable } from "@nestjs/common";
 import { RegressionSkillNames, SkillName, WorkflowStep, type ResearchProfile } from "@empirical/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { PromptService } from "../prompt/prompt.service";
@@ -8,6 +8,7 @@ import { ResearchProfileService } from "../research-profile/research-profile.ser
 import { MessagesService } from "../messages/messages.service";
 import { ProjectsService } from "../projects/projects.service";
 import { skillExecutionProfiles } from "./skill.execution-profiles";
+import { normalizeResearchObject, normalizeSopGuideMessage } from "./skill.utils";
 import { skillRegistry } from "./skills.registry";
 import type { SkillRunResult } from "./skill.types";
 
@@ -98,6 +99,13 @@ export class SkillsService {
       );
     }
 
+    if (params.skillName === SkillName.SOP_GUIDE && typeof output?.message === "string") {
+      output = {
+        ...output,
+        message: normalizeSopGuideMessage(output.message)
+      };
+    }
+
     const run = await this.prisma.skillRun.create({
       data: {
         projectId: params.projectId,
@@ -155,7 +163,7 @@ export class SkillsService {
     if (skillName === SkillName.SOP_GUIDE) {
       return {
         normalizedTopic: payload.normalizedTopic ?? profile?.normalizedTopic ?? project.topicNormalized ?? project.topicRaw,
-        researchObject: payload.researchObject ?? profile?.researchObject ?? "A-share listed firms"
+        researchObject: normalizeResearchObject((payload.researchObject as string | undefined) ?? profile?.researchObject ?? "A-share listed firms")
       };
     }
 
@@ -196,6 +204,28 @@ export class SkillsService {
           filePath: exportState.filePath,
           writeMode: exportState.writeMode
         }
+      };
+    }
+
+    if (skillName === SkillName.WORKFLOW_INPUT_INTERPRETER) {
+      return {
+        userMessage: payload.userMessage ?? "",
+        currentStep: payload.currentStep ?? project.currentStep,
+        currentModule: payload.currentModule ?? project.currentStep,
+        topic: profile?.normalizedTopic ?? project.topicNormalized ?? project.topicRaw,
+        recentAssistantMessages: recentMessages
+          .filter((message) => message.role !== "user")
+          .map((message) => message.contentText ?? JSON.stringify(message.contentJson ?? {}))
+          .filter(Boolean)
+          .slice(-4)
+      };
+    }
+
+    if (skillName === SkillName.GENERAL_RESEARCH_CHAT) {
+      return {
+        userQuestion: payload.userQuestion ?? payload.userMessage ?? "",
+        currentModule: payload.currentModule ?? project.currentStep,
+        topic: profile?.normalizedTopic ?? project.topicNormalized ?? project.topicRaw
       };
     }
 
@@ -246,7 +276,7 @@ export class SkillsService {
         normalizedTopic: researchProfile.normalizedTopic,
         independentVariable: researchProfile.independentVariable,
         dependentVariable: researchProfile.dependentVariable,
-        researchObject: researchProfile.researchObject,
+        researchObject: normalizeResearchObject(researchProfile.researchObject),
         relationship: researchProfile.relationship,
         controls: researchProfile.controls,
         fixedEffects: researchProfile.fixedEffects,

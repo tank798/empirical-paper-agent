@@ -3,26 +3,22 @@
 @tailwind utilities;
 
 :root {
-  --bg: #f5f8ff;
-  --card: rgba(255, 255, 255, 0.78);
-  --card-strong: rgba(255, 255, 255, 0.92);
-  --ink: #141923;
-  --muted: #677487;
-  --line: rgba(20, 25, 35, 0.08);
+  --bg: #f8fafc;
+  --card: rgba(255, 255, 255, 0.9);
+  --card-strong: rgba(255, 255, 255, 0.96);
+  --ink: #0f172a;
+  --muted: #64748b;
+  --line: rgba(15, 23, 42, 0.08);
   --accent: #4f63ff;
   --accent-strong: #3246d8;
   --font-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
-  --font-serif: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", "Songti SC", "STSong", serif;
+  --font-serif: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
 }
 
 html,
 body {
   min-height: 100%;
-  background:
-    radial-gradient(circle at 18% 15%, rgba(153, 194, 255, 0.34), transparent 24%),
-    radial-gradient(circle at 86% 14%, rgba(226, 242, 163, 0.38), transparent 22%),
-    radial-gradient(circle at 50% 72%, rgba(255, 255, 255, 0.92), transparent 40%),
-    linear-gradient(180deg, #f9fbff 0%, #eef4ff 54%, #f8fbff 100%);
+  background: #f8fafc;
   color: var(--ink);
 }
 
@@ -34,8 +30,8 @@ h1,
 h2,
 h3,
 h4 {
-  font-family: var(--font-serif);
-  font-weight: 500;
+  font-family: var(--font-sans);
+  font-weight: 600;
   letter-spacing: -0.02em;
 }
 
@@ -57,11 +53,11 @@ h4 {
 
 @layer utilities {
   .shadow-card {
-    box-shadow: 0 24px 72px rgba(40, 52, 82, 0.1);
+    box-shadow: 0 24px 72px rgba(40, 52, 82, 0.08);
   }
 
   .shadow-floating {
-    box-shadow: 0 20px 45px rgba(37, 47, 75, 0.13);
+    box-shadow: 0 18px 40px rgba(37, 47, 75, 0.12);
   }
 
   .text-ink {
@@ -74,15 +70,37 @@ h4 {
 
   .glass-panel {
     background: var(--card);
-    backdrop-filter: blur(16px);
+    backdrop-filter: blur(14px);
   }
 
   .glass-strong {
     background: var(--card-strong);
-    backdrop-filter: blur(18px);
+    backdrop-filter: blur(16px);
   }
 
   .surface-outline {
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+  }
+}
+
+
+@keyframes tank-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    box-shadow: 0 0 0 rgba(15, 23, 42, 0);
+  }
+
+  50% {
+    opacity: 0.86;
+    transform: translateY(-0.5px);
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.14);
+  }
+}
+
+@layer utilities {
+  .agent-breathing-button {
+    animation: tank-breathe 1.8s ease-in-out infinite;
   }
 }

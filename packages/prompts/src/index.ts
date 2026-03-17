@@ -1,4 +1,4 @@
-export const promptManifest = {
+﻿export const promptManifest = {
   system: { file: "common/system.md", version: "1.0.0" },
   skills: {
     topic_detect: { file: "skills/topic-detect/template.md", version: "1.0.0" },
@@ -11,6 +11,8 @@ export const promptManifest = {
     mechanism: { file: "skills/mechanism/template.md", version: "1.0.0" },
     heterogeneity: { file: "skills/heterogeneity/template.md", version: "1.0.0" },
     iv: { file: "skills/iv/template.md", version: "1.0.0" },
+    workflow_input_interpreter: { file: "skills/workflow-input-interpreter/template.md", version: "1.0.0" },
+    general_research_chat: { file: "skills/general-research-chat/template.md", version: "1.0.0" },
     result_interpret: { file: "skills/result-interpret/template.md", version: "1.0.0" },
     stata_error_debug: { file: "skills/stata-error-debug/template.md", version: "1.0.0" },
     export_table: { file: "skills/export-table/template.md", version: "1.0.0" }

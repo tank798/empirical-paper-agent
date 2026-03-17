@@ -1,4 +1,4 @@
-﻿import { BadRequestException, Injectable, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, Injectable, UnauthorizedException } from "@nestjs/common";
 import {
   MAIN_WORKFLOW_STEPS,
   ProjectStatus,
@@ -14,6 +14,7 @@ import {
   hashResumeToken,
   safeTitleFromTopic
 } from "../../common/token";
+import { normalizeResearchObject } from "../skills/skill.utils";
 
 @Injectable()
 export class ProjectsService {
@@ -111,7 +112,7 @@ export class ProjectsService {
             normalizedTopic: project.researchProfile.normalizedTopic,
             independentVariable: project.researchProfile.independentVariable,
             dependentVariable: project.researchProfile.dependentVariable,
-            researchObject: project.researchProfile.researchObject,
+            researchObject: normalizeResearchObject(project.researchProfile.researchObject),
             relationship: project.researchProfile.relationship,
             controls: project.researchProfile.controls,
             fixedEffects: project.researchProfile.fixedEffects,

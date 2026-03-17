@@ -1,4 +1,4 @@
-﻿import {
+import {
   AssistantMessageType,
   ExportWriteMode,
   ProjectStepStatus,
@@ -28,9 +28,9 @@ export const workflowStepMeta: Record<
     phase: "mvp"
   },
   SOP_GUIDE: {
-    label: "SOP 路径引导",
-    short: "SOP 指引",
-    description: "给出当前题目的推荐研究路径和下一步动作。",
+    label: "研究路径",
+    short: "研究路径",
+    description: "给出当前题目的推荐推进路径和下一步动作。",
     phase: "mvp"
   },
   DATA_CLEANING: {
@@ -124,12 +124,16 @@ export const messageTypeMeta: Record<
     tone: "text-rust"
   },
   sop_guide: {
-    label: "SOP 指引",
+    label: "研究路径",
     tone: "text-emerald-700"
   },
   skill_output: {
     label: "技能输出",
     tone: "text-slate-700"
+  },
+  research_chat: {
+    label: "研究问答",
+    tone: "text-cyan-700"
   },
   result_interpret: {
     label: "结果解读",
@@ -148,7 +152,7 @@ export const messageTypeMeta: Record<
 export const moduleLabelMap: Record<string, string> = {
   topic_detect: "研究主题识别",
   topic_normalize: "主题标准化",
-  sop_guide: "SOP 指引",
+  sop_guide: "研究路径",
   data_cleaning: "数据清洗",
   data_check: "数据检查",
   baseline_regression: "基准回归",
@@ -156,14 +160,11 @@ export const moduleLabelMap: Record<string, string> = {
   mechanism: "机制分析",
   heterogeneity: "异质性分析",
   iv: "内生性检验（IV）",
+  general_research_chat: "研究问答",
   export_table: "回归表导出"
 };
 
 export const quickActionMap: Partial<Record<WorkflowStep, Array<{ label: string; value: string }>>> = {
-  TOPIC_NORMALIZE: [
-    { label: "确认主题", value: "是的，继续" },
-    { label: "我想改一下题目", value: "我想重新描述一下题目" }
-  ],
   SOP_GUIDE: [{ label: "进入数据清洗", value: "继续进入数据清洗" }],
   DATA_CLEANING: [
     { label: "进入数据检查", value: "继续进入数据检查" },

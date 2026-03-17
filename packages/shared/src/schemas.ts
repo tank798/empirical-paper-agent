@@ -27,6 +27,7 @@ export const assistantMessageTypeSchema = z.enum([
   AssistantMessageType.TOPIC_CONFIRM,
   AssistantMessageType.SOP_GUIDE,
   AssistantMessageType.SKILL_OUTPUT,
+  AssistantMessageType.RESEARCH_CHAT,
   AssistantMessageType.RESULT_INTERPRET,
   AssistantMessageType.STATA_ERROR_FIX,
   AssistantMessageType.SYSTEM_NOTICE
@@ -42,6 +43,8 @@ export const skillNameSchema = z.enum([
   SkillName.MECHANISM,
   SkillName.HETEROGENEITY,
   SkillName.IV,
+  SkillName.WORKFLOW_INPUT_INTERPRETER,
+  SkillName.GENERAL_RESEARCH_CHAT,
   SkillName.RESULT_INTERPRET,
   SkillName.STATA_ERROR_DEBUG,
   SkillName.EXPORT_TABLE
@@ -214,6 +217,55 @@ export const regressionSkillOutputSchema = z.object({
   nextSuggestion: z.string()
 });
 
+export const generalResearchChatInputSchema = z.object({
+  userQuestion: z.string().min(1),
+  currentModule: z.string().optional().default(""),
+  topic: z.string().optional().default("")
+});
+
+export const generalResearchChatOutputSchema = z.object({
+  answer: z.string(),
+  keyPoints: z.array(z.string()).optional().default([]),
+  suggestedNextActions: z.array(z.string()).optional().default([])
+});
+
+export const workflowInputInterpreterProfilePatchSchema = researchProfileSchema
+  .pick({
+    normalizedTopic: true,
+    independentVariable: true,
+    dependentVariable: true,
+    researchObject: true,
+    relationship: true,
+    controls: true,
+    fixedEffects: true,
+    clusterVar: true,
+    panelId: true,
+    timeVar: true,
+    sampleScope: true,
+    notes: true
+  })
+  .partial();
+
+export const workflowInputInterpreterInputSchema = z.object({
+  userMessage: z.string().min(1),
+  currentStep: workflowStepSchema,
+  currentModule: z.string().optional().default(""),
+  topic: z.string().optional().default(""),
+  recentAssistantMessages: z.array(z.string()).optional().default([])
+});
+
+export const workflowInputInterpreterOutputSchema = z.object({
+  route: z.enum(["continue_workflow", "ask_clarification", "general_research_chat"]),
+  interpretedIntent: z.string(),
+  normalizedUserMessage: z.string().optional().default(""),
+  clarificationQuestion: z.string().optional().default(""),
+  guidanceTitle: z.string().optional().default(""),
+  guidanceOptions: z.array(z.string()).optional().default([]),
+  reason: z.string().optional().default(""),
+  confidence: z.enum(["high", "medium", "low"]).optional().default("medium"),
+  profileUpdates: workflowInputInterpreterProfilePatchSchema.optional().default({})
+});
+
 export const resultInterpretInputSchema = z.object({
   resultText: z.string().min(1),
   currentModule: z.string(),
@@ -287,6 +339,11 @@ export type DataCheckInput = z.infer<typeof dataCheckInputSchema>;
 export type DataCheckOutput = z.infer<typeof dataCheckOutputSchema>;
 export type RegressionSkillInput = z.infer<typeof regressionSkillInputSchema>;
 export type RegressionSkillOutput = z.infer<typeof regressionSkillOutputSchema>;
+export type GeneralResearchChatInput = z.infer<typeof generalResearchChatInputSchema>;
+export type GeneralResearchChatOutput = z.infer<typeof generalResearchChatOutputSchema>;
+export type WorkflowInputInterpreterProfilePatch = z.infer<typeof workflowInputInterpreterProfilePatchSchema>;
+export type WorkflowInputInterpreterInput = z.infer<typeof workflowInputInterpreterInputSchema>;
+export type WorkflowInputInterpreterOutput = z.infer<typeof workflowInputInterpreterOutputSchema>;
 export type ResultInterpretInput = z.infer<typeof resultInterpretInputSchema>;
 export type ResultInterpretOutput = z.infer<typeof resultInterpretOutputSchema>;
 export type StataErrorDebugInput = z.infer<typeof stataErrorDebugInputSchema>;

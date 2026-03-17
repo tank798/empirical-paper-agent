@@ -1,4 +1,4 @@
-const STORAGE_KEY = "empirical-agent-projects";
+﻿const STORAGE_KEY = "empirical-agent-projects";
 
 type StoredProject = {
   id: string;
@@ -26,6 +26,15 @@ export function saveStoredProject(project: StoredProject) {
 
   const existing = getStoredProjects().filter((item) => item.id !== project.id);
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify([project, ...existing]));
+}
+
+export function removeStoredProject(projectId: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const remaining = getStoredProjects().filter((item) => item.id !== projectId);
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(remaining));
 }
 
 export function getStoredProject(projectId: string) {

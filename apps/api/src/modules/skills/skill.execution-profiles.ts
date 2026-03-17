@@ -61,6 +61,18 @@ export const skillExecutionProfiles: Record<SkillName, SkillExecutionProfile> = 
     promptMessageLimit: 0,
     includeResearchProfileInPrompt: false
   },
+  [SkillName.WORKFLOW_INPUT_INTERPRETER]: {
+    llmProfile: "fast",
+    inferenceMessageLimit: 6,
+    promptMessageLimit: 6,
+    includeResearchProfileInPrompt: true
+  },
+  [SkillName.GENERAL_RESEARCH_CHAT]: {
+    llmProfile: "fast",
+    inferenceMessageLimit: 6,
+    promptMessageLimit: 6,
+    includeResearchProfileInPrompt: true
+  },
   [SkillName.RESULT_INTERPRET]: {
     llmProfile: "fast",
     inferenceMessageLimit: 0,

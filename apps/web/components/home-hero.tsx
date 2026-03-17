@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -102,7 +102,7 @@ export function HomeHero() {
               onClick={() => void createProject()}
               type="button"
             >
-              {loading ? "正在调用技能..." : "开始对话"}
+              {loading ? "Tank正在思考中" : "开始对话"}
               <ArrowIcon />
             </button>
           </div>

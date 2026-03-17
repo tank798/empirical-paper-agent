@@ -1,6 +1,9 @@
-﻿import {
+import {
   ExportWriteMode,
   SkillName,
+  WorkflowStep,
+  type GeneralResearchChatInput,
+  type GeneralResearchChatOutput,
   type PlaceholderSkillOutput,
   type RegressionSkillInput,
   type RegressionSkillOutput,
@@ -9,7 +12,10 @@
   type StataErrorDebugInput,
   type StataErrorDebugOutput,
   type TopicDetectOutput,
-  type TopicNormalizeOutput
+  type TopicNormalizeOutput,
+  type WorkflowInputInterpreterInput,
+  type WorkflowInputInterpreterOutput,
+  type WorkflowInputInterpreterProfilePatch
 } from "@empirical/shared";
 
 function cleanTerm(value: string) {
@@ -20,6 +26,484 @@ const CHINESE_INFLUENCE = "\\u5f71\\u54cd";
 const CHINESE_TO = "\\u5bf9";
 const CHINESE_AND = "\\u4e0e";
 const CHINESE_AND_ALT = "\\u8207";
+
+export const DEFAULT_RESEARCH_OBJECT = "中国A股上市公司";
+
+const GENERIC_RESEARCH_OBJECTS = new Set([
+  "中国企业",
+  "企业",
+  "上市公司",
+  "中国上市公司",
+  "A 股上市公司",
+  "A股上市公司",
+  "A-share listed firms"
+]);
+
+export function normalizeResearchObject(value?: string | null) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return DEFAULT_RESEARCH_OBJECT;
+  }
+
+  return GENERIC_RESEARCH_OBJECTS.has(trimmed) ? DEFAULT_RESEARCH_OBJECT : trimmed;
+}
+
+export function normalizeSopGuideMessage(value?: string | null) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (trimmed.includes("请提供以下关键信息以生成完整 SOP")) {
+    return [
+      "我建议的变量构建方法如下：",
+      "1. 核心解释变量：金融监管强度的具体衡量指标（如监管处罚数量、监管发文数量等）",
+      "2. 被解释变量：企业ESG表现的具体数据来源（如商道融绿、华证等）",
+      "3. 控制变量列表",
+      "4. 固定效应设定（是否使用行业、年份双固定效应）",
+      "5. 数据时间范围",
+      "如果你愿意，我可以基于这套设定继续生成数据清洗与回归代码。"
+    ].join("\n");
+  }
+
+  return trimmed;
+}
+
+export function buildGeneralResearchChatOutput(input: GeneralResearchChatInput): GeneralResearchChatOutput {
+  const question = input.userQuestion.trim();
+  const topicLead = input.topic ? `结合你当前的题目“${input.topic}”，` : "";
+
+  if (/固定效应/.test(question)) {
+    return {
+      answer:
+        `${topicLead}固定效应的作用是控制那些不随时间变化、但会影响结果变量的个体差异，以及共同时间冲击。双向固定效应通常表示同时控制个体固定效应和年份固定效应，这样更容易把核心解释变量的净影响识别出来。`,
+      keyPoints: [
+        "个体固定效应控制企业层面不随时间变化的遗漏因素。",
+        "年份固定效应控制宏观冲击、政策周期和共同趋势。",
+        "如果你的核心变量主要在企业和年份两个维度变化，双向固定效应通常是常见起点。"
+      ],
+      suggestedNextActions: [
+        "明确个体维度和时间维度分别是什么。",
+        "确认是否需要行业、地区等更细粒度固定效应。"
+      ]
+    };
+  }
+
+  if (/控制变量/.test(question)) {
+    return {
+      answer:
+        `${topicLead}控制变量的核心目标是尽量缓解遗漏变量偏误。经管实证里，通常优先纳入会同时影响核心解释变量和结果变量的企业特征、财务特征与治理特征，而不是机械堆变量。`,
+      keyPoints: [
+        "优先选择文献中常见且理论上相关的控制变量。",
+        "控制变量需要有清晰口径，避免和核心解释变量高度重合。",
+        "最终模型里变量数量要和样本量、共线性风险一起考虑。"
+      ],
+      suggestedNextActions: [
+        "先列出 5 到 8 个最常见控制变量。",
+        "逐个确认变量定义、计算方式和数据来源。"
+      ]
+    };
+  }
+
+  if (/内生性/.test(question)) {
+    return {
+      answer:
+        `${topicLead}内生性通常来自反向因果、遗漏变量或测量误差。处理顺序一般不是一上来就做 IV，而是先把基准回归、固定效应、控制变量和稳健性检验做好，再决定是否需要更强的识别策略。`,
+      keyPoints: [
+        "先判断内生性来源，再选处理方法。",
+        "常见方法包括工具变量、滞后项、双重差分或自然实验。",
+        "如果识别策略解释不清，方法再复杂也站不住。"
+      ],
+      suggestedNextActions: [
+        "先说明你最担心的是哪一种内生性。",
+        "再看当前题目有没有合适的外生冲击或工具变量。"
+      ]
+    };
+  }
+
+  if (/稳健性/.test(question)) {
+    return {
+      answer:
+        `${topicLead}稳健性检验的核心不是重复做回归，而是验证你的主结论是否依赖某个特定口径、样本或模型设定。只要主结论在合理替代设定下仍然成立，论文说服力就会强很多。`,
+      keyPoints: [
+        "可以从替换变量、缩尾样本、替代模型三个方向展开。",
+        "稳健性方案要和主假设保持一致，不能为了做而做。",
+        "每一种稳健性检验都需要解释它在排除什么担忧。"
+      ],
+      suggestedNextActions: [
+        "先列出你主回归里最脆弱的一项设定。",
+        "围绕这项设定设计 2 到 3 个替代检验。"
+      ]
+    };
+  }
+
+  if (/机制/.test(question)) {
+    return {
+      answer:
+        `${topicLead}机制分析的重点是说明核心解释变量为什么会影响结果变量，也就是把“是否有效”推进到“为何有效”。常见做法是找到一个能代表中介渠道的变量，再检验核心解释变量是否先影响这个中介变量。`,
+      keyPoints: [
+        "机制变量必须和理论链条一一对应。",
+        "先写清理论路径，再决定用中介回归还是分组检验。",
+        "机制分析不是简单多加一个变量，而是验证作用路径。"
+      ],
+      suggestedNextActions: [
+        "先用一句话写出你的理论机制。",
+        "再找能量化这个渠道的代理变量。"
+      ]
+    };
+  }
+
+  return {
+    answer:
+      `${topicLead}这个问题可以从研究设计、变量构建和识别策略三个层面来理解。先把问题放回你当前的论文框架里，明确它影响的是题目设定、数据处理，还是后续回归识别，再决定下一步该补什么信息。`,
+    keyPoints: [
+      "先判断这是概念问题、变量问题还是识别问题。",
+      "尽量把提问和当前题目、样本、变量设定挂钩。",
+      "如果问题和当前步骤直接相关，优先补足能推进下一步的信息。"
+    ],
+    suggestedNextActions: [
+      "可以继续追问得更具体一些，例如某个变量、模型或识别策略。"
+    ]
+  };
+}
+
+const interpreterConfirmWords = new Set([
+  "yes",
+  "ok",
+  "okay",
+  "confirm",
+  "confirmed",
+  "sure",
+  "\u662f",
+  "\u662f\u7684",
+  "\u597d",
+  "\u597d\u7684",
+  "\u884c",
+  "\u53ef\u4ee5",
+  "\u786e\u8ba4",
+  "\u786e\u8ba4\u4e3b\u9898"
+]);
+
+function normalizeIntentText(text: string) {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[\s,\uFF0C\u3002.!?\uFF01\uFF1F;\uFF1B:\uFF1A]/g, "");
+}
+
+function splitItems(value: string) {
+  return value
+    .replace(/[\uFF0C\u3001\uFF1B]/g, ",")
+    .split(/[\s,\/]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function firstMatch(text: string, patterns: RegExp[]) {
+  for (const pattern of patterns) {
+    const value = text.match(pattern)?.[1]?.trim();
+    if (value) {
+      return value.replace(/^[=:\uFF1A]/, "").trim();
+    }
+  }
+
+  return "";
+}
+
+function buildFieldPattern(labels: string[]) {
+  const joined = labels.join("|");
+  return new RegExp(
+    String.raw`(?:${joined})(?:\s*(?::|\uFF1A|=)\s*|\s*(?:\u662f|\u4e3a|\u6539\u6210|\u6539\u4e3a|\u6362\u6210)\s*)([^\n\r,\uFF0C;\uFF1B]+)`,
+    "i"
+  );
+}
+
+function looksLikeWorkflowQuestion(text: string) {
+  if (/[?\uFF1F]/.test(text)) {
+    return true;
+  }
+
+  return /^(what|why|how|can|could|would|should|is|are|do|does|did|\u4ec0\u4e48|\u4e3a\u4ec0\u4e48|\u600e\u4e48|\u5982\u4f55|\u662f\u5426|\u53ef\u5426|\u80fd\u5426|\u8bf7\u95ee|\u89e3\u91ca|\u6211\u60f3\u95ee|\u60f3\u95ee)/i.test(text)
+    || /(\u56fa\u5b9a\u6548\u5e94|\u63a7\u5236\u53d8\u91cf|\u5185\u751f\u6027|\u7a33\u5065\u6027|\u673a\u5236|\u5f02\u8d28\u6027|\u53d8\u91cf\u6784\u5efa|\u6307\u6807|\u7406\u8bba|\u6587\u732e|\u8bc6\u522b\u7b56\u7565)/i.test(text);
+}
+
+function looksLikeWorkflowAdvance(text: string) {
+  return /(next|continue|start|go|\u4e0b\u4e00\u6b65|\u7ee7\u7eed|\u5f00\u59cb|\u5f80\u4e0b|\u7ee7\u7eed\u63a8\u8fdb)/i.test(text);
+}
+
+function looksLikeAmbiguousFeedback(text: string) {
+  return /(\u4e0d\u884c|\u4e0d\u592a\u884c|\u4e0d\u5bf9|\u4e0d\u592a\u5bf9|\u4e0d\u5408\u9002|\u4e0d\u597d|\u4e0d\u662f\u8fd9\u4e2a|\u6ca1\u61c2|\u4e0d\u660e\u767d|\u592a\u6cdb\u4e86|\u592a\u5bbd\u4e86|\u592a\u7a84\u4e86)/i.test(text);
+}
+
+function looksLikeTopicCandidateText(text: string) {
+  return /(\u5bf9|\u4e0e|\u5f71\u54cd|\u6548\u5e94|\u5173\u7cfb|\u662f\u5426|\u4f5c\u7528\u4e8e|impact|effect|relation)/i.test(text)
+    && text.trim().length >= 6;
+}
+
+function looksLikeTopicReset(text: string) {
+  return /(\u6362\u4e00\u4e2a|\u6362\u4e2a|\u91cd\u65b0\u6765|\u91cd\u6765|\u91cd\u5199|\u91cd\u505a|\u53e6\u4e00\u4e2a|\u91cd\u65b0\u9009\u9898|\u91cd\u65b0\u6362\u9898)/i.test(text)
+    && !looksLikeTopicCandidateText(text);
+}
+
+function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch {
+  const updates: WorkflowInputInterpreterProfilePatch = {};
+
+  const independentVariable = firstMatch(text, [
+    buildFieldPattern(["\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf", "\u89e3\u91ca\u53d8\u91cf", "\u81ea\u53d8\u91cf"]),
+    buildFieldPattern(["independent variable", "x variable"])
+  ]);
+  if (independentVariable) {
+    updates.independentVariable = independentVariable;
+  }
+
+  const dependentVariable = firstMatch(text, [
+    buildFieldPattern(["\u88ab\u89e3\u91ca\u53d8\u91cf", "\u56e0\u53d8\u91cf", "\u7ed3\u679c\u53d8\u91cf"]),
+    buildFieldPattern(["dependent variable", "y variable"])
+  ]);
+  if (dependentVariable) {
+    updates.dependentVariable = dependentVariable;
+  }
+
+  const researchObject = firstMatch(text, [
+    buildFieldPattern(["\u7814\u7a76\u5bf9\u8c61", "\u6837\u672c", "\u7814\u7a76\u6837\u672c"]),
+    buildFieldPattern(["research object", "sample"])
+  ]);
+  if (researchObject) {
+    updates.researchObject = normalizeResearchObject(researchObject);
+  }
+
+  const relationship = firstMatch(text, [
+    buildFieldPattern(["\u5173\u7cfb\u7c7b\u578b", "\u4f5c\u7528\u65b9\u5411", "\u5047\u8bbe\u65b9\u5411"]),
+    buildFieldPattern(["relationship", "effect direction"])
+  ]);
+  if (relationship) {
+    updates.relationship = relationship;
+  }
+
+  const normalizedTopic = firstMatch(text, [
+    buildFieldPattern(["\u6807\u51c6\u5316\u9898\u76ee", "\u9898\u76ee", "\u4e3b\u9898"]),
+    buildFieldPattern(["topic", "title"])
+  ]);
+  if (normalizedTopic && normalizedTopic.length >= 4) {
+    updates.normalizedTopic = normalizedTopic;
+  }
+
+  const controlsRaw = firstMatch(text, [
+    buildFieldPattern(["\u63a7\u5236\u53d8\u91cf", "\u63a7\u5236\u53d8\u91cf\u5217\u8868"]),
+    buildFieldPattern(["controls", "control variables"])
+  ]);
+  if (controlsRaw) {
+    updates.controls = splitItems(controlsRaw);
+  }
+
+  const fixedEffectsRaw = firstMatch(text, [
+    buildFieldPattern(["\u56fa\u5b9a\u6548\u5e94", "\u56fa\u5b9a\u6548\u5e94\u8bbe\u5b9a"]),
+    buildFieldPattern(["fixed effects", "fe"])
+  ]);
+  if (fixedEffectsRaw) {
+    if (/\u53cc\u56fa\u5b9a\u6548\u5e94/.test(fixedEffectsRaw)) {
+      updates.fixedEffects = ["firm", "year"];
+    } else {
+      updates.fixedEffects = splitItems(fixedEffectsRaw);
+    }
+  }
+
+  const clusterVar = firstMatch(text, [
+    buildFieldPattern(["\u805a\u7c7b\u53d8\u91cf", "\u805a\u7c7b\u6807\u51c6\u8bef"]),
+    buildFieldPattern(["cluster variable", "cluster var"])
+  ]);
+  if (clusterVar) {
+    updates.clusterVar = clusterVar;
+  }
+
+  const panelId = firstMatch(text, [
+    buildFieldPattern(["\u9762\u677f\u4e3b\u4f53", "\u4e2a\u4f53id", "\u4f01\u4e1aid"]),
+    buildFieldPattern(["panel id", "entity id", "firm id"])
+  ]);
+  if (panelId) {
+    updates.panelId = panelId;
+  }
+
+  const timeVar = firstMatch(text, [
+    buildFieldPattern(["\u65f6\u95f4\u53d8\u91cf", "\u5e74\u4efd\u53d8\u91cf", "\u65f6\u95f4\u7ef4\u5ea6"]),
+    buildFieldPattern(["time variable", "year variable", "time var"])
+  ]);
+  if (timeVar) {
+    updates.timeVar = timeVar;
+  }
+
+  const sampleScope = firstMatch(text, [
+    buildFieldPattern(["\u6837\u672c\u8303\u56f4", "\u6570\u636e\u65f6\u95f4\u8303\u56f4", "\u65f6\u95f4\u8303\u56f4"]),
+    buildFieldPattern(["sample scope", "time range", "sample range"])
+  ]);
+  if (sampleScope) {
+    updates.sampleScope = sampleScope;
+  }
+
+  return Object.fromEntries(
+    Object.entries(updates).filter(([, value]) => {
+      if (value == null) {
+        return false;
+      }
+      if (typeof value === "string") {
+        return value.trim().length > 0;
+      }
+      if (Array.isArray(value)) {
+        return value.length > 0;
+      }
+      return true;
+    })
+  ) as WorkflowInputInterpreterProfilePatch;
+}
+
+function buildClarificationForStep(step: WorkflowStep) {
+  if (step === WorkflowStep.TOPIC_DETECT || step === WorkflowStep.TOPIC_NORMALIZE) {
+    return {
+      clarificationQuestion:
+        "\u4f60\u53ef\u4ee5\u5148\u7528\u4e00\u53e5\u81ea\u7136\u8bed\u8a00\u8bf4\u4f60\u60f3\u7814\u7a76\u4ec0\u4e48\uff0c\u6216\u8005\u76f4\u63a5\u8bf4\u4f60\u60f3\u6362\u6210\u4ec0\u4e48\u65b9\u5411\u3002\u6211\u4f1a\u5148\u5e2e\u4f60\u6574\u7406\u6210\u8bba\u6587\u9898\u76ee\uff0c\u518d\u8bf7\u4f60\u786e\u8ba4\u3002",
+      guidanceTitle: "\u4f60\u53ef\u4ee5\u8fd9\u6837\u8bf4",
+      guidanceOptions: [
+        "\u6211\u60f3\u7814\u7a76\u91d1\u878d\u76d1\u7ba1\u5bf9\u4f01\u4e1aESG\u7684\u5f71\u54cd",
+        "\u628a\u7814\u7a76\u5bf9\u8c61\u6539\u6210\u4e2d\u56fdA\u80a1\u4e0a\u5e02\u516c\u53f8",
+        "\u8fd9\u4e2a\u65b9\u5411\u592a\u6cdb\u4e86\uff0c\u6211\u60f3\u6539\u6210\u6570\u5b57\u91d1\u878d\u5bf9\u4f01\u4e1a\u521b\u65b0\u7684\u5f71\u54cd"
+      ]
+    };
+  }
+
+  if (step === WorkflowStep.SOP_GUIDE || step === WorkflowStep.DATA_CLEANING || step === WorkflowStep.DATA_CHECK) {
+    return {
+      clarificationQuestion:
+        "\u6211\u5148\u786e\u8ba4\u4e00\u4e0b\u4f60\u7684\u610f\u601d\u3002\u4f60\u662f\u60f3\u4fee\u6539\u53d8\u91cf\u8bbe\u5b9a\uff0c\u8865\u5145\u6570\u636e\u53e3\u5f84\uff0c\u8fd8\u662f\u76f4\u63a5\u7ee7\u7eed\u4e0b\u4e00\u6b65\uff1f\u5982\u679c\u65b9\u4fbf\uff0c\u76f4\u63a5\u8bf4\u4f60\u8981\u6539\u54ea\u4e00\u9879\u3002",
+      guidanceTitle: "\u4f60\u53ef\u4ee5\u8fd9\u6837\u8bf4",
+      guidanceOptions: [
+        "\u7814\u7a76\u5bf9\u8c61\u6539\u6210\u4e2d\u56fdA\u80a1\u4e0a\u5e02\u516c\u53f8",
+        "\u63a7\u5236\u53d8\u91cf\u589e\u52a0\u4f01\u4e1a\u89c4\u6a21\u548c\u8d44\u4ea7\u8d1f\u503a\u7387",
+        "\u5982\u679c\u6ca1\u95ee\u9898\uff0c\u5c31\u7ee7\u7eed\u5230\u4e0b\u4e00\u6b65"
+      ]
+    };
+  }
+
+  return {
+    clarificationQuestion:
+      "\u6211\u5148\u786e\u8ba4\u4e00\u4e0b\u4f60\u60f3\u8c03\u6574\u7684\u662f\u54ea\u4e00\u90e8\u5206\u3002\u4f60\u53ef\u4ee5\u76f4\u63a5\u8bf4\u8981\u4fee\u6539\u53d8\u91cf\u3001\u6a21\u578b\u8bbe\u5b9a\uff0c\u6216\u8005\u8ba9\u6211\u5148\u89e3\u91ca\u4e00\u4e0b\u8fd9\u4e2a\u6982\u5ff5\u3002",
+    guidanceTitle: "\u4f60\u53ef\u4ee5\u8fd9\u6837\u8bf4",
+    guidanceOptions: [
+      "\u8bf7\u5148\u89e3\u91ca\u4e00\u4e0b\u53cc\u5411\u56fa\u5b9a\u6548\u5e94",
+      "\u6211\u60f3\u628a\u63a7\u5236\u53d8\u91cf\u518d\u8865\u5145\u5b8c\u6574\u4e00\u70b9",
+      "\u5982\u679c\u8fd9\u4e00\u6b65\u6ca1\u95ee\u9898\uff0c\u5c31\u7ee7\u7eed"
+    ]
+  };
+}
+
+export function buildWorkflowInputInterpreterOutput(
+  input: WorkflowInputInterpreterInput
+): WorkflowInputInterpreterOutput {
+  const message = input.userMessage.trim();
+  const normalized = normalizeIntentText(message);
+  const profileUpdates = inferProfileUpdates(message);
+  const hasProfileUpdates = Object.keys(profileUpdates).length > 0;
+
+  if (input.currentStep === WorkflowStep.TOPIC_NORMALIZE && interpreterConfirmWords.has(normalized)) {
+    return {
+      route: "continue_workflow",
+      interpretedIntent: "confirm_topic",
+      normalizedUserMessage: "\u786e\u8ba4\u4e3b\u9898",
+      clarificationQuestion: "",
+      guidanceTitle: "",
+      guidanceOptions: [],
+      reason: "\u7528\u6237\u5df2\u660e\u786e\u786e\u8ba4\u4e3b\u9898",
+      confidence: "high",
+      profileUpdates: {}
+    };
+  }
+
+  if (looksLikeWorkflowAdvance(message)) {
+    return {
+      route: "continue_workflow",
+      interpretedIntent: "advance_workflow",
+      normalizedUserMessage:
+        input.currentStep === WorkflowStep.TOPIC_NORMALIZE
+          ? "\u786e\u8ba4\u4e3b\u9898"
+          : "\u7ee7\u7eed\u8fdb\u5165\u4e0b\u4e00\u6b65",
+      clarificationQuestion: "",
+      guidanceTitle: "",
+      guidanceOptions: [],
+      reason: "\u7528\u6237\u5e0c\u671b\u63a8\u8fdb\u5f53\u524dworkflow",
+      confidence: "high",
+      profileUpdates
+    };
+  }
+
+  if (looksLikeWorkflowQuestion(message)) {
+    return {
+      route: "general_research_chat",
+      interpretedIntent: "general_research_question",
+      normalizedUserMessage: message,
+      clarificationQuestion: "",
+      guidanceTitle: "",
+      guidanceOptions: [],
+      reason: "\u7528\u6237\u5728\u63d0\u51fa\u7814\u7a76\u65b9\u6cd5\u6216\u6982\u5ff5\u95ee\u9898",
+      confidence: "high",
+      profileUpdates: {}
+    };
+  }
+
+  if (hasProfileUpdates) {
+    return {
+      route: "continue_workflow",
+      interpretedIntent: "update_research_profile",
+      normalizedUserMessage: message,
+      clarificationQuestion: "",
+      guidanceTitle: "",
+      guidanceOptions: [],
+      reason: "\u7528\u6237\u5728\u8865\u5145\u6216\u4fee\u6539\u7814\u7a76\u8bbe\u5b9a",
+      confidence: "high",
+      profileUpdates
+    };
+  }
+
+  if (input.currentStep === WorkflowStep.TOPIC_NORMALIZE && looksLikeTopicReset(message)) {
+    const clarification = buildClarificationForStep(input.currentStep);
+    return {
+      route: "ask_clarification",
+      interpretedIntent: "replace_topic_direction",
+      normalizedUserMessage: "",
+      clarificationQuestion: clarification.clarificationQuestion,
+      guidanceTitle: clarification.guidanceTitle,
+      guidanceOptions: clarification.guidanceOptions,
+      reason: "\u7528\u6237\u60f3\u6362\u9898\uff0c\u4f46\u8fd8\u6ca1\u7ed9\u51fa\u65b0\u7684\u65b9\u5411",
+      confidence: "medium",
+      profileUpdates: {}
+    };
+  }
+
+  if (looksLikeAmbiguousFeedback(message) || (interpreterConfirmWords.has(normalized) && input.currentStep !== WorkflowStep.TOPIC_NORMALIZE)) {
+    const clarification = buildClarificationForStep(input.currentStep);
+    return {
+      route: "ask_clarification",
+      interpretedIntent: "ambiguous_feedback",
+      normalizedUserMessage: "",
+      clarificationQuestion: clarification.clarificationQuestion,
+      guidanceTitle: clarification.guidanceTitle,
+      guidanceOptions: clarification.guidanceOptions,
+      reason: "\u7528\u6237\u53cd\u9988\u8f83\u6a21\u7cca\uff0c\u8fd8\u4e0d\u8db3\u4ee5\u76f4\u63a5\u63a8\u8fdbworkflow",
+      confidence: "medium",
+      profileUpdates: {}
+    };
+  }
+
+  return {
+    route: "continue_workflow",
+    interpretedIntent: "direct_workflow_input",
+    normalizedUserMessage: message,
+    clarificationQuestion: "",
+    guidanceTitle: "",
+    guidanceOptions: [],
+    reason: "\u6309\u5f53\u524dworkflow\u8f93\u5165\u7ee7\u7eed\u5904\u7406",
+    confidence: "medium",
+    profileUpdates: {}
+  };
+}
 
 export function detectTopic(raw: string): TopicDetectOutput {
   const input = raw.trim();
@@ -81,35 +565,66 @@ export function detectTopic(raw: string): TopicDetectOutput {
   };
 }
 
+function normalizeTopicFragment(value: string, role: "x" | "y") {
+  let cleaned = cleanTerm(value)
+    .replace(/s+/g, " ")
+    .replace(/^[“”"'`s]+|[“”"'`s]+$/gu, "")
+    .trim();
+
+  if (role === "y") {
+    cleaned = cleaned
+      .replace(/(?:的)?影响研究$/u, "")
+      .replace(/(?:的)?效应研究$/u, "")
+      .replace(/(?:的)?关系研究$/u, "")
+      .replace(/(?:的)?影响$/u, "")
+      .replace(/(?:的)?效应$/u, "")
+      .replace(/(?:的)?关系$/u, "")
+      .replace(/研究$/u, "")
+      .trim();
+  }
+
+  return cleaned || value.trim();
+}
+
 export function normalizeTopic(raw: string): TopicNormalizeOutput {
   const input = raw.trim();
-  const againstPattern = input.match(new RegExp(`(.+?)(?:${CHINESE_TO}|${CHINESE_AND}|${CHINESE_AND_ALT}|to)(.+?)(?:${CHINESE_INFLUENCE}|impact|effect)?$`, "i"));
-  const relationPattern = input.match(/(.+?)\s+(?:affects?|impacts?)\s+(.+)/i);
+  const chineseStructuredPattern = input.match(/^(.+?)(?:对|与|和)(.+?)(?:的)?(?:影响|效应|关系)(?:研究)?$/u);
+  const againstPattern = input.match(
+    new RegExp(`(.+?)(?:${CHINESE_TO}|${CHINESE_AND}|${CHINESE_AND_ALT}|to)(.+?)(?:${CHINESE_INFLUENCE}|impact|effect)?$`, "i")
+  );
+  const relationPattern = input.match(/(.+?)s+(?:affects?|impacts?)s+(.+)/i);
 
   let x = "核心解释变量";
   let y = "核心结果变量";
 
-  if (againstPattern) {
-    x = cleanTerm(againstPattern[1]);
-    y = cleanTerm(againstPattern[2]);
+  if (chineseStructuredPattern) {
+    x = normalizeTopicFragment(chineseStructuredPattern[1], "x");
+    y = normalizeTopicFragment(chineseStructuredPattern[2], "y");
+  } else if (againstPattern) {
+    x = normalizeTopicFragment(againstPattern[1], "x");
+    y = normalizeTopicFragment(againstPattern[2], "y");
   } else if (relationPattern) {
-    x = cleanTerm(relationPattern[1]);
-    y = cleanTerm(relationPattern[2]);
+    x = normalizeTopicFragment(relationPattern[1], "x");
+    y = normalizeTopicFragment(relationPattern[2], "y");
   } else {
-    x = cleanTerm(input);
+    x = normalizeTopicFragment(input, "x");
     y = "企业结果变量";
   }
 
-  const normalizedTopic = `${x} 对 ${y} 的影响`;
+  const normalizedTopic = `${x} 对 ${y} 的影响研究`;
 
   return {
     normalizedTopic,
-    independentVariable: `${x}`,
-    dependentVariable: `${y}`,
-    researchObject: "A 股上市公司",
+    independentVariable: x,
+    dependentVariable: y,
+    researchObject: DEFAULT_RESEARCH_OBJECT,
     relationship: "因果影响",
-    confirmationMessage: `我将你的题目理解为：${normalizedTopic}。是否确认？`,
-    candidateTopics: [normalizedTopic, `${x} 与 ${y}`, `${x} 是否会影响 ${y}？`]
+    confirmationMessage: "请问是否确认主题？",
+    candidateTopics: [
+      normalizedTopic,
+      `${x} 与 ${y}` ,
+      `${x} 是否会影响 ${y}？`
+    ]
   };
 }
 

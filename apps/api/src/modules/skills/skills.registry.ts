@@ -1,8 +1,10 @@
-import { SkillName } from "@empirical/shared";
+﻿import { SkillName } from "@empirical/shared";
 import { baselineRegressionSkill } from "./baseline-regression/definition";
 import { dataCheckSkill } from "./data-check/definition";
 import { dataCleaningSkill } from "./data-cleaning/definition";
 import { exportTableSkill } from "./export-table/definition";
+import { generalResearchChatSkill } from "./general-research-chat/definition";
+import { workflowInputInterpreterSkill } from "./workflow-input-interpreter/definition";
 import { heterogeneitySkill } from "./heterogeneity/definition";
 import { ivSkill } from "./iv/definition";
 import { mechanismSkill } from "./mechanism/definition";
@@ -24,6 +26,8 @@ export const skillRegistry = {
   [SkillName.MECHANISM]: mechanismSkill,
   [SkillName.HETEROGENEITY]: heterogeneitySkill,
   [SkillName.IV]: ivSkill,
+  [SkillName.WORKFLOW_INPUT_INTERPRETER]: workflowInputInterpreterSkill,
+  [SkillName.GENERAL_RESEARCH_CHAT]: generalResearchChatSkill,
   [SkillName.RESULT_INTERPRET]: resultInterpretSkill,
   [SkillName.STATA_ERROR_DEBUG]: stataErrorDebugSkill,
   [SkillName.EXPORT_TABLE]: exportTableSkill

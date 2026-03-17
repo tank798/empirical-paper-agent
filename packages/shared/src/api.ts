@@ -29,6 +29,33 @@ export type WorkflowNextResponse = {
   assistantMessage: AssistantMessageEnvelope;
 };
 
+export const WorkflowStreamPhase = {
+  THINKING: "thinking",
+  TYPING: "typing",
+  COMPLETE: "complete"
+} as const;
+
+export type WorkflowStreamPhase =
+  (typeof WorkflowStreamPhase)[keyof typeof WorkflowStreamPhase];
+
+export type WorkflowStreamEvent =
+  | {
+      type: "status";
+      phase: WorkflowStreamPhase;
+      message: string;
+    }
+  | {
+      type: "message";
+      response: WorkflowNextResponse;
+    }
+  | {
+      type: "error";
+      message: string;
+    }
+  | {
+      type: "done";
+    };
+
 export type ProjectSummaryForClient = Pick<
   ProjectDetail["project"],
   "id" | "title" | "topicRaw" | "topicNormalized" | "currentStep" | "updatedAt"
