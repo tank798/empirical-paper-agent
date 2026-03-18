@@ -173,7 +173,7 @@ function buildAttachment(file: File, mimeType: string, rawContent: string, trunc
   const normalized = normalizeAttachmentText(rawContent);
 
   if (!normalized) {
-    throw new Error("??????????????Tank ????????");
+    throw new Error("文件中没有可读取的内容，请换一个文件再试。");
   }
 
   return {
@@ -288,7 +288,7 @@ async function readSpreadsheetAttachment(file: File): Promise<ComposerAttachment
       continue;
     }
 
-    const nextChunk = "????" + sheetName + "\n" + body;
+    const nextChunk = "工作表：" + sheetName + "\n" + body;
     totalLength += nextChunk.length;
     sheetTexts.push(nextChunk);
 
@@ -308,7 +308,7 @@ async function readSpreadsheetAttachment(file: File): Promise<ComposerAttachment
 
 async function readComposerAttachment(file: File): Promise<ComposerAttachment> {
   if (!canReadAttachment(file)) {
-    throw new Error("???? txt?md?csv?json?pdf?docx?xls?xlsx ?????????");
+    throw new Error("目前支持 txt、md、csv、json、pdf、docx、xls、xlsx 等可解析文件。");
   }
 
   const extension = getFileExtension(file.name);
@@ -341,7 +341,7 @@ function formatAttachmentSize(size: number) {
 }
 
 function buildComposerSubmission(rawMessage: string, attachment: ComposerAttachment | null) {
-  const baseMessage = rawMessage.trim() || (attachment ? "????????????????????" : "");
+  const baseMessage = rawMessage.trim() || (attachment ? "请结合附件内容继续处理" : "");
 
   if (!attachment) {
     return {
@@ -351,15 +351,15 @@ function buildComposerSubmission(rawMessage: string, attachment: ComposerAttachm
   }
 
   const attachmentLines = [
-    "????" + attachment.name,
-    "???" + attachment.mimeType,
-    "???" + formatAttachmentSize(attachment.size),
-    attachment.truncated ? "?????????????????" : "????????????",
+    "文件名：" + attachment.name,
+    "类型：" + attachment.mimeType,
+    "大小：" + formatAttachmentSize(attachment.size),
+    attachment.truncated ? "内容较长，已截断展示" : "内容已完整解析",
     attachment.content
   ];
 
   return {
-    userMessage: [baseMessage, "[????]", attachmentLines.join("\n")].filter(Boolean).join("\n\n"),
+    userMessage: [baseMessage, "[附件内容]", attachmentLines.join("\n")].filter(Boolean).join("\n\n"),
     payload: {
       attachment: {
         name: attachment.name,
@@ -702,7 +702,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       userMessage: localUserMessage,
       assistantMessage: null,
       phase: WorkflowStreamPhase.THINKING,
-      statusText: "Tank ????????...",
+      statusText: "Tank正在思考中...",
       streamingText: "",
       error: null
     });
@@ -748,7 +748,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
                 ...current,
                 assistantMessage: event.response.assistantMessage,
                 phase: WorkflowStreamPhase.TYPING,
-                statusText: "Tank ????...",
+                statusText: "Tank正在整理回复...",
                 streamingText: buildStreamPreview(event.response.assistantMessage)
               };
             });
@@ -761,7 +761,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         }
       });
     } catch (requestError) {
-      const messageText = requestError instanceof Error ? requestError.message : "???????????";
+      const messageText = requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。";
 
       setLiveTurn((current) => {
         if (!current || current.id !== liveTurnId) {
@@ -771,7 +771,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         return {
           ...current,
           phase: WorkflowStreamPhase.COMPLETE,
-          statusText: "????????",
+          statusText: "已完成",
           streamingText: messageText,
           error: messageText
         };
@@ -782,7 +782,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   };
 
   const confirmTopic = async () => {
-    await streamMessage("????");
+    await streamMessage("确认主题");
   };
 
   const handleAttachmentPick = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -800,7 +800,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     } catch (attachmentError) {
       setAttachment(null);
       setComposerError(
-        attachmentError instanceof Error ? attachmentError.message : "????????????????"
+        attachmentError instanceof Error ? attachmentError.message : "文件读取失败，请稍后重试。"
       );
     }
   };
@@ -822,7 +822,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     const SpeechRecognitionCtor = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
 
     if (!SpeechRecognitionCtor) {
-      setComposerError("??????????????????????");
+      setComposerError("当前浏览器暂不支持语音输入。");
       return;
     }
 
@@ -857,8 +857,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     recognition.onerror = (event) => {
       setComposerError(
         event.error === "not-allowed"
-          ? "???????????????????????"
-          : "?????????????"
+          ? "请先允许浏览器使用麦克风。"
+          : "语音识别失败，请重试。"
       );
     };
 
@@ -988,7 +988,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       </div>
 
       <div className="rounded-[20px] border border-[#e5e7eb] bg-white p-6 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-        <h3 className="mb-3 text-base font-semibold text-slate-950">AI ???</h3>
         <p className="mb-3.5 text-sm font-normal leading-[1.6] text-slate-600">{helperText}</p>
 
         {attachment ? (
@@ -1001,7 +1000,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
                 <p className="truncate text-sm font-medium text-slate-900">{attachment.name}</p>
                 <p className="mt-1 text-xs font-normal text-slate-500">
                   {formatAttachmentSize(attachment.size)}
-                  {attachment.truncated ? " ? ?????????" : " ? ????????"}
+                  {attachment.truncated ? " · 内容已截断" : " · 已完成解析"}
                 </p>
               </div>
             </div>
@@ -1042,15 +1041,15 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
               <PlusIcon />
             </button>
             <div className="min-w-0">
-              <p className="text-xs font-normal text-slate-400">{"Enter???Ctrl+Enter??"}</p>
+              <p className="text-xs font-normal text-slate-400">{"Enter发送，Ctrl+Enter换行"}</p>
               {composerError ? (
                 <p className="mt-1 text-xs font-normal text-rose-500">{composerError}</p>
               ) : attachment ? (
                 <p className="mt-1 truncate text-xs font-normal text-slate-500">
-                  ??? {attachment.name}????????? Tank ???
+                  已附加 {attachment.name}，发送后 Tank 会一起读取
                 </p>
               ) : listening ? (
-                <p className="mt-1 text-xs font-normal text-slate-500">?????????????????</p>
+                <p className="mt-1 text-xs font-normal text-slate-500">正在监听语音输入...</p>
               ) : null}
             </div>
           </div>
@@ -1078,7 +1077,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
               onClick={() => void streamMessage(input, { attachment })}
               type="button"
             >
-              {sending ? "Tank?????" : "??"}
+              {sending ? "Tank正在思考中" : "发送"}
             </button>
           </div>
         </div>
