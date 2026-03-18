@@ -140,7 +140,7 @@ export class WorkflowService {
         return this.handleBaseline(params.projectId, effectivePayload);
       default:
         return this.runSystemNotice(params.projectId, currentStep, {
-          message: "当前 workflow 还没有覆盖这个环节，后续会继续补齐。"
+          message: "\u8fd9\u4e2a\u73af\u8282\u6682\u65f6\u8fd8\u5728\u8865\u5145\u4e2d\uff0c\u8bf7\u5148\u7ee7\u7eed\u5f53\u524d\u5df2\u5f00\u653e\u7684\u7814\u7a76\u6b65\u9aa4\u3002"
         });
     }
   }

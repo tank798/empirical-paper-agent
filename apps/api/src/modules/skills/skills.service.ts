@@ -76,19 +76,10 @@ export class SkillsService {
     let fallbackUsed = false;
     let error: { type: string; message: string } | null = null;
     let resolvedModel = this.llmService.modelName;
+    const shouldUseDeterministicFallback = params.skillName === SkillName.TOPIC_DETECT;
 
-    try {
-      const generated = await this.llmService.generateJson(systemPrompt, userPrompt, {
-        profile: executionProfile.llmProfile
-      });
-      resolvedModel = generated.model;
-      output = definition.outputSchema.parse(generated.data);
-    } catch (llmError) {
+    if (shouldUseDeterministicFallback) {
       fallbackUsed = true;
-      error = {
-        type: "skill_fallback",
-        message: llmError instanceof Error ? llmError.message : "Skill fell back to deterministic output"
-      };
       output = definition.outputSchema.parse(
         definition.fallback(input, {
           projectId: params.projectId,
@@ -97,6 +88,28 @@ export class SkillsService {
           promptVersion: prompt.version
         })
       );
+    } else {
+      try {
+        const generated = await this.llmService.generateJson(systemPrompt, userPrompt, {
+          profile: executionProfile.llmProfile
+        });
+        resolvedModel = generated.model;
+        output = definition.outputSchema.parse(generated.data);
+      } catch (llmError) {
+        fallbackUsed = true;
+        error = {
+          type: "skill_fallback",
+          message: llmError instanceof Error ? llmError.message : "Skill fell back to deterministic output"
+        };
+        output = definition.outputSchema.parse(
+          definition.fallback(input, {
+            projectId: params.projectId,
+            currentStep: params.step,
+            projectTitle: projectRecord.title,
+            promptVersion: prompt.version
+          })
+        );
+      }
     }
 
     if (params.skillName === SkillName.SOP_GUIDE && typeof output?.message === "string") {

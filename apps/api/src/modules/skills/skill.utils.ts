@@ -508,9 +508,9 @@ export function buildWorkflowInputInterpreterOutput(
 export function detectTopic(raw: string): TopicDetectOutput {
   const input = raw.trim();
   const guidanceOptions = [
-    "金融监管与企业 ESG 表现",
-    "数字金融与企业创新",
-    "ESG 表现与融资成本"
+    "\u91d1\u878d\u76d1\u7ba1\u5bf9\u4f01\u4e1aESG\u8868\u73b0\u7684\u5f71\u54cd",
+    "\u6570\u5b57\u91d1\u878d\u5bf9\u4f01\u4e1a\u521b\u65b0\u7684\u5f71\u54cd",
+    "\u9ad8\u7ba1\u7279\u5f81\u4e0e\u516c\u53f8\u6cbb\u7406\u5173\u7cfb\u7814\u7a76"
   ];
 
   if (!input) {
@@ -518,17 +518,27 @@ export function detectTopic(raw: string): TopicDetectOutput {
       isValidTopic: false,
       topicType: "not_topic",
       needsGuidance: true,
-      reason: "输入为空，请先给出一个研究主题。",
+      reason: "\u60a8\u8fd8\u6ca1\u6709\u8f93\u5165\u5177\u4f53\u7684\u7814\u7a76\u4e3b\u9898\u3002\u53ef\u4ee5\u5148\u544a\u8bc9\u6211\u60f3\u7814\u7a76\u4ec0\u4e48\u73b0\u8c61\u3001\u53d8\u91cf\u6216\u6837\u672c\uff0c\u6211\u6765\u5e2e\u60a8\u6574\u7406\u6210\u9898\u76ee\u3002",
       guidanceOptions
     };
   }
 
-  if (/stata|regression|help|paper|thesis/i.test(input)) {
+  if (/^(hi|hello|hey|\u4f60\u597d|\u60a8\u597d|\u5728\u5417|\u54c8\u55bd|\u55e8)\b/i.test(input) || /\u641e\u9e21\u6bdb|\u641e\u4ec0\u4e48/.test(input) || input.length <= 2) {
     return {
       isValidTopic: false,
       topicType: "not_topic",
       needsGuidance: true,
-      reason: "当前输入更像求助请求，而不是一个可直接进入实证流程的研究主题。",
+      reason: `\u60a8\u8f93\u5165\u7684\u201c${input}\u201d\u5c5e\u4e8e\u95f2\u804a\u6216\u65e0\u5b9e\u8d28\u5185\u5bb9\uff0c\u4e0d\u6784\u6210\u7814\u7a76\u4e3b\u9898\uff0c\u65e0\u6cd5\u8fdb\u5165\u7ecf\u7ba1\u5b9e\u8bc1\u8bba\u6587\u6d41\u7a0b\u3002`,
+      guidanceOptions
+    };
+  }
+
+  if (/stata|regression|help|paper|thesis|\u4ee3\u7801|\u62a5\u9519|\u8f6f\u4ef6/i.test(input)) {
+    return {
+      isValidTopic: false,
+      topicType: "not_topic",
+      needsGuidance: true,
+      reason: `\u60a8\u8f93\u5165\u7684\u201c${input}\u201d\u66f4\u50cf\u662f\u6c42\u52a9\u6216\u8f6f\u4ef6\u76f8\u5173\u5185\u5bb9\uff0c\u8fd8\u4e0d\u662f\u4e00\u4e2a\u53ef\u4ee5\u76f4\u63a5\u8fdb\u5165\u7814\u7a76\u6d41\u7a0b\u7684\u9898\u76ee\u3002`,
       guidanceOptions
     };
   }
@@ -538,7 +548,7 @@ export function detectTopic(raw: string): TopicDetectOutput {
       isValidTopic: true,
       topicType: "partial_topic",
       needsGuidance: true,
-      reason: "当前输入更像研究领域或关键词，还缺少明确的变量关系与研究对象。",
+      reason: `\u60a8\u8f93\u5165\u7684\u201c${input}\u201d\u66f4\u50cf\u662f\u7814\u7a76\u65b9\u5411\u6216\u5173\u952e\u8bcd\uff0c\u8fd8\u7f3a\u5c11\u660e\u786e\u7684\u53d8\u91cf\u5173\u7cfb\u6216\u7814\u7a76\u5bf9\u8c61\u3002`,
       guidanceOptions
     };
   }
@@ -551,7 +561,7 @@ export function detectTopic(raw: string): TopicDetectOutput {
         ? "full_topic"
         : "partial_topic",
       needsGuidance: false,
-      reason: "当前输入已经包含较明确的变量关系，可以继续进入主题标准化步骤。",
+      reason: "\u8fd9\u4e2a\u8f93\u5165\u5df2\u7ecf\u5305\u542b\u8f83\u660e\u786e\u7684\u7814\u7a76\u5173\u7cfb\uff0c\u53ef\u4ee5\u7ee7\u7eed\u6574\u7406\u6210\u6807\u51c6\u5316\u9898\u76ee\u3002",
       guidanceOptions
     };
   }
@@ -560,11 +570,10 @@ export function detectTopic(raw: string): TopicDetectOutput {
     isValidTopic: true,
     topicType: "partial_topic",
     needsGuidance: true,
-    reason: "当前输入已经接近研究主题，但仍建议补充解释变量、被解释变量或作用方向。",
+    reason: `\u60a8\u8f93\u5165\u7684\u201c${input}\u201d\u5df2\u7ecf\u63a5\u8fd1\u7814\u7a76\u4e3b\u9898\uff0c\u4f46\u5efa\u8bae\u518d\u8865\u5145\u89e3\u91ca\u53d8\u91cf\u3001\u88ab\u89e3\u91ca\u53d8\u91cf\u6216\u7814\u7a76\u5bf9\u8c61\u3002`,
     guidanceOptions
   };
 }
-
 function normalizeTopicFragment(value: string, role: "x" | "y") {
   let cleaned = cleanTerm(value)
     .replace(/s+/g, " ")
@@ -618,7 +627,7 @@ export function normalizeTopic(raw: string): TopicNormalizeOutput {
     independentVariable: x,
     dependentVariable: y,
     researchObject: DEFAULT_RESEARCH_OBJECT,
-    relationship: "因果影响",
+    relationship: "\u6b63\u5411\u3001\u8d1f\u5411\u548c\u4e0d\u663e\u8457",
     confirmationMessage: "请问是否确认主题？",
     candidateTopics: [
       normalizedTopic,

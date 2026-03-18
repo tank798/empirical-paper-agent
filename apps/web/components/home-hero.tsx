@@ -1,6 +1,6 @@
 "use client";
 
-import { type KeyboardEvent, useState } from "react";
+import { startTransition, type KeyboardEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiRequest } from "../lib/api";
 import { saveStoredProject, setPendingProjectBootstrap } from "../lib/storage";
@@ -41,7 +41,10 @@ export function HomeHero() {
         topic: nextTopic,
         createdAt: Date.now()
       });
-      router.push(`/projects/${data.project.id}`);
+      router.prefetch(`/projects/${data.project.id}`);
+      startTransition(() => {
+        router.push(`/projects/${data.project.id}`);
+      });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "创建项目失败，请稍后重试。");
     } finally {
@@ -77,7 +80,7 @@ export function HomeHero() {
               fontFamily: '"Arial Rounded MT Bold", "Trebuchet MS", "Aptos", "PingFang SC", "Microsoft YaHei", sans-serif'
             }}
           >
-            Hi，我是Tank，你的实证论文助手
+            {"Hi，我是Tank，你的实证论文助手"}
           </h1>
         </div>
 
@@ -86,10 +89,10 @@ export function HomeHero() {
             {showGhostText ? (
               <div className="pointer-events-none absolute inset-0 z-10 px-4 py-4 sm:px-6 sm:py-5">
                 <p className="max-w-3xl text-lg leading-8 text-slate-500 sm:text-[1.06rem]">
-                  可直接写下研究主题、变量设定、回归结果或 Stata 报错；系统会自动调度相应技能，沿论文流程继续推进。
+                  {"可直接写下研究主题、变量设定、回归结果或 Stata 报错；系统会自动调度相应技能，沿论文流程继续推进。"}
                 </p>
                 <p className="mt-4 max-w-3xl text-base leading-8 text-slate-400 sm:text-[1rem]">
-                  例如：以 2011—2022 年沪深 A 股上市公司为样本，考察数字金融是否提升企业创新产出。
+                  {"例如：以 2011—2022 年沪深 A 股上市公司为样本，考察数字金融是否提升企业创新产出。"}
                 </p>
               </div>
             ) : null}
@@ -106,7 +109,7 @@ export function HomeHero() {
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-4 px-1">
             <button className="text-sm font-medium text-slate-500 transition hover:text-slate-900" type="button">
-              Enter发送，Ctrl+Enter换行
+              {"Enter发送，Ctrl+Enter换行"}
             </button>
 
             <button

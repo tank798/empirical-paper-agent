@@ -224,7 +224,7 @@ async function readPdfAttachment(file: File): Promise<ComposerAttachment> {
       continue;
     }
 
-    const nextChunk = "第" + pageNumber + "页\n" + pageText;
+    const nextChunk = "?" + pageNumber + "?\n" + pageText;
     totalLength += nextChunk.length;
     pageTexts.push(nextChunk);
 
@@ -532,18 +532,13 @@ function WorkspacePlaceholder({ children }: { children: ReactNode }) {
 }
 
 function WorkspaceStageLoadingCard({
-  title,
   description
 }: {
-  title: string;
   description: string;
 }) {
   return (
     <div className="rounded-[20px] border border-slate-200 bg-white p-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-      <span className="agent-breathing-button inline-flex rounded-full bg-slate-950 px-3 py-1.5 text-xs font-medium text-white">
-        {title}
-      </span>
-      <p className="mt-4 text-sm font-normal leading-7 text-slate-600">{description}</p>
+      <p className="text-sm font-normal leading-7 text-slate-600">{description}</p>
       <div className="mt-5 space-y-3">
         <div className="h-4 w-40 animate-pulse rounded-full bg-slate-100" />
         <div className="h-4 w-full animate-pulse rounded-full bg-slate-100" />
@@ -556,10 +551,7 @@ function WorkspaceStageLoadingCard({
 function WorkspaceInitializingState() {
   return (
     <div className="mx-auto max-w-[1100px] px-6 pb-8 pt-6">
-      <WorkspaceStageLoadingCard
-        title="Tank 正在建立研究设定"
-        description="已进入项目页面，Tank 正在整理题目并生成第一轮研究设定。"
-      />
+      <WorkspaceStageLoadingCard description="\u5df2\u8fdb\u5165\u9879\u76ee\u9875\u9762\uff0cTank \u6b63\u5728\u6574\u7406\u9898\u76ee\u5e76\u751f\u6210\u7b2c\u4e00\u8f6e\u7814\u7a76\u8bbe\u5b9a\u3002" />
     </div>
   );
 }
@@ -580,6 +572,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const [selectedStageId, setSelectedStageId] = useState<StageId>("topic");
   const [liveTurn, setLiveTurn] = useState<LiveTurnState | null>(null);
   const [pendingBootstrapTopic, setPendingBootstrapTopic] = useState<string | null>(null);
+  const [initializingProject, setInitializingProject] = useState(false);
   const [optimisticStageId, setOptimisticStageId] = useState<StageId | null>(null);
   const finalizedTurnIdRef = useRef<string | null>(null);
   const bootstrapStartedRef = useRef(false);
@@ -588,8 +581,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const speechBaseTextRef = useRef("");
 
   useEffect(() => {
-    const pendingBootstrap = getPendingProjectBootstrap(projectId);
-
     setStored(getStoredProject(projectId));
     setAvailableProjects(getStoredProjects());
     setLiveTurn(null);
@@ -599,7 +590,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setAttachment(null);
     setListening(false);
     setSelectedStageId("topic");
-    setPendingBootstrapTopic(pendingBootstrap?.topic ?? null);
+    setPendingBootstrapTopic(getPendingProjectBootstrap(projectId)?.topic ?? null);
+    setInitializingProject(Boolean(getPendingProjectBootstrap(projectId)?.topic));
     setOptimisticStageId(null);
     finalizedTurnIdRef.current = null;
     bootstrapStartedRef.current = false;
@@ -688,8 +680,9 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const selectedStageMessages = useMemo(() => getStageMessages(messages, selectedStage), [messages, selectedStage]);
   const selectedStageIsActive = selectedStage.id === displayedStageId;
   const topicNeedsConfirmation = currentStep === WorkflowStep.TOPIC_NORMALIZE;
-  const showInitialProjectLoading = Boolean(pendingBootstrapTopic) && (stored === undefined || loading || messages.length === 0 || sending);
+  const showInitialProjectLoading = Boolean(pendingBootstrapTopic) && (stored === undefined || loading || messages.length === 0);
   const showStageLoadingState = Boolean(optimisticStageId === selectedStage.id && sending && selectedStageMessages.length === 0);
+
 
   useEffect(() => {
     if (!liveTurn || !liveTurn.assistantMessage || !stored || finalizedTurnIdRef.current === liveTurn.id) {
@@ -705,6 +698,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setMessages((current) => [...current, userMessage, assistantMessage]);
     setLiveTurn(null);
     setSending(false);
+    setInitializingProject(false);
     setOptimisticStageId(null);
 
     void (async () => {
@@ -822,6 +816,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       });
       setError(messageText);
       setSending(false);
+      setInitializingProject(false);
       setOptimisticStageId(null);
     }
   };
@@ -834,6 +829,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     if (messages.length > 0) {
       clearPendingProjectBootstrap(projectId);
       setPendingBootstrapTopic(null);
+      setInitializingProject(false);
       return;
     }
 
@@ -845,6 +841,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         await streamMessage(pendingBootstrapTopic);
       } finally {
         setPendingBootstrapTopic(null);
+        setInitializingProject(false);
       }
     })();
   }, [loading, messages.length, pendingBootstrapTopic, projectId, sending, stored]);
@@ -852,7 +849,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const confirmTopic = async () => {
     setOptimisticStageId("data");
     setSelectedStageId("data");
-    await streamMessage("确认主题");
+    await streamMessage("????");
   };
 
   const handleAttachmentPick = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1048,10 +1045,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
             ))}
           </div>
         ) : showStageLoadingState ? (
-          <WorkspaceStageLoadingCard
-            title="Tank 正在进入下一环节"
-            description="已收到确认，Tank 正在推进到下一环节并准备新的研究输出。"
-          />
+          <WorkspaceStageLoadingCard description="\u5df2\u6536\u5230\u786e\u8ba4\uff0cTank \u6b63\u5728\u8fdb\u5165\u4e0b\u4e00\u73af\u8282\u5e76\u51c6\u5907\u65b0\u7684\u7814\u7a76\u8f93\u51fa\u3002" />
         ) : (
           <div className="rounded-[20px] border border-slate-200 bg-white p-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
             <p className="text-base font-semibold text-slate-950">
