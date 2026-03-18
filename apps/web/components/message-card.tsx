@@ -2,7 +2,7 @@
 
 import clsx from "clsx";
 import type { AssistantMessageEnvelope } from "@empirical/shared";
-import { normalizeAssistantCopy, normalizeResearchObjectText } from "../lib/message-display";
+import { normalizeAssistantCopy, normalizeRelationshipText, normalizeResearchObjectText } from "../lib/message-display";
 import { formatWriteMode, messageTypeMeta, moduleLabelMap, workflowStepMeta } from "../lib/presentation";
 
 type MessageCardProps = {
@@ -67,7 +67,7 @@ export function MessageCard({
     { label: "核心解释变量", value: json.independentVariable },
     { label: "被解释变量", value: json.dependentVariable },
     { label: "研究对象", value: normalizeResearchObjectText(json.researchObject) },
-    { label: "关系类型", value: json.relationship }
+    { label: "\u5173\u7cfb\u7c7b\u578b", value: normalizeRelationshipText(json.relationship, json.normalizedTopic) }
   ];
 
   const card = (

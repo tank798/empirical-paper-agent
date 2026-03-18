@@ -13,6 +13,9 @@ import { SkillsService } from "../skills/skills.service";
 
 @Injectable()
 export class WorkflowService {
+  private static readonly DEFAULT_RELATIONSHIP_LABEL =
+    "\u6b63\u5411\u3001\u8d1f\u5411\u548c\u4e0d\u663e\u8457";
+
   constructor(
     private readonly projectsService: ProjectsService,
     private readonly messagesService: MessagesService,
@@ -161,7 +164,16 @@ export class WorkflowService {
       payload: { rawTopic: userMessage }
     });
 
-    await this.projectsService.updateTopic(projectId, normalized.data.normalizedTopic);
+    const normalizedData = {
+      ...normalized.data,
+      researchObject: normalizeResearchObject(normalized.data.researchObject),
+      relationship: this.normalizeRelationshipLabel(
+        normalized.data.relationship,
+        normalized.data.normalizedTopic
+      )
+    };
+
+    await this.projectsService.updateTopic(projectId, normalizedData.normalizedTopic);
     await this.projectsService.updateStepStatus(projectId, WorkflowStep.TOPIC_DETECT, ProjectStepStatus.COMPLETED, {
       topicType: detect.data.topicType
     });
@@ -173,8 +185,8 @@ export class WorkflowService {
       role: "assistant",
       messageType: normalized.messageType,
       step: WorkflowStep.TOPIC_NORMALIZE,
-      contentText: normalized.data.confirmationMessage,
-      contentJson: normalized.data
+      contentText: normalizedData.confirmationMessage,
+      contentJson: normalizedData
     });
 
     return {
@@ -219,6 +231,19 @@ export class WorkflowService {
         };
       }
 
+      if (!this.looksLikeNewTopicCandidate(userMessage)) {
+        return this.runSideSkill(
+          projectId,
+          WorkflowStep.TOPIC_NORMALIZE,
+          SkillName.GENERAL_RESEARCH_CHAT,
+          {
+            userQuestion: userMessage,
+            currentModule: WorkflowStep.TOPIC_NORMALIZE,
+            ...payload
+          }
+        );
+      }
+
       return this.handleTopicEntry(projectId, userMessage);
     }
 
@@ -233,7 +258,7 @@ export class WorkflowService {
       independentVariable: content.independentVariable ?? "",
       dependentVariable: content.dependentVariable ?? "",
       researchObject: normalizeResearchObject(content.researchObject),
-      relationship: content.relationship ?? "causal effect"
+      relationship: this.normalizeRelationshipLabel(content.relationship, content.normalizedTopic)
     });
 
     const sop = await this.skillsService.executeSkill({
@@ -464,13 +489,13 @@ export class WorkflowService {
     const researchObject = normalizeResearchObject(
       (typeof payload.researchObject === "string" && payload.researchObject.trim()) || previous.researchObject || ""
     );
-    const relationship =
-      (typeof payload.relationship === "string" && payload.relationship.trim()) ||
-      previous.relationship ||
-      "????";
     const normalizedTopic =
       (typeof payload.normalizedTopic === "string" && payload.normalizedTopic.trim()) ||
       this.buildTopicTitle(independentVariable, dependentVariable, previous.normalizedTopic || "");
+    const relationship = this.normalizeRelationshipLabel(
+      (typeof payload.relationship === "string" && payload.relationship.trim()) || previous.relationship,
+      normalizedTopic
+    );
 
     await this.projectsService.updateTopic(projectId, normalizedTopic);
 
@@ -570,6 +595,33 @@ export class WorkflowService {
 
   private looksLikeTopicRevision(text: string) {
     return /(\u6539\u6210|\u6539\u4e3a|\u6362\u6210|\u4fee\u6539|\u8865\u5145|\u7814\u7a76\u5bf9\u8c61|\u89e3\u91ca\u53d8\u91cf|\u88ab\u89e3\u91ca\u53d8\u91cf|\u5173\u7cfb\u7c7b\u578b|\u9898\u76ee|\u4e3b\u9898)/i.test(text);
+  }
+
+  private looksLikeNewTopicCandidate(text: string) {
+    return /(\u5bf9|\u4e0e|\u5f71\u54cd|\u6548\u5e94|\u5173\u7cfb|\u662f\u5426|\u4f5c\u7528\u4e8e|impact|effect|relation)/i.test(text)
+      && text.trim().length >= 6;
+  }
+
+  private normalizeRelationshipLabel(value: string | undefined, normalizedTopic?: string) {
+    const trimmed = typeof value === "string" ? value.trim() : "";
+
+    if (!trimmed) {
+      return WorkflowService.DEFAULT_RELATIONSHIP_LABEL;
+    }
+
+    if (/^(causal effect|\u56e0\u679c\u5f71\u54cd)$/i.test(trimmed)) {
+      return WorkflowService.DEFAULT_RELATIONSHIP_LABEL;
+    }
+
+    if (normalizedTopic && trimmed === normalizedTopic.trim()) {
+      return WorkflowService.DEFAULT_RELATIONSHIP_LABEL;
+    }
+
+    if (/(\u5bf9.+\u7684\u5f71\u54cd|\u5f71\u54cd\u7814\u7a76)$/i.test(trimmed)) {
+      return WorkflowService.DEFAULT_RELATIONSHIP_LABEL;
+    }
+
+    return trimmed;
   }
 
   private looksLikeTopicResetRequest(text: string) {

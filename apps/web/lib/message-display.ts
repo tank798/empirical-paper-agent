@@ -1,4 +1,5 @@
-﻿export const DEFAULT_RESEARCH_OBJECT = "中国A股上市公司";
+export const DEFAULT_RESEARCH_OBJECT = "中国A股上市公司";
+export const DEFAULT_RELATIONSHIP_TEXT = "正向、负向和不显著";
 
 const GENERIC_RESEARCH_OBJECTS = new Set([
   "中国企业",
@@ -21,6 +22,29 @@ export function normalizeResearchObjectText(value: unknown) {
   }
 
   return GENERIC_RESEARCH_OBJECTS.has(trimmed) ? DEFAULT_RESEARCH_OBJECT : trimmed;
+}
+
+export function normalizeRelationshipText(value: unknown, normalizedTopic?: unknown) {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  const topic = typeof normalizedTopic === "string" ? normalizedTopic.trim() : "";
+
+  if (!trimmed) {
+    return DEFAULT_RELATIONSHIP_TEXT;
+  }
+
+  if (/^(causal effect|\u56e0\u679c\u5f71\u54cd)$/i.test(trimmed)) {
+    return DEFAULT_RELATIONSHIP_TEXT;
+  }
+
+  if (topic && trimmed === topic) {
+    return DEFAULT_RELATIONSHIP_TEXT;
+  }
+
+  if (/(\u5bf9.+\u7684\u5f71\u54cd|\u5f71\u54cd\u7814\u7a76)$/i.test(trimmed)) {
+    return DEFAULT_RELATIONSHIP_TEXT;
+  }
+
+  return trimmed;
 }
 
 export function normalizeAssistantCopy(value: unknown) {
