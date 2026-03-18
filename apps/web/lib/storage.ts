@@ -1,9 +1,16 @@
-﻿const STORAGE_KEY = "empirical-agent-projects";
+const STORAGE_KEY = "empirical-agent-projects";
+const PENDING_BOOTSTRAP_KEY = "empirical-agent-pending-bootstrap";
 
 type StoredProject = {
   id: string;
   token: string;
   title?: string;
+};
+
+type PendingProjectBootstrap = {
+  projectId: string;
+  topic: string;
+  createdAt: number;
 };
 
 export function getStoredProjects(): StoredProject[] {
@@ -39,4 +46,50 @@ export function removeStoredProject(projectId: string) {
 
 export function getStoredProject(projectId: string) {
   return getStoredProjects().find((item) => item.id === projectId) ?? null;
+}
+
+export function setPendingProjectBootstrap(payload: PendingProjectBootstrap) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(PENDING_BOOTSTRAP_KEY, JSON.stringify(payload));
+}
+
+export function getPendingProjectBootstrap(projectId: string) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(PENDING_BOOTSTRAP_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as PendingProjectBootstrap;
+    if (parsed.projectId !== projectId) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingProjectBootstrap(projectId?: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (!projectId) {
+    window.localStorage.removeItem(PENDING_BOOTSTRAP_KEY);
+    return;
+  }
+
+  const current = getPendingProjectBootstrap(projectId);
+  if (current) {
+    window.localStorage.removeItem(PENDING_BOOTSTRAP_KEY);
+  }
 }

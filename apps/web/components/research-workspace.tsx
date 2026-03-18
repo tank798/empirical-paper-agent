@@ -21,7 +21,7 @@ import {
 } from "@empirical/shared";
 import { apiRequest, streamApiRequest } from "../lib/api";
 import { normalizeAssistantCopy, normalizeResearchObjectText } from "../lib/message-display";
-import { getStoredProject, getStoredProjects } from "../lib/storage";
+import { clearPendingProjectBootstrap, getPendingProjectBootstrap, getStoredProject, getStoredProjects } from "../lib/storage";
 import { MessageCard } from "./message-card";
 
 type StageDefinition = {
@@ -531,6 +531,39 @@ function WorkspacePlaceholder({ children }: { children: ReactNode }) {
   );
 }
 
+function WorkspaceStageLoadingCard({
+  title,
+  description
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-[20px] border border-slate-200 bg-white p-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+      <span className="agent-breathing-button inline-flex rounded-full bg-slate-950 px-3 py-1.5 text-xs font-medium text-white">
+        {title}
+      </span>
+      <p className="mt-4 text-sm font-normal leading-7 text-slate-600">{description}</p>
+      <div className="mt-5 space-y-3">
+        <div className="h-4 w-40 animate-pulse rounded-full bg-slate-100" />
+        <div className="h-4 w-full animate-pulse rounded-full bg-slate-100" />
+        <div className="h-4 w-4/5 animate-pulse rounded-full bg-slate-100" />
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceInitializingState() {
+  return (
+    <div className="mx-auto max-w-[1100px] px-6 pb-8 pt-6">
+      <WorkspaceStageLoadingCard
+        title="Tank ????????"
+        description="?????????Tank ???????????????????????"
+      />
+    </div>
+  );
+}
+
 export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const router = useRouter();
   const [stored, setStored] = useState<ReturnType<typeof getStoredProject> | undefined>(undefined);
@@ -546,7 +579,11 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const [listening, setListening] = useState(false);
   const [selectedStageId, setSelectedStageId] = useState<StageId>("topic");
   const [liveTurn, setLiveTurn] = useState<LiveTurnState | null>(null);
+  const [pendingBootstrapTopic, setPendingBootstrapTopic] = useState<string | null>(null);
+  const [initializingProject, setInitializingProject] = useState(false);
+  const [optimisticStageId, setOptimisticStageId] = useState<StageId | null>(null);
   const finalizedTurnIdRef = useRef<string | null>(null);
+  const bootstrapStartedRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const speechBaseTextRef = useRef("");
@@ -561,7 +598,11 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setAttachment(null);
     setListening(false);
     setSelectedStageId("topic");
+    setPendingBootstrapTopic(getPendingProjectBootstrap(projectId)?.topic ?? null);
+    setInitializingProject(Boolean(getPendingProjectBootstrap(projectId)?.topic));
+    setOptimisticStageId(null);
     finalizedTurnIdRef.current = null;
+    bootstrapStartedRef.current = false;
     recognitionRef.current?.stop();
     recognitionRef.current = null;
   }, [projectId]);
@@ -633,19 +674,22 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
 
   const currentStep = detail?.project.currentStep ?? WorkflowStep.TOPIC_DETECT;
   const activeStageId = STAGE_ID_BY_STEP[currentStep] ?? "topic";
+  const displayedStageId = optimisticStageId ?? activeStageId;
 
   useEffect(() => {
-    setSelectedStageId(activeStageId);
-  }, [activeStageId]);
+    setSelectedStageId(displayedStageId);
+  }, [displayedStageId]);
 
   const selectedStage = useMemo(
     () => WORKFLOW_STAGES.find((stage) => stage.id === selectedStageId) ?? WORKFLOW_STAGES[0],
     [selectedStageId]
   );
-  const stageMeta = useMemo(() => getStageMeta(detail, activeStageId), [activeStageId, detail]);
+  const stageMeta = useMemo(() => getStageMeta(detail, displayedStageId), [detail, displayedStageId]);
   const selectedStageMessages = useMemo(() => getStageMessages(messages, selectedStage), [messages, selectedStage]);
-  const selectedStageIsActive = selectedStage.id === activeStageId;
+  const selectedStageIsActive = selectedStage.id === displayedStageId;
   const topicNeedsConfirmation = currentStep === WorkflowStep.TOPIC_NORMALIZE;
+  const showInitialProjectLoading = Boolean(pendingBootstrapTopic) && (stored === undefined || loading || messages.length === 0);
+  const showStageLoadingState = Boolean(optimisticStageId === selectedStage.id && sending && selectedStageMessages.length === 0);
 
 
   useEffect(() => {
@@ -662,6 +706,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setMessages((current) => [...current, userMessage, assistantMessage]);
     setLiveTurn(null);
     setSending(false);
+    setInitializingProject(false);
+    setOptimisticStageId(null);
 
     void (async () => {
       try {
@@ -778,11 +824,40 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       });
       setError(messageText);
       setSending(false);
+      setInitializingProject(false);
+      setOptimisticStageId(null);
     }
   };
 
+  useEffect(() => {
+    if (!stored || loading || !pendingBootstrapTopic || bootstrapStartedRef.current || sending) {
+      return;
+    }
+
+    if (messages.length > 0) {
+      clearPendingProjectBootstrap(projectId);
+      setPendingBootstrapTopic(null);
+      setInitializingProject(false);
+      return;
+    }
+
+    bootstrapStartedRef.current = true;
+    clearPendingProjectBootstrap(projectId);
+
+    void (async () => {
+      try {
+        await streamMessage(pendingBootstrapTopic);
+      } finally {
+        setPendingBootstrapTopic(null);
+        setInitializingProject(false);
+      }
+    })();
+  }, [loading, messages.length, pendingBootstrapTopic, projectId, sending, stored]);
+
   const confirmTopic = async () => {
-    await streamMessage("确认主题");
+    setOptimisticStageId("data");
+    setSelectedStageId("data");
+    await streamMessage("????");
   };
 
   const handleAttachmentPick = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -890,6 +965,10 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     ? "例如：把研究对象改为中国A股上市公司\n例如：改成数字金融对企业创新的影响"
     : "继续描述变量、结果或 Stata 报错。";
 
+  if (showInitialProjectLoading) {
+    return <WorkspaceInitializingState />;
+  }
+
   if (stored === undefined || loading) {
     return <WorkspacePlaceholder>Tank 正在恢复当前对话...</WorkspacePlaceholder>;
   }
@@ -973,6 +1052,11 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
               />
             ))}
           </div>
+        ) : showStageLoadingState ? (
+          <WorkspaceStageLoadingCard
+            title="Tank ????????"
+            description="???????Tank ????????????????????"
+          />
         ) : (
           <div className="rounded-[20px] border border-slate-200 bg-white p-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
             <p className="text-base font-semibold text-slate-950">
