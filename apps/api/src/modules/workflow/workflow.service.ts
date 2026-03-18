@@ -140,7 +140,7 @@ export class WorkflowService {
         return this.handleBaseline(params.projectId, effectivePayload);
       default:
         return this.runSystemNotice(params.projectId, currentStep, {
-          message: "????? workflow ??????? MVP ??????????????"
+          message: "当前 workflow 还没有覆盖这个环节，后续会继续补齐。"
         });
     }
   }
@@ -212,14 +212,14 @@ export class WorkflowService {
           role: "assistant",
           messageType: AssistantMessageType.SYSTEM_NOTICE,
           step: WorkflowStep.TOPIC_NORMALIZE,
-          contentText: "??????????????????????????????????????????????????????????",
+          contentText: "这个主题方向我先不直接往下推进。你可以告诉我想保留什么、想替换什么，我再帮你重新整理成新的研究设定。",
           contentJson: {
-            reason: "?????????????????????????",
-            guidanceTitle: "?????????",
+            reason: "用户否定了当前题目，但还没有提供新的明确方向。",
+            guidanceTitle: "你可以这样告诉我",
             guidanceOptions: [
-              "??????????????",
-              "?????????ESG???",
-              "??????A????????????"
+              "直接说你更想研究什么现象或结果",
+              "例如：我更想研究金融监管对企业 ESG 的影响",
+              "例如：把样本换成中国 A 股上市公司"
             ]
           }
         });
@@ -459,7 +459,7 @@ export class WorkflowService {
 
   private buildTopicTitle(independentVariable: string, dependentVariable: string, fallback: string) {
     if (independentVariable && dependentVariable) {
-      return `${independentVariable}?${dependentVariable}?????`;
+      return `${independentVariable}对${dependentVariable}的影响研究`;
     }
 
     return fallback;
@@ -474,7 +474,7 @@ export class WorkflowService {
     const previous = (latestConfirm?.contentJson ?? {}) as Record<string, string>;
     if (!previous.normalizedTopic && typeof payload.normalizedTopic !== "string") {
       return this.runSystemNotice(projectId, WorkflowStep.TOPIC_NORMALIZE, {
-        message: "????????????????????????????????????"
+        message: "当前还没有可修改的研究设定，请先生成一次题目标准化结果。"
       });
     }
 
@@ -504,14 +504,14 @@ export class WorkflowService {
       role: "assistant",
       messageType: AssistantMessageType.TOPIC_CONFIRM,
       step: WorkflowStep.TOPIC_NORMALIZE,
-      contentText: "????????????????????????????????",
+      contentText: "已根据你的反馈更新研究设定。",
       contentJson: {
         normalizedTopic,
         independentVariable,
         dependentVariable,
         researchObject,
         relationship,
-        confirmationMessage: "?????????",
+        confirmationMessage: "请确认是否采用这个版本的研究设定。",
         candidateTopics: [normalizedTopic].filter(Boolean)
       }
     });

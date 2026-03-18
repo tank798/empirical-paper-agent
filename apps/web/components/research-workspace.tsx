@@ -224,7 +224,7 @@ async function readPdfAttachment(file: File): Promise<ComposerAttachment> {
       continue;
     }
 
-    const nextChunk = "?" + pageNumber + "?\n" + pageText;
+    const nextChunk = "第" + pageNumber + "页\n" + pageText;
     totalLength += nextChunk.length;
     pageTexts.push(nextChunk);
 
@@ -557,8 +557,8 @@ function WorkspaceInitializingState() {
   return (
     <div className="mx-auto max-w-[1100px] px-6 pb-8 pt-6">
       <WorkspaceStageLoadingCard
-        title="Tank ????????"
-        description="?????????Tank ???????????????????????"
+        title="Tank 正在建立研究设定"
+        description="已进入项目页面，Tank 正在整理题目并生成第一轮研究设定。"
       />
     </div>
   );
@@ -580,7 +580,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const [selectedStageId, setSelectedStageId] = useState<StageId>("topic");
   const [liveTurn, setLiveTurn] = useState<LiveTurnState | null>(null);
   const [pendingBootstrapTopic, setPendingBootstrapTopic] = useState<string | null>(null);
-  const [initializingProject, setInitializingProject] = useState(false);
   const [optimisticStageId, setOptimisticStageId] = useState<StageId | null>(null);
   const finalizedTurnIdRef = useRef<string | null>(null);
   const bootstrapStartedRef = useRef(false);
@@ -589,6 +588,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const speechBaseTextRef = useRef("");
 
   useEffect(() => {
+    const pendingBootstrap = getPendingProjectBootstrap(projectId);
+
     setStored(getStoredProject(projectId));
     setAvailableProjects(getStoredProjects());
     setLiveTurn(null);
@@ -598,8 +599,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setAttachment(null);
     setListening(false);
     setSelectedStageId("topic");
-    setPendingBootstrapTopic(getPendingProjectBootstrap(projectId)?.topic ?? null);
-    setInitializingProject(Boolean(getPendingProjectBootstrap(projectId)?.topic));
+    setPendingBootstrapTopic(pendingBootstrap?.topic ?? null);
     setOptimisticStageId(null);
     finalizedTurnIdRef.current = null;
     bootstrapStartedRef.current = false;
@@ -688,9 +688,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const selectedStageMessages = useMemo(() => getStageMessages(messages, selectedStage), [messages, selectedStage]);
   const selectedStageIsActive = selectedStage.id === displayedStageId;
   const topicNeedsConfirmation = currentStep === WorkflowStep.TOPIC_NORMALIZE;
-  const showInitialProjectLoading = Boolean(pendingBootstrapTopic) && (stored === undefined || loading || messages.length === 0);
+  const showInitialProjectLoading = Boolean(pendingBootstrapTopic) && (stored === undefined || loading || messages.length === 0 || sending);
   const showStageLoadingState = Boolean(optimisticStageId === selectedStage.id && sending && selectedStageMessages.length === 0);
-
 
   useEffect(() => {
     if (!liveTurn || !liveTurn.assistantMessage || !stored || finalizedTurnIdRef.current === liveTurn.id) {
@@ -706,7 +705,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setMessages((current) => [...current, userMessage, assistantMessage]);
     setLiveTurn(null);
     setSending(false);
-    setInitializingProject(false);
     setOptimisticStageId(null);
 
     void (async () => {
@@ -824,7 +822,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       });
       setError(messageText);
       setSending(false);
-      setInitializingProject(false);
       setOptimisticStageId(null);
     }
   };
@@ -837,7 +834,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     if (messages.length > 0) {
       clearPendingProjectBootstrap(projectId);
       setPendingBootstrapTopic(null);
-      setInitializingProject(false);
       return;
     }
 
@@ -849,7 +845,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         await streamMessage(pendingBootstrapTopic);
       } finally {
         setPendingBootstrapTopic(null);
-        setInitializingProject(false);
       }
     })();
   }, [loading, messages.length, pendingBootstrapTopic, projectId, sending, stored]);
@@ -857,7 +852,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const confirmTopic = async () => {
     setOptimisticStageId("data");
     setSelectedStageId("data");
-    await streamMessage("????");
+    await streamMessage("确认主题");
   };
 
   const handleAttachmentPick = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1054,8 +1049,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
           </div>
         ) : showStageLoadingState ? (
           <WorkspaceStageLoadingCard
-            title="Tank ????????"
-            description="???????Tank ????????????????????"
+            title="Tank 正在进入下一环节"
+            description="已收到确认，Tank 正在推进到下一环节并准备新的研究输出。"
           />
         ) : (
           <div className="rounded-[20px] border border-slate-200 bg-white p-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
