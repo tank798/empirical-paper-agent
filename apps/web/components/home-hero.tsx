@@ -6,13 +6,6 @@ import { apiRequest } from "../lib/api";
 import { saveStoredProject, setPendingProjectBootstrap } from "../lib/storage";
 import { ThinkingBubble } from "./thinking-bubble";
 
-function ArrowIcon() {
-  return (
-    <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24">
-      <path d="M6 12h12m-5-5 5 5-5 5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
-    </svg>
-  );
-}
 
 export function HomeHero() {
   const router = useRouter();
@@ -113,13 +106,12 @@ export function HomeHero() {
             </button>
 
             <button
-              className="inline-flex min-w-[188px] items-center justify-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white shadow-floating transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-55"
+              className="inline-flex min-w-[188px] items-center justify-center rounded-full bg-slate-950 px-6 py-3 text-base font-semibold text-white shadow-floating transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-55"
               disabled={loading || !topic.trim()}
               onClick={() => void createProject()}
               type="button"
             >
               {loading ? <ThinkingBubble bare className="text-white" /> : <span>{"开始对话"}</span>}
-              {loading ? null : <ArrowIcon />}
             </button>
           </div>
         </div>
