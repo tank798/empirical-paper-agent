@@ -1002,7 +1002,14 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     : "继续描述变量、结果或 Stata 报错。";
 
   if (showInitialProjectLoading) {
-    return <WorkspacePlaceholder>{"\u6b63\u5728\u8fdb\u5165\u9879\u76ee\uff0c\u8bf7\u7a0d\u7b49\u7247\u523b..."}</WorkspacePlaceholder>;
+    return (
+      <WorkspacePlaceholder>
+        <span className="inline-flex min-w-[13ch] items-center justify-start text-base font-medium text-slate-900">
+          <span>{"Tank\u6b63\u5728\u601d\u8003\u4e2d"}</span>
+          <span className="inline-block w-[1.75em] text-left">{thinkingDots}</span>
+        </span>
+      </WorkspacePlaceholder>
+    );
   }
 
   if (stored === undefined || loading) {
@@ -1196,7 +1203,12 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
               onClick={() => void streamMessage(input, { attachment })}
               type="button"
             >
-              {sending ? `Tank\u6b63\u5728\u601d\u8003\u4e2d${thinkingDots}` : "\u53d1\u9001"}
+              {sending ? (
+                <span className="inline-flex min-w-[13ch] items-center justify-start">
+                  <span>{"Tank\u6b63\u5728\u601d\u8003\u4e2d"}</span>
+                  <span className="inline-block w-[1.75em] text-left">{thinkingDots}</span>
+                </span>
+              ) : "\u53d1\u9001"}
             </button>
           </div>
         </div>
