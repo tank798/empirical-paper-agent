@@ -104,3 +104,58 @@ h4 {
     animation: tank-breathe 1.8s ease-in-out infinite;
   }
 }
+
+
+@keyframes thinking-bubble-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  50% {
+    opacity: 0.88;
+    transform: translateY(-0.5px) scale(0.996);
+  }
+}
+
+@keyframes thinking-bubble-dot {
+  0%,
+  20%,
+  100% {
+    opacity: 0.22;
+    transform: translateY(0);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateY(-0.5px);
+  }
+}
+
+@keyframes thinking-bubble-spark {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.9);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+@layer utilities {
+  .thinking-bubble-motion {
+    animation: thinking-bubble-breathe 1.8s ease-in-out infinite;
+  }
+
+  .thinking-bubble-dot {
+    animation: thinking-bubble-dot 1.2s ease-in-out infinite;
+  }
+
+  .thinking-bubble-spark {
+    animation: thinking-bubble-spark 1.5s ease-in-out infinite;
+  }
+}

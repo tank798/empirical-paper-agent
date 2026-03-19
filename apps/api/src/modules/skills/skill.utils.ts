@@ -100,8 +100,13 @@ export function sanitizeUserFacingWorkflowTerms(value?: string | null) {
   );
 
   text = text.replace(
-    /\u63a5\u4e0b\u6765\u5c06\u8fdb\u5165\s*\*{0,2}(TOPIC_DETECT|TOPIC_NORMALIZE|SOP_GUIDE|DATA_CLEANING|DATA_CHECK|BASELINE_REGRESSION)\*{0,2}\s*\u9636\u6bb5/gi,
-    (_, step) => workflowAdvanceCopy[String(step).toUpperCase()] ?? "\u63a5\u4e0b\u6765\u6211\u4f1a\u7ee7\u7eed\u63a8\u8fdb\u5f53\u524d\u7814\u7a76\u6d41\u7a0b\u3002"
+    /\u4e3b\u9898\u8bc6\u522b\u6b63\u786e[\uff0c,]?\s*\u7814\u7a76\u4e3b\u9898\u4e3a[\u201c\u300c"]?([^\u201d\u300d"]+)[\u201d\u300d"]?[\u3002.]?\s*\u5f53\u524d\u8fdb\u5165\s*(TOPIC_DETECT|TOPIC_NORMALIZE|SOP_GUIDE|DATA_CLEANING|DATA_CHECK|BASELINE_REGRESSION)\s*\u9636\u6bb5[\uff0c,]?\s*\u9700\u8981\u4e3a\u60a8\u751f\u6210\u6807\u51c6\u5316\u7684\u5b9e\u8bc1\u7814\u7a76\u64cd\u4f5c\u6d41\u7a0b\u6307\u5357[\u3002.]?/gi,
+    (_, topic, step) => "\u6211\u5df2\u8bc6\u522b\u5230\u60a8\u7684\u7814\u7a76\u4e3b\u9898\u201c" + topic + "\u201d\u3002" + (workflowAdvanceCopy[String(step).toUpperCase()] ?? "\u63a5\u4e0b\u6765\u6211\u4f1a\u7ee7\u7eed\u5e2e\u60a8\u63a8\u8fdb\u7814\u7a76\u6d41\u7a0b\u3002")
+  );
+
+  text = text.replace(
+    /(\u63a5\u4e0b\u6765\u5c06\u8fdb\u5165|\u5f53\u524d\u8fdb\u5165)\s*\*{0,2}(TOPIC_DETECT|TOPIC_NORMALIZE|SOP_GUIDE|DATA_CLEANING|DATA_CHECK|BASELINE_REGRESSION)\*{0,2}\s*\u9636\u6bb5/gi,
+    (_, __, step) => workflowAdvanceCopy[String(step).toUpperCase()] ?? "\u63a5\u4e0b\u6765\u6211\u4f1a\u7ee7\u7eed\u63a8\u8fdb\u5f53\u524d\u7814\u7a76\u6d41\u7a0b\u3002"
   );
 
   text = text.replace(
@@ -109,10 +114,11 @@ export function sanitizeUserFacingWorkflowTerms(value?: string | null) {
     (_, step) => "\u5f53\u524d\u8fd9\u4e00\u6b65\u662f\u300c" + (workflowTermLabels[String(step).toUpperCase()] ?? "\u7814\u7a76\u6d41\u7a0b") + "\u300d"
   );
 
+  text = text.replace(/\u6807\u51c6\u5316\u7684\u5b9e\u8bc1\u7814\u7a76\u64cd\u4f5c\u6d41\u7a0b\u6307\u5357/g, "\u7814\u7a76\u8def\u5f84\u5efa\u8bae");
   text = text.replace(/\bworkflow\b/gi, "\u7814\u7a76\u6d41\u7a0b");
 
   for (const [term, label] of Object.entries(workflowTermLabels)) {
-    text = text.replace(new RegExp(`\b${term}\b`, "g"), label);
+    text = text.replace(new RegExp('\\b' + term + '\\b', "g"), label);
   }
 
   return text.replace(/\n{3,}/g, "\n\n").trim();

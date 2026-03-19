@@ -1,9 +1,10 @@
-"use client";
+﻿"use client";
 
-import { startTransition, type KeyboardEvent, useEffect, useState } from "react";
+import { startTransition, type KeyboardEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiRequest } from "../lib/api";
 import { saveStoredProject, setPendingProjectBootstrap } from "../lib/storage";
+import { ThinkingBubble } from "./thinking-bubble";
 
 function ArrowIcon() {
   return (
@@ -13,38 +14,12 @@ function ArrowIcon() {
   );
 }
 
-function ThinkingLabel({ dots }: { dots: string }) {
-  return (
-    <span className="inline-flex min-w-[13ch] items-center justify-start">
-      <span>{"Tank\u6b63\u5728\u601d\u8003\u4e2d"}</span>
-      <span className="inline-block w-[1.75em] text-left">{dots}</span>
-    </span>
-  );
-}
-
 export function HomeHero() {
   const router = useRouter();
   const [topic, setTopic] = useState("");
   const [focused, setFocused] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [thinkingDots, setThinkingDots] = useState(".");
-
-  useEffect(() => {
-    if (!loading) {
-      setThinkingDots(".");
-      return;
-    }
-
-    const frames = [".", "..", "..."];
-    let frameIndex = 0;
-    const timer = window.setInterval(() => {
-      frameIndex = (frameIndex + 1) % frames.length;
-      setThinkingDots(frames[frameIndex] ?? ".");
-    }, 420);
-
-    return () => window.clearInterval(timer);
-  }, [loading]);
 
   const showGhostText = !focused && !topic.trim();
 
@@ -72,8 +47,7 @@ export function HomeHero() {
         router.push(`/projects/${data.project.id}`);
       });
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "\u521b\u5efa\u9879\u76ee\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002");
-    } finally {
+      setError(requestError instanceof Error ? requestError.message : "创建项目失败，请稍后重试。");
       setLoading(false);
     }
   };
@@ -106,7 +80,7 @@ export function HomeHero() {
               fontFamily: `"Arial Rounded MT Bold", "Trebuchet MS", "Aptos", "PingFang SC", "Microsoft YaHei", sans-serif`
             }}
           >
-            {"Hi\uff0c\u6211\u662fTank\uff0c\u4f60\u7684\u5b9e\u8bc1\u8bba\u6587\u52a9\u624b"}
+            {"Hi，我是Tank，你的实证论文助手"}
           </h1>
         </div>
 
@@ -115,10 +89,10 @@ export function HomeHero() {
             {showGhostText ? (
               <div className="pointer-events-none absolute inset-0 z-10 px-4 py-4 sm:px-6 sm:py-5">
                 <p className="max-w-3xl text-lg leading-8 text-slate-500 sm:text-[1.06rem]">
-                  {"\u53ef\u76f4\u63a5\u5199\u4e0b\u7814\u7a76\u4e3b\u9898\u3001\u53d8\u91cf\u8bbe\u5b9a\u3001\u56de\u5f52\u7ed3\u679c\u6216 Stata \u62a5\u9519\uff1b\u7cfb\u7edf\u4f1a\u81ea\u52a8\u8c03\u5ea6\u76f8\u5e94\u6280\u80fd\uff0c\u6cbf\u8bba\u6587\u6d41\u7a0b\u7ee7\u7eed\u63a8\u8fdb\u3002"}
+                  {"可直接写下研究主题、变量设定、回归结果或 Stata 报错；系统会自动调度相应技能，沿论文流程继续推进。"}
                 </p>
                 <p className="mt-4 max-w-3xl text-base leading-8 text-slate-400 sm:text-[1rem]">
-                  {"\u4f8b\u5982\uff1a\u4ee5 2011\u20142022 \u5e74\u6caa\u6df1 A \u80a1\u4e0a\u5e02\u516c\u53f8\u4e3a\u6837\u672c\uff0c\u8003\u5bdf\u6570\u5b57\u91d1\u878d\u662f\u5426\u63d0\u5347\u4f01\u4e1a\u521b\u65b0\u4ea7\u51fa\u3002"}
+                  {"例如：以 2011-2022 年沪深 A 股上市公司为样本，考察数字金融是否提升企业创新产出。"}
                 </p>
               </div>
             ) : null}
@@ -135,7 +109,7 @@ export function HomeHero() {
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-4 px-1">
             <button className="text-sm font-medium text-slate-500 transition hover:text-slate-900" type="button">
-              {"Enter\u53d1\u9001\uff0cCtrl+Enter\u6362\u884c"}
+              {"Enter发送，Ctrl+Enter换行"}
             </button>
 
             <button
@@ -144,7 +118,7 @@ export function HomeHero() {
               onClick={() => void createProject()}
               type="button"
             >
-              {loading ? <ThinkingLabel dots={thinkingDots} /> : <span>{"\u5f00\u59cb\u5bf9\u8bdd"}</span>}
+              {loading ? <ThinkingBubble bare className="text-white" /> : <span>{"开始对话"}</span>}
               {loading ? null : <ArrowIcon />}
             </button>
           </div>

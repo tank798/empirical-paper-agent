@@ -20,9 +20,10 @@ import {
   type WorkflowStreamPhase as WorkflowStreamPhaseValue
 } from "@empirical/shared";
 import { apiRequest, streamApiRequest } from "../lib/api";
-import { normalizeAssistantCopy, normalizeResearchObjectText } from "../lib/message-display";
+import { normalizeAssistantCopy, normalizeDisplayText, normalizeResearchObjectText } from "../lib/message-display";
 import { clearPendingProjectBootstrap, getPendingProjectBootstrap, getStoredProject, getStoredProjects } from "../lib/storage";
 import { MessageCard } from "./message-card";
+import { ThinkingBubble } from "./thinking-bubble";
 
 type StageDefinition = {
   id: "topic" | "data" | "baseline" | "robustness" | "iv" | "mechanism" | "heterogeneity";
@@ -579,8 +580,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const [attachment, setAttachment] = useState<ComposerAttachment | null>(null);
   const [listening, setListening] = useState(false);
   const [selectedStageId, setSelectedStageId] = useState<StageId>("topic");
-  const [liveTurn, setLiveTurn] = useState<LiveTurnState | null>(null);
-  const [thinkingDots, setThinkingDots] = useState(".");
+  const [liveTurn, setLiveTurn] = useState<LiveTurnState | null>(null);
   const [pendingBootstrapTopic, setPendingBootstrapTopic] = useState<string | null>(null);
   const [initializingProject, setInitializingProject] = useState(false);
   const [optimisticStageId, setOptimisticStageId] = useState<StageId | null>(null);
@@ -628,22 +628,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       recognitionRef.current = null;
     };
   }, []);
-
-  useEffect(() => {
-    if (!sending) {
-      setThinkingDots(".");
-      return;
-    }
-
-    const frames = [".", "..", "..."];
-    let frameIndex = 0;
-    const timer = window.setInterval(() => {
-      frameIndex = (frameIndex + 1) % frames.length;
-      setThinkingDots(frames[frameIndex] ?? ".");
-    }, 420);
-
-    return () => window.clearInterval(timer);
-  }, [sending]);
 
   useEffect(() => {
     if (stored === undefined) {
@@ -1004,10 +988,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   if (showInitialProjectLoading) {
     return (
       <WorkspacePlaceholder>
-        <span className="inline-flex min-w-[13ch] items-center justify-start text-base font-medium text-slate-900">
-          <span>{"Tank\u6b63\u5728\u601d\u8003\u4e2d"}</span>
-          <span className="inline-block w-[1.75em] text-left">{thinkingDots}</span>
-        </span>
+        <ThinkingBubble className="w-fit" />
       </WorkspacePlaceholder>
     );
   }
@@ -1097,7 +1078,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
           </div>
         ) : showStageLoadingState ? (
           <WorkspaceStageLoadingCard
-            description={"\u5df2\u6536\u5230\u786e\u8ba4\uff0cTank \u6b63\u5728\u8fdb\u5165\u4e0b\u4e00\u73af\u8282\u5e76\u51c6\u5907\u65b0\u7684\u7814\u7a76\u8f93\u51fa\u3002"}
+            description={normalizeDisplayText("\u5df2\u6536\u5230\u786e\u8ba4\uff0cTank \u6b63\u5728\u8fdb\u5165\u4e0b\u4e00\u73af\u8282\u5e76\u51c6\u5907\u65b0\u7684\u7814\u7a76\u8f93\u51fa\u3002")}
           />
         ) : (
           <div className="rounded-[20px] border border-slate-200 bg-white p-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
@@ -1197,18 +1178,13 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
             <button
               className={clsx(
                 "inline-flex h-10 items-center justify-center rounded-[10px] px-[18px] text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-60",
-                sending ? "agent-breathing-button bg-slate-950 hover:bg-slate-950" : "bg-slate-950 hover:bg-[#111827]"
+                sending ? "bg-slate-950 hover:bg-slate-950" : "bg-slate-950 hover:bg-[#111827]"
               )}
               disabled={sending || (!input.trim() && !attachment)}
               onClick={() => void streamMessage(input, { attachment })}
               type="button"
             >
-              {sending ? (
-                <span className="inline-flex min-w-[13ch] items-center justify-start">
-                  <span>{"Tank\u6b63\u5728\u601d\u8003\u4e2d"}</span>
-                  <span className="inline-block w-[1.75em] text-left">{thinkingDots}</span>
-                </span>
-              ) : "\u53d1\u9001"}
+              {sending ? <ThinkingBubble bare className="text-white" /> : "\u53d1\u9001"}
             </button>
           </div>
         </div>

@@ -2,8 +2,9 @@
 
 import clsx from "clsx";
 import type { AssistantMessageEnvelope } from "@empirical/shared";
-import { normalizeAssistantCopy, normalizeRelationshipText, normalizeResearchObjectText } from "../lib/message-display";
+import { normalizeAssistantCopy, normalizeDisplayText, normalizeRelationshipText, normalizeResearchObjectText } from "../lib/message-display";
 import { formatWriteMode, messageTypeMeta, moduleLabelMap, workflowStepMeta } from "../lib/presentation";
+import { ThinkingBubble } from "./thinking-bubble";
 
 type MessageCardProps = {
   message: AssistantMessageEnvelope;
@@ -21,7 +22,7 @@ function renderJsonList(items: unknown, emptyLabel = "暂无补充内容。") {
   return (
     <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm font-normal leading-7 text-slate-700">
       {items.map((item, index) => (
-        <li key={`${String(item)}-${index}`}>{String(item)}</li>
+        <li key={`${String(item)}-${index}`}>{normalizeDisplayText(String(item))}</li>
       ))}
     </ul>
   );
@@ -84,7 +85,7 @@ export function MessageCard({
             <h3 className="text-base font-semibold text-slate-950">研究设定</h3>
           </div>
 
-          <p className="text-[20px] font-semibold leading-[1.5] text-slate-950">{json.normalizedTopic}</p>
+          <p className="text-[20px] font-semibold leading-[1.5] text-slate-950">{normalizeDisplayText(json.normalizedTopic)}</p>
 
           <div className="mt-6 grid gap-4 md:grid-cols-4">
             {topicFields.map((item) => (
@@ -106,7 +107,7 @@ export function MessageCard({
                 onClick={onConfirmTopic}
                 type="button"
               >
-                {topicConfirmPending ? "Tank正在思考中" : "确认主题 →"}
+                {topicConfirmPending ? <ThinkingBubble bare className="text-white" /> : "\u786e\u8ba4\u4e3b\u9898 \u2192"}
               </button>
             </div>
           ) : null}
@@ -115,17 +116,17 @@ export function MessageCard({
         <>
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-600">
-              {meta?.label ?? message.messageType}
+              {normalizeDisplayText(meta?.label ?? message.messageType)}
             </span>
-            {moduleLabel ? <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-500">{moduleLabel}</span> : null}
-            {stepLabel ? <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-500">{stepLabel}</span> : null}
+            {moduleLabel ? <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-500">{normalizeDisplayText(moduleLabel)}</span> : null}
+            {stepLabel ? <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-500">{normalizeDisplayText(stepLabel)}</span> : null}
           </div>
 
           {contentText && !isResearchChat ? <p className="mt-4 whitespace-pre-wrap text-sm font-normal leading-7 text-slate-800">{contentText}</p> : null}
 
           {message.messageType === "system_notice" && Array.isArray(json.guidanceOptions) && json.guidanceOptions.length > 0 ? (
             <div className="mt-4 rounded-[14px] border border-white/80 bg-white/90 p-4">
-              <p className="text-sm font-medium text-slate-800">{typeof json.guidanceTitle === "string" ? json.guidanceTitle : "\u53ef\u53c2\u8003\u7684\u7814\u7a76\u4e3b\u9898"}</p>
+              <p className="text-sm font-medium text-slate-800">{typeof json.guidanceTitle === "string" ? normalizeDisplayText(json.guidanceTitle) : "\u53ef\u53c2\u8003\u7684\u7814\u7a76\u4e3b\u9898"}</p>
               {renderJsonList(json.guidanceOptions)}
             </div>
           ) : null}
