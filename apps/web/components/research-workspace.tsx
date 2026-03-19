@@ -495,8 +495,25 @@ function buildStreamPreview(message: AssistantMessageEnvelope) {
 }
 
 function getStageMessages(messages: AssistantMessageEnvelope[], stage: StageDefinition) {
-  return messages.filter(
+  const stageMessages = messages.filter(
     (message) => message.role !== "user" && Boolean(message.step) && stage.steps.includes(message.step as WorkflowStep)
+  );
+
+  if (stage.id !== "topic") {
+    return stageMessages;
+  }
+
+  const latestTopicConfirmIndex = stageMessages.reduce(
+    (latestIndex, message, index) => (message.messageType === "topic_confirm" ? index : latestIndex),
+    -1
+  );
+
+  if (latestTopicConfirmIndex < 0) {
+    return stageMessages;
+  }
+
+  return stageMessages.filter(
+    (message, index) => message.messageType !== "topic_confirm" || index === latestTopicConfirmIndex
   );
 }
 
@@ -548,14 +565,6 @@ function WorkspaceStageLoadingCard({
   );
 }
 
-function WorkspaceInitializingState() {
-  return (
-    <div className="mx-auto max-w-[1100px] px-6 pb-8 pt-6">
-      <WorkspaceStageLoadingCard description="\u5df2\u8fdb\u5165\u9879\u76ee\u9875\u9762\uff0cTank \u6b63\u5728\u6574\u7406\u9898\u76ee\u5e76\u751f\u6210\u7b2c\u4e00\u8f6e\u7814\u7a76\u8bbe\u5b9a\u3002" />
-    </div>
-  );
-}
-
 export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const router = useRouter();
   const [stored, setStored] = useState<ReturnType<typeof getStoredProject> | undefined>(undefined);
@@ -571,6 +580,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const [listening, setListening] = useState(false);
   const [selectedStageId, setSelectedStageId] = useState<StageId>("topic");
   const [liveTurn, setLiveTurn] = useState<LiveTurnState | null>(null);
+  const [thinkingDots, setThinkingDots] = useState(".");
   const [pendingBootstrapTopic, setPendingBootstrapTopic] = useState<string | null>(null);
   const [initializingProject, setInitializingProject] = useState(false);
   const [optimisticStageId, setOptimisticStageId] = useState<StageId | null>(null);
@@ -618,6 +628,22 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       recognitionRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!sending) {
+      setThinkingDots(".");
+      return;
+    }
+
+    const frames = [".", "..", "..."];
+    let frameIndex = 0;
+    const timer = window.setInterval(() => {
+      frameIndex = (frameIndex + 1) % frames.length;
+      setThinkingDots(frames[frameIndex] ?? ".");
+    }, 420);
+
+    return () => window.clearInterval(timer);
+  }, [sending]);
 
   useEffect(() => {
     if (stored === undefined) {
@@ -733,6 +759,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
 
     const localUserMessage = createLocalUserMessage(submission.userMessage, detail?.project.currentStep ?? null);
     const liveTurnId = Date.now() + "-" + Math.random().toString(16).slice(2);
+    let receivedMessage = false;
 
     finalizedTurnIdRef.current = null;
     setLiveTurn({
@@ -777,6 +804,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
           }
 
           if (event.type === "message") {
+            receivedMessage = true;
+
             setLiveTurn((current) => {
               if (!current || current.id !== liveTurnId) {
                 return current;
@@ -798,6 +827,20 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
           }
         }
       });
+
+      if (!receivedMessage) {
+        const [nextDetail, nextMessages] = await Promise.all([
+          apiRequest<ProjectDetail>(`/projects/${projectId}`, { token: stored.token }),
+          apiRequest<AssistantMessageEnvelope[]>(`/projects/${projectId}/messages`, { token: stored.token })
+        ]);
+
+        setDetail(nextDetail);
+        setMessages(nextMessages);
+        setLiveTurn(null);
+        setSending(false);
+        setInitializingProject(false);
+        setOptimisticStageId(null);
+      }
     } catch (requestError) {
       const messageText = requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。";
 
@@ -849,7 +892,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const confirmTopic = async () => {
     setOptimisticStageId("data");
     setSelectedStageId("data");
-    await streamMessage("????");
+    await streamMessage("\u786e\u8ba4\u4e3b\u9898");
   };
 
   const handleAttachmentPick = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -958,7 +1001,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     : "继续描述变量、结果或 Stata 报错。";
 
   if (showInitialProjectLoading) {
-    return <WorkspaceInitializingState />;
+    return <WorkspacePlaceholder>{"\u6b63\u5728\u8fdb\u5165\u9879\u76ee\uff0c\u8bf7\u7a0d\u7b49\u7247\u523b..."}</WorkspacePlaceholder>;
   }
 
   if (stored === undefined || loading) {
@@ -1045,7 +1088,9 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
             ))}
           </div>
         ) : showStageLoadingState ? (
-          <WorkspaceStageLoadingCard description="\u5df2\u6536\u5230\u786e\u8ba4\uff0cTank \u6b63\u5728\u8fdb\u5165\u4e0b\u4e00\u73af\u8282\u5e76\u51c6\u5907\u65b0\u7684\u7814\u7a76\u8f93\u51fa\u3002" />
+          <WorkspaceStageLoadingCard
+            description={"\u5df2\u6536\u5230\u786e\u8ba4\uff0cTank \u6b63\u5728\u8fdb\u5165\u4e0b\u4e00\u73af\u8282\u5e76\u51c6\u5907\u65b0\u7684\u7814\u7a76\u8f93\u51fa\u3002"}
+          />
         ) : (
           <div className="rounded-[20px] border border-slate-200 bg-white p-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
             <p className="text-base font-semibold text-slate-950">
@@ -1150,7 +1195,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
               onClick={() => void streamMessage(input, { attachment })}
               type="button"
             >
-              {sending ? "Tank正在思考中" : "发送"}
+              {sending ? `Tank\u6b63\u5728\u601d\u8003\u4e2d${thinkingDots}` : "\u53d1\u9001"}
             </button>
           </div>
         </div>
