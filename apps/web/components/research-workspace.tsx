@@ -725,7 +725,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setLiveTurn(null);
     setSending(false);
     setInitializingProject(false);
-    setOptimisticStageId(null);
 
     void (async () => {
       try {
@@ -733,10 +732,12 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         if (!ignore) {
           setDetail(nextDetail);
           setError("");
+          setOptimisticStageId(null);
         }
       } catch (requestError) {
         if (!ignore) {
-          setError(requestError instanceof Error ? requestError.message : "刷新项目状态失败，请稍后重试。");
+          setError(requestError instanceof Error ? requestError.message : "\u5237\u65b0\u9879\u76ee\u72b6\u6001\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002");
+          setOptimisticStageId(null);
         }
       }
     })();

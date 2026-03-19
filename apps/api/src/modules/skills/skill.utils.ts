@@ -69,6 +69,72 @@ export function normalizeSopGuideMessage(value?: string | null) {
   return trimmed;
 }
 
+const workflowTermLabels: Record<string, string> = {
+  TOPIC_DETECT: "\u4e3b\u9898\u8bc6\u522b",
+  TOPIC_NORMALIZE: "\u4e3b\u9898\u786e\u8ba4",
+  SOP_GUIDE: "\u7814\u7a76\u8def\u5f84\u68b3\u7406",
+  DATA_CLEANING: "\u6570\u636e\u5904\u7406",
+  DATA_CHECK: "\u6570\u636e\u68c0\u67e5",
+  BASELINE_REGRESSION: "\u57fa\u51c6\u56de\u5f52"
+};
+
+const workflowAdvanceCopy: Record<string, string> = {
+  TOPIC_DETECT: "\u63a5\u4e0b\u6765\u6211\u4f1a\u5148\u5e2e\u60a8\u8bc6\u522b\u5e76\u6536\u655b\u7814\u7a76\u4e3b\u9898\u3002",
+  TOPIC_NORMALIZE: "\u63a5\u4e0b\u6765\u6211\u4f1a\u5148\u6574\u7406\u5e76\u786e\u8ba4\u7814\u7a76\u8bbe\u5b9a\u3002",
+  SOP_GUIDE: "\u63a5\u4e0b\u6765\u6211\u4f1a\u5148\u4e3a\u60a8\u68b3\u7406\u7814\u7a76\u8def\u5f84\u3001\u53d8\u91cf\u6784\u5efa\u548c\u57fa\u51c6\u56de\u5f52\u601d\u8def\u3002",
+  DATA_CLEANING: "\u63a5\u4e0b\u6765\u6211\u4f1a\u5148\u8fdb\u5165\u6570\u636e\u5904\u7406\u3002",
+  DATA_CHECK: "\u63a5\u4e0b\u6765\u6211\u4f1a\u5148\u505a\u6570\u636e\u68c0\u67e5\u3002",
+  BASELINE_REGRESSION: "\u63a5\u4e0b\u6765\u6211\u4f1a\u5148\u8fdb\u5165\u57fa\u51c6\u56de\u5f52\u3002"
+};
+
+export function sanitizeUserFacingWorkflowTerms(value?: string | null) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return trimmed ?? "";
+  }
+
+  let text = trimmed;
+  text = text.replace(
+    /(?:topic_detect|TOPIC_DETECT)\s*->\s*(?:topic_normalize|TOPIC_NORMALIZE)\s*->\s*(?:sop_guide|SOP_GUIDE)\s*->\s*(?:data_cleaning|DATA_CLEANING)\s*->\s*(?:data_check|DATA_CHECK)\s*->\s*(?:baseline_regression|BASELINE_REGRESSION)/g,
+    "\u4e3b\u9898\u786e\u8ba4 -> \u6570\u636e\u5904\u7406 -> \u57fa\u51c6\u56de\u5f52"
+  );
+
+  text = text.replace(
+    /\u63a5\u4e0b\u6765\u5c06\u8fdb\u5165\s*\*{0,2}(TOPIC_DETECT|TOPIC_NORMALIZE|SOP_GUIDE|DATA_CLEANING|DATA_CHECK|BASELINE_REGRESSION)\*{0,2}\s*\u9636\u6bb5/gi,
+    (_, step) => workflowAdvanceCopy[String(step).toUpperCase()] ?? "\u63a5\u4e0b\u6765\u6211\u4f1a\u7ee7\u7eed\u63a8\u8fdb\u5f53\u524d\u7814\u7a76\u6d41\u7a0b\u3002"
+  );
+
+  text = text.replace(
+    /\u5f53\u524d\u6a21\u5757(?:\u4e3a|\u662f)\s*[\u300c\u201c"]?\*{0,2}(TOPIC_DETECT|TOPIC_NORMALIZE|SOP_GUIDE|DATA_CLEANING|DATA_CHECK|BASELINE_REGRESSION)\*{0,2}[\u300d\u201d"]?/gi,
+    (_, step) => "\u5f53\u524d\u8fd9\u4e00\u6b65\u662f\u300c" + (workflowTermLabels[String(step).toUpperCase()] ?? "\u7814\u7a76\u6d41\u7a0b") + "\u300d"
+  );
+
+  text = text.replace(/\bworkflow\b/gi, "\u7814\u7a76\u6d41\u7a0b");
+
+  for (const [term, label] of Object.entries(workflowTermLabels)) {
+    text = text.replace(new RegExp(`\b${term}\b`, "g"), label);
+  }
+
+  return text.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+export function sanitizeSkillOutputStrings<T>(value: T): T {
+  if (typeof value === "string") {
+    return sanitizeUserFacingWorkflowTerms(value) as T;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeSkillOutputStrings(item)) as T;
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, sanitizeSkillOutputStrings(item)])
+    ) as T;
+  }
+
+  return value;
+}
 export function buildGeneralResearchChatOutput(input: GeneralResearchChatInput): GeneralResearchChatOutput {
   const question = input.userQuestion.trim();
   const topicLead = input.topic ? `结合你当前的题目“${input.topic}”，` : "";

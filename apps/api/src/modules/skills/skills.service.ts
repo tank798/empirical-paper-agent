@@ -8,7 +8,7 @@ import { ResearchProfileService } from "../research-profile/research-profile.ser
 import { MessagesService } from "../messages/messages.service";
 import { ProjectsService } from "../projects/projects.service";
 import { skillExecutionProfiles } from "./skill.execution-profiles";
-import { normalizeResearchObject, normalizeSopGuideMessage } from "./skill.utils";
+import { normalizeResearchObject, normalizeSopGuideMessage, sanitizeSkillOutputStrings } from "./skill.utils";
 import { skillRegistry } from "./skills.registry";
 import type { SkillRunResult } from "./skill.types";
 
@@ -118,6 +118,8 @@ export class SkillsService {
         message: normalizeSopGuideMessage(output.message)
       };
     }
+
+    output = sanitizeSkillOutputStrings(output);
 
     const run = await this.prisma.skillRun.create({
       data: {
