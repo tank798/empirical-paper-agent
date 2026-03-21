@@ -737,15 +737,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     !confirmProcessing;
   const workflowLockActive = confirmProcessing;
 
-  useEffect(() => {
-    if (!confirmProcessing) {
-      return;
-    }
-
-    if (hasDownstreamMessages || activeStageId !== "topic") {
-      setConfirmProcessing(false);
-    }
-  }, [activeStageId, confirmProcessing, hasDownstreamMessages]);
 
   useEffect(() => {
     if (!liveTurn || !liveTurn.assistantMessage || !stored || finalizedTurnIdRef.current === liveTurn.id) {
@@ -770,11 +761,13 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
           setDetail(nextDetail);
           setError("");
           setOptimisticStageId(null);
+          setConfirmProcessing(false);
         }
       } catch (requestError) {
         if (!ignore) {
           setError(requestError instanceof Error ? requestError.message : "\u5237\u65b0\u9879\u76ee\u72b6\u6001\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002");
           setOptimisticStageId(null);
+          setConfirmProcessing(false);
         }
       }
     })();
@@ -878,6 +871,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         setSending(false);
         setInitializingProject(false);
         setOptimisticStageId(null);
+        setConfirmProcessing(false);
         setInput("");
         setAttachment(null);
       }
@@ -931,9 +925,10 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   }, [loading, messages.length, pendingBootstrapTopic, projectId, sending, stored]);
 
   const confirmTopic = async () => {
+    setConfirmProcessing(true);
     setOptimisticStageId("data");
     setSelectedStageId("data");
-    await streamMessage("确认并生成");
+    await streamMessage("\u786e\u8ba4\u5e76\u751f\u6210");
   };
 
   const handleAttachmentPick = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1194,22 +1189,22 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
                   key={message.id ?? `${message.messageType}-${message.createdAt ?? index}`}
                   fullWidth
                   message={message}
+                  topicConfirmAction={
+                    selectedStage.id === "topic" && message.messageType === "topic_confirm" && showTopicConfirmBar
+                      ? {
+                          hint: "如需调整研究设定，请继续补充说明；如无问题，请点击下方确认。",
+                          label: "确认主题",
+                          disabled: sending || confirmProcessing,
+                          locked: confirmProcessing,
+                          onConfirm: () => {
+                            void confirmTopic();
+                          }
+                        }
+                      : null
+                  }
                 />
               ))}
             </div>
-
-            {showTopicConfirmBar ? (
-              <div className="-mt-3 flex justify-center px-6 pb-2">
-                <button
-                  className="topic-confirm-glass topic-confirm-appear inline-flex h-[58px] w-[88%] items-center justify-center rounded-full px-7 text-base font-semibold tracking-[0.02em] text-white transition hover:-translate-y-0.5 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={sending || confirmProcessing}
-                  onClick={() => void confirmTopic()}
-                  type="button"
-                >
-                  {"确认主题"}
-                </button>
-              </div>
-            ) : null}
           </div>
         ) : showStageLoadingState ? (
           <WorkspaceStageLoadingCard
@@ -1229,17 +1224,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         )}
       </div>
 
-      <div className="surface-hover-lift rounded-[20px] border border-[#e5e7eb] bg-white p-6 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-        {showTopicConfirmBar ? (
-          <button
-            className="topic-confirm-floating mb-4 inline-flex h-14 w-full items-center justify-center rounded-[16px] bg-slate-950 px-6 text-base font-semibold tracking-[0.02em] text-white shadow-[0_20px_40px_rgba(15,23,42,0.16)] transition hover:-translate-y-0.5 hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={sending || confirmProcessing}
-            onClick={() => void confirmTopic()}
-            type="button"
-          >
-            {"确认主题"}
-          </button>
-        ) : null}
+      {showTopicConfirmBar ? null : (
+        <div className="surface-hover-lift rounded-[20px] border border-[#e5e7eb] bg-white p-6 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
 
         <p className="mb-3.5 text-sm font-normal leading-[1.6] text-slate-600">{helperText}</p>
 
@@ -1334,7 +1320,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
             </button>
           </div>
         </div>
-      </div>
+        </div>
+      )}
       </section>
     </>
   );

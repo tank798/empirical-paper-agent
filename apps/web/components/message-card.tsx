@@ -10,9 +10,18 @@ import {
 } from "../lib/message-display";
 import { formatWriteMode, messageTypeMeta, moduleLabelMap, workflowStepMeta } from "../lib/presentation";
 
+type TopicConfirmAction = {
+  hint: string;
+  label: string;
+  disabled?: boolean;
+  locked?: boolean;
+  onConfirm: () => void;
+};
+
 type MessageCardProps = {
   message: AssistantMessageEnvelope;
   fullWidth?: boolean;
+  topicConfirmAction?: TopicConfirmAction | null;
 };
 
 function renderJsonList(items: unknown, emptyLabel = "暂无补充内容。") {
@@ -31,7 +40,8 @@ function renderJsonList(items: unknown, emptyLabel = "暂无补充内容。") {
 
 export function MessageCard({
   message,
-  fullWidth = false
+  fullWidth = false,
+  topicConfirmAction = null
 }: MessageCardProps) {
   const json = message.contentJson as Record<string, any>;
   const contentText = normalizeAssistantCopy(message.contentText);
@@ -77,7 +87,8 @@ export function MessageCard({
       className={clsx(
         "surface-hover-lift rounded-[20px] border border-[#e5e7eb] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)]",
         isTopicConfirm ? "p-7" : "p-5",
-        isSystemNotice ? "border-amber-100 bg-amber-50/80" : ""
+        isSystemNotice ? "border-amber-100 bg-amber-50/80" : "",
+        isTopicConfirm && topicConfirmAction?.locked ? "pointer-events-none opacity-60 saturate-[0.82]" : ""
       )}
     >
       {isTopicConfirm ? (
@@ -102,6 +113,23 @@ export function MessageCard({
             ))}
           </div>
 
+          {topicConfirmAction ? (
+            <div className="mt-8 flex flex-col items-center">
+              <p className="mb-4 text-sm font-normal leading-7 text-slate-500">
+                {topicConfirmAction.hint}
+              </p>
+              {!topicConfirmAction.locked ? (
+                <button
+                  className="topic-confirm-inline-button topic-confirm-appear inline-flex h-[58px] w-[70%] min-w-[320px] max-w-[780px] items-center justify-center rounded-full px-7 text-base font-semibold tracking-[0.02em] text-white transition hover:-translate-y-0.5 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={topicConfirmAction.disabled}
+                  onClick={topicConfirmAction.onConfirm}
+                  type="button"
+                >
+                  {topicConfirmAction.label}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ) : (
         <>

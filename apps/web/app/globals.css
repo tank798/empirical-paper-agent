@@ -268,6 +268,24 @@ h4 {
       0 0 34px rgba(96, 165, 250, 0.18);
   }
 
+  .topic-confirm-inline-button {
+    background: rgba(59, 130, 246, 0.92);
+    backdrop-filter: blur(18px);
+    border: 1px solid rgba(191, 219, 254, 0.62);
+    box-shadow:
+      0 0 0 1px rgba(147, 197, 253, 0.2),
+      0 24px 48px rgba(37, 99, 235, 0.24),
+      0 0 30px rgba(96, 165, 250, 0.22);
+  }
+
+  .topic-confirm-inline-button:hover {
+    background: rgba(37, 99, 235, 0.96);
+    box-shadow:
+      0 0 0 1px rgba(191, 219, 254, 0.72),
+      0 30px 60px rgba(37, 99, 235, 0.3),
+      0 0 38px rgba(96, 165, 250, 0.28);
+  }
+
   .workflow-lock-aura {
     animation: workflow-lock-aura 4s ease-in-out infinite;
   }
