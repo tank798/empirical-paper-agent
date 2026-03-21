@@ -600,6 +600,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const speechBaseTextRef = useRef("");
+  const keepListeningRef = useRef(false);
 
   useEffect(() => {
     setStored(getStoredProject(projectId));
@@ -616,6 +617,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setOptimisticStageId(null);
     finalizedTurnIdRef.current = null;
     bootstrapStartedRef.current = false;
+    keepListeningRef.current = false;
     recognitionRef.current?.stop();
     recognitionRef.current = null;
   }, [projectId]);
@@ -635,6 +637,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     return () => {
+      keepListeningRef.current = false;
       recognitionRef.current?.stop();
       recognitionRef.current = null;
     };
@@ -919,6 +922,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     }
 
     if (listening) {
+      keepListeningRef.current = false;
       recognitionRef.current?.stop();
       return;
     }
@@ -938,9 +942,10 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     speechBaseTextRef.current = input.trim();
     setComposerError("");
     setListening(true);
+    keepListeningRef.current = true;
     recognitionRef.current = recognition;
     recognition.lang = "zh-CN";
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
 
     recognition.onresult = (event) => {
@@ -963,14 +968,36 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     };
 
     recognition.onerror = (event) => {
-      setComposerError(
-        event.error === "not-allowed"
-          ? "请先允许浏览器使用麦克风。"
-          : "语音识别失败，请重试。"
-      );
+      if (event.error === "not-allowed" || event.error === "service-not-allowed" || event.error === "audio-capture") {
+        keepListeningRef.current = false;
+        setListening(false);
+        recognitionRef.current = null;
+      }
+
+      if (event.error !== "aborted") {
+        setComposerError(
+          event.error === "not-allowed"
+            ? "请先允许浏览器使用麦克风。"
+            : event.error === "service-not-allowed"
+              ? "当前浏览器禁止了语音识别服务。"
+              : event.error === "audio-capture"
+                ? "没有检测到可用麦克风。"
+                : "语音识别失败，请重试。"
+        );
+      }
     };
 
     recognition.onend = () => {
+      if (keepListeningRef.current) {
+        try {
+          recognition.start();
+          return;
+        } catch {
+          keepListeningRef.current = false;
+          setComposerError("语音识别中断，请重新开始。");
+        }
+      }
+
       setListening(false);
       recognitionRef.current = null;
     };
@@ -1213,6 +1240,11 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     </section>
   );
 }
+
+
+
+
+
 
 
 

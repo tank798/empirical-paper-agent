@@ -62,11 +62,13 @@ export function HomeHero() {
   const [error, setError] = useState("");
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const speechBaseTextRef = useRef("");
+  const keepListeningRef = useRef(false);
 
   const showGhostText = !focused && !topic.trim();
 
   useEffect(() => {
     return () => {
+      keepListeningRef.current = false;
       recognitionRef.current?.stop();
       recognitionRef.current = null;
     };
@@ -116,6 +118,7 @@ export function HomeHero() {
     }
 
     if (listening) {
+      keepListeningRef.current = false;
       recognitionRef.current?.stop();
       return;
     }
@@ -135,9 +138,10 @@ export function HomeHero() {
     speechBaseTextRef.current = topic.trim();
     setError("");
     setListening(true);
+    keepListeningRef.current = true;
     recognitionRef.current = recognition;
     recognition.lang = "zh-CN";
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
 
     recognition.onresult = (event) => {
@@ -160,14 +164,36 @@ export function HomeHero() {
     };
 
     recognition.onerror = (event) => {
-      setError(
-        event.error === "not-allowed"
-          ? "请先允许浏览器使用麦克风。"
-          : "语音识别失败，请重试。"
-      );
+      if (event.error === "not-allowed" || event.error === "service-not-allowed" || event.error === "audio-capture") {
+        keepListeningRef.current = false;
+        setListening(false);
+        recognitionRef.current = null;
+      }
+
+      if (event.error !== "aborted") {
+        setError(
+          event.error === "not-allowed"
+            ? "请先允许浏览器使用麦克风。"
+            : event.error === "service-not-allowed"
+              ? "当前浏览器禁止了语音识别服务。"
+              : event.error === "audio-capture"
+                ? "没有检测到可用麦克风。"
+                : "语音识别失败，请重试。"
+        );
+      }
     };
 
     recognition.onend = () => {
+      if (keepListeningRef.current) {
+        try {
+          recognition.start();
+          return;
+        } catch {
+          keepListeningRef.current = false;
+          setError("语音识别中断，请重新开始。");
+        }
+      }
+
       setListening(false);
       recognitionRef.current = null;
     };
@@ -255,3 +281,4 @@ export function HomeHero() {
     </section>
   );
 }
+
