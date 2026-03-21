@@ -38,11 +38,22 @@ export const WorkflowStreamPhase = {
 export type WorkflowStreamPhase =
   (typeof WorkflowStreamPhase)[keyof typeof WorkflowStreamPhase];
 
+export type WorkflowProgressPayload = {
+  currentCount: number;
+  totalCount: number;
+  stageLabel: string;
+  remainingMinutes: number;
+};
+
 export type WorkflowStreamEvent =
   | {
       type: "status";
       phase: WorkflowStreamPhase;
       message: string;
+    }
+  | {
+      type: "progress";
+      progress: WorkflowProgressPayload;
     }
   | {
       type: "message";

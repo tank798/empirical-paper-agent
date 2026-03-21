@@ -4,7 +4,8 @@ import {
   ProjectStepStatus,
   SkillName,
   WorkflowStep,
-  type ResearchProfile
+  type ResearchProfile,
+  type WorkflowProgressPayload
 } from "@empirical/shared";
 import { MessagesService } from "../messages/messages.service";
 import { ProjectsService } from "../projects/projects.service";
@@ -101,6 +102,38 @@ const GENERATED_WORKFLOW: WorkflowRunEntry[] = [
   }
 ];
 
+
+const WORKFLOW_PROGRESS_BY_STEP: Partial<
+  Record<WorkflowStep, { currentCount: number; stageLabel: string }>
+> = {
+  [WorkflowStep.DATA_CHECK]: {
+    currentCount: 2,
+    stageLabel: "数据处理"
+  },
+  [WorkflowStep.BASELINE_REGRESSION]: {
+    currentCount: 3,
+    stageLabel: "基准回归"
+  },
+  [WorkflowStep.ROBUSTNESS]: {
+    currentCount: 4,
+    stageLabel: "稳健性检验"
+  },
+  [WorkflowStep.IV]: {
+    currentCount: 5,
+    stageLabel: "内生性分析"
+  },
+  [WorkflowStep.MECHANISM]: {
+    currentCount: 6,
+    stageLabel: "机制分析"
+  },
+  [WorkflowStep.HETEROGENEITY]: {
+    currentCount: 7,
+    stageLabel: "异质性分析"
+  }
+};
+
+const TOTAL_WORKFLOW_STAGE_COUNT = 7;
+
 @Injectable()
 export class WorkflowService {
   constructor(
@@ -116,6 +149,7 @@ export class WorkflowService {
     userMessage: string;
     requestedStep?: WorkflowStep;
     payload?: Record<string, unknown>;
+    onProgress?: (progress: WorkflowProgressPayload) => void | Promise<void>;
   }) {
     const project = await this.projectsService.assertProjectAccess(
       params.projectId,
@@ -230,7 +264,8 @@ export class WorkflowService {
         params.projectId,
         effectiveUserMessage,
         effectivePayload,
-        this.isConfirmation(effectiveUserMessage)
+        this.isConfirmation(effectiveUserMessage),
+        params.onProgress
       );
     }
 
@@ -247,7 +282,8 @@ export class WorkflowService {
     projectId: string,
     userMessage: string,
     payload: Record<string, unknown>,
-    confirmed: boolean
+    confirmed: boolean,
+    onProgress?: (progress: WorkflowProgressPayload) => void | Promise<void>
   ) {
     const draft = await this.buildSetupDraft(projectId, userMessage, payload);
     const missingFields = this.getMissingSetupFields(draft);
@@ -303,7 +339,7 @@ export class WorkflowService {
     }
 
     await this.researchProfileService.mergeExplicitUpdates(projectId, draft as unknown as Partial<ResearchProfile>);
-    const primaryMessage = await this.runFullWorkflowGeneration(projectId, draft);
+    const primaryMessage = await this.runFullWorkflowGeneration(projectId, draft, onProgress);
 
     return {
       projectId,
@@ -482,7 +518,11 @@ export class WorkflowService {
     }
   }
 
-  private async runFullWorkflowGeneration(projectId: string, draft: SetupDraft) {
+  private async runFullWorkflowGeneration(
+    projectId: string,
+    draft: SetupDraft,
+    onProgress?: (progress: WorkflowProgressPayload) => void | Promise<void>
+  ) {
     await this.resetGeneratedSteps(projectId);
     await this.projectsService.updateStepStatus(projectId, WorkflowStep.TOPIC_DETECT, ProjectStepStatus.COMPLETED, {});
     await this.projectsService.updateStepStatus(projectId, WorkflowStep.TOPIC_NORMALIZE, ProjectStepStatus.COMPLETED, {});
@@ -521,6 +561,17 @@ export class WorkflowService {
       });
 
       await this.projectsService.updateStepStatus(projectId, entry.step, ProjectStepStatus.COMPLETED, { generatedInBatch: true });
+
+      const progressMeta = WORKFLOW_PROGRESS_BY_STEP[entry.step];
+      if (progressMeta && onProgress) {
+        const remainingStages = Math.max(0, TOTAL_WORKFLOW_STAGE_COUNT - progressMeta.currentCount);
+        await onProgress({
+          currentCount: progressMeta.currentCount,
+          totalCount: TOTAL_WORKFLOW_STAGE_COUNT,
+          stageLabel: progressMeta.stageLabel,
+          remainingMinutes: remainingStages === 0 ? 0 : Math.max(1, Math.ceil(remainingStages * 0.8))
+        });
+      }
 
       if (entry.step === WorkflowStep.DATA_CLEANING) {
         primaryMessage = assistantMessage;

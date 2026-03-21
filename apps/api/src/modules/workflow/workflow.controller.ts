@@ -88,7 +88,13 @@ export class WorkflowController {
         resumeToken: token,
         userMessage: parsed.userMessage,
         requestedStep: parsed.requestedStep,
-        payload: parsed.payload
+        payload: parsed.payload,
+        onProgress: async (progress) => {
+          sendEvent({
+            type: "progress",
+            progress
+          });
+        }
       })) as WorkflowNextResponse;
 
       stopHeartbeat();

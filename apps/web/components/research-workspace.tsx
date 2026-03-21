@@ -17,6 +17,7 @@ import {
   WorkflowStreamPhase,
   type AssistantMessageEnvelope,
   type ProjectDetail,
+  type WorkflowProgressPayload,
   type WorkflowStreamPhase as WorkflowStreamPhaseValue
 } from "@empirical/shared";
 import { apiRequest, streamApiRequest } from "../lib/api";
@@ -602,6 +603,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const [selectedStageId, setSelectedStageId] = useState<StageId>("topic");
   const [liveTurn, setLiveTurn] = useState<LiveTurnState | null>(null);
   const [confirmProcessing, setConfirmProcessing] = useState(false);
+  const [workflowProgress, setWorkflowProgress] = useState<WorkflowProgressPayload | null>(null);
 
   const [pendingBootstrapTopic, setPendingBootstrapTopic] = useState<string | null>(null);
   const [initializingProject, setInitializingProject] = useState(false);
@@ -629,6 +631,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setInitializingProject(Boolean(getPendingProjectBootstrap(projectId)?.topic));
     setOptimisticStageId(null);
     setConfirmProcessing(false);
+    setWorkflowProgress(null);
     finalizedTurnIdRef.current = null;
     bootstrapStartedRef.current = false;
     keepListeningRef.current = false;
@@ -736,6 +739,12 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     !hasDownstreamMessages &&
     !confirmProcessing;
   const workflowLockActive = confirmProcessing;
+  const workflowLockProgress = workflowProgress ?? {
+    currentCount: 1,
+    totalCount: 7,
+    stageLabel: "研究设定",
+    remainingMinutes: 5
+  };
 
 
   useEffect(() => {
@@ -762,12 +771,14 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
           setError("");
           setOptimisticStageId(null);
           setConfirmProcessing(false);
+          setWorkflowProgress(null);
         }
       } catch (requestError) {
         if (!ignore) {
           setError(requestError instanceof Error ? requestError.message : "\u5237\u65b0\u9879\u76ee\u72b6\u6001\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002");
           setOptimisticStageId(null);
           setConfirmProcessing(false);
+          setWorkflowProgress(null);
         }
       }
     })();
@@ -834,6 +845,11 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
             return;
           }
 
+          if (event.type === "progress") {
+            setWorkflowProgress(event.progress);
+            return;
+          }
+
           if (event.type === "message") {
             receivedMessage = true;
 
@@ -872,6 +888,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         setInitializingProject(false);
         setOptimisticStageId(null);
         setConfirmProcessing(false);
+        setWorkflowProgress(null);
         setInput("");
         setAttachment(null);
       }
@@ -896,6 +913,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       setInitializingProject(false);
       setOptimisticStageId(null);
       setConfirmProcessing(false);
+      setWorkflowProgress(null);
     }
   };
 
@@ -926,6 +944,12 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
 
   const confirmTopic = async () => {
     setConfirmProcessing(true);
+    setWorkflowProgress({
+      currentCount: 1,
+      totalCount: 7,
+      stageLabel: "\u7814\u7a76\u8bbe\u5b9a",
+      remainingMinutes: 5
+    });
     setOptimisticStageId("data");
     setSelectedStageId("data");
     await streamMessage("\u786e\u8ba4\u5e76\u751f\u6210");
@@ -1141,8 +1165,11 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
             <div className="mx-auto flex justify-center">
               <ThinkingBubble label={"Tank 正在处理中，请稍等片刻"} />
             </div>
-            <p className="mt-4 text-sm font-normal leading-7 text-slate-600">
-              {"当前研究设定已锁定，Tank 正在依次生成后续模块内容。"}
+            <p className="mt-4 text-sm font-medium leading-7 text-slate-700">
+              {`共 ${workflowLockProgress.totalCount} 个模块，当前已处理 ${workflowLockProgress.currentCount}/${workflowLockProgress.totalCount} 个，预计还需 ${workflowLockProgress.remainingMinutes} 分钟。`}
+            </p>
+            <p className="mt-2 text-xs font-normal tracking-[0.08em] text-slate-500">
+              {`当前正在生成：${workflowLockProgress.stageLabel}`}
             </p>
           </div>
         </div>

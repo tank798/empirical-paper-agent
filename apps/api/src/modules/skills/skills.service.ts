@@ -90,9 +90,13 @@ export class SkillsService {
       );
     } else {
       try {
-        const generated = await this.llmService.generateJson(systemPrompt, userPrompt, {
-          profile: executionProfile.llmProfile
-        });
+        const generated = await this.withTimeout(
+          this.llmService.generateJson(systemPrompt, userPrompt, {
+            profile: executionProfile.llmProfile
+          }),
+          executionProfile.timeoutMs,
+          `${params.skillName} timed out and fell back to deterministic output.`
+        );
         resolvedModel = generated.model;
         output = definition.outputSchema.parse(generated.data);
       } catch (llmError) {
@@ -152,6 +156,25 @@ export class SkillsService {
       fallbackUsed,
       runId: run.id
     };
+  }
+
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string) {
+    let timer: NodeJS.Timeout | null = null;
+
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error(timeoutMessage));
+          }, timeoutMs);
+        })
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
   }
 
   private async prepareInput(
