@@ -733,7 +733,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const showTopicConfirmBar =
     selectedStage.id === "topic" &&
     selectedStageMessages.some((message) => message.messageType === "topic_confirm") &&
-    !hasDownstreamMessages;
+    !hasDownstreamMessages &&
+    !confirmProcessing;
   const workflowLockActive = confirmProcessing;
 
   useEffect(() => {
@@ -1136,7 +1137,9 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   return (
     <>
       {workflowLockActive ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/14 backdrop-blur-[10px]">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-slate-950/18 backdrop-blur-[12px]">
+          <div className="workflow-lock-edge absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(96,165,250,0.75),rgba(196,181,253,0.9),transparent)]" />
+          <div className="workflow-lock-edge absolute inset-x-0 bottom-0 h-px bg-[linear-gradient(90deg,transparent,rgba(125,211,252,0.8),rgba(165,180,252,0.92),transparent)]" style={{ animationDelay: "-1.6s" }} />
           <div className="workflow-lock-aura absolute left-[14%] top-[18%] h-72 w-72 rounded-full bg-[radial-gradient(circle,rgba(99,102,241,0.26),transparent_68%)] blur-3xl" />
           <div className="workflow-lock-aura absolute bottom-[14%] right-[12%] h-80 w-80 rounded-full bg-[radial-gradient(circle,rgba(168,85,247,0.18),transparent_70%)] blur-3xl" style={{ animationDelay: "-1.8s" }} />
           <div className="workflow-lock-panel relative mx-6 w-full max-w-xl rounded-[28px] border border-white/70 bg-white/82 px-8 py-8 text-center shadow-[0_30px_80px_rgba(15,23,42,0.16)] backdrop-blur-xl">
@@ -1184,14 +1187,29 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         ) : null}
 
         {selectedStageMessages.length > 0 ? (
-          <div className="space-y-6">
-            {selectedStageMessages.map((message, index) => (
-              <MessageCard
-                key={message.id ?? `${message.messageType}-${message.createdAt ?? index}`}
-                fullWidth
-                message={message}
-              />
-            ))}
+          <div className="space-y-0">
+            <div className="space-y-6">
+              {selectedStageMessages.map((message, index) => (
+                <MessageCard
+                  key={message.id ?? `${message.messageType}-${message.createdAt ?? index}`}
+                  fullWidth
+                  message={message}
+                />
+              ))}
+            </div>
+
+            {showTopicConfirmBar ? (
+              <div className="-mt-3 flex justify-center px-6 pb-2">
+                <button
+                  className="topic-confirm-glass topic-confirm-appear inline-flex h-[58px] w-[88%] items-center justify-center rounded-full px-7 text-base font-semibold tracking-[0.02em] text-white transition hover:-translate-y-0.5 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={sending || confirmProcessing}
+                  onClick={() => void confirmTopic()}
+                  type="button"
+                >
+                  {"确认主题"}
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : showStageLoadingState ? (
           <WorkspaceStageLoadingCard
