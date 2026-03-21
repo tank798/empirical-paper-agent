@@ -1,3 +1,5 @@
+import type { AssistantMessageEnvelope, ProjectDetail } from "@empirical/shared";
+
 const STORAGE_KEY = "empirical-agent-projects";
 const PENDING_BOOTSTRAP_KEY = "empirical-agent-pending-bootstrap";
 
@@ -11,6 +13,8 @@ type PendingProjectBootstrap = {
   projectId: string;
   topic: string;
   createdAt: number;
+  detail?: ProjectDetail;
+  messages?: AssistantMessageEnvelope[];
 };
 
 export function getStoredProjects(): StoredProject[] {

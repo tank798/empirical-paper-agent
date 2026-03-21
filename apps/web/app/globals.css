@@ -165,12 +165,12 @@ h4 {
   0%,
   100% {
     transform: translateY(0);
-    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.16);
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.14);
   }
 
   50% {
-    transform: translateY(-4px);
-    box-shadow: 0 28px 54px rgba(15, 23, 42, 0.2);
+    transform: translateY(-3px);
+    box-shadow: 0 24px 52px rgba(15, 23, 42, 0.18);
   }
 }
 
@@ -244,28 +244,28 @@ h4 {
   }
 
   .topic-confirm-floating {
-    animation: topic-confirm-float 2.8s ease-in-out infinite;
+    animation: topic-confirm-float 3s ease-in-out infinite;
   }
 
   .topic-confirm-appear {
-    animation: topic-confirm-appear 320ms ease-out, topic-confirm-float 2.8s ease-in-out 320ms infinite;
+    animation: topic-confirm-appear 320ms ease-out, topic-confirm-float 3s ease-in-out 320ms infinite;
   }
 
   .topic-confirm-glass {
-    background: rgba(15, 23, 42, 0.8);
-    backdrop-filter: blur(18px);
-    border: 1px solid rgba(148, 163, 184, 0.18);
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     box-shadow:
-      0 0 0 1px rgba(125, 211, 252, 0.16),
-      0 22px 44px rgba(15, 23, 42, 0.18),
-      0 0 26px rgba(96, 165, 250, 0.12);
+      inset 0 1px 0 rgba(255, 255, 255, 0.12),
+      0 18px 36px rgba(79, 70, 229, 0.14),
+      0 0 24px rgba(168, 85, 247, 0.08);
   }
 
   .topic-confirm-glass:hover {
     box-shadow:
-      0 0 0 1px rgba(125, 211, 252, 0.22),
-      0 28px 52px rgba(15, 23, 42, 0.22),
-      0 0 34px rgba(96, 165, 250, 0.18);
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      0 22px 44px rgba(79, 70, 229, 0.18),
+      0 0 32px rgba(168, 85, 247, 0.12);
   }
 
   .topic-confirm-inline-button {

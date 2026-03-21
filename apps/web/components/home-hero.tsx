@@ -1,8 +1,9 @@
-﻿"use client";
+"use client";
 
 import { startTransition, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiRequest } from "../lib/api";
+import { type AssistantMessageEnvelope, type ProjectDetail } from "@empirical/shared";
+import { apiRequest, streamApiRequest } from "../lib/api";
 import { appendCommittedSpeech, buildSpeechText, finalizeSpeechText } from "../lib/speech";
 import { saveStoredProject, setPendingProjectBootstrap } from "../lib/storage";
 import { ThinkingBubble } from "./thinking-bubble";
@@ -54,6 +55,37 @@ function MicIcon() {
   );
 }
 
+async function fetchHydratedProjectSnapshot(projectId: string, token: string) {
+  let lastDetail: ProjectDetail | null = null;
+  let lastMessages: AssistantMessageEnvelope[] = [];
+
+  for (let attempt = 0; attempt < 18; attempt += 1) {
+    const [detail, messages] = await Promise.all([
+      apiRequest<ProjectDetail>(`/projects/${projectId}`, { token }),
+      apiRequest<AssistantMessageEnvelope[]>(`/projects/${projectId}/messages`, { token })
+    ]);
+
+    lastDetail = detail;
+    lastMessages = messages;
+
+    const hasRenderableSetup = messages.some(
+      (message) =>
+        message.role !== "user" &&
+        (message.messageType === "topic_confirm" || message.messageType === "system_notice")
+    );
+
+    if (hasRenderableSetup) {
+      return { detail, messages };
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 180));
+  }
+
+  return {
+    detail: lastDetail as ProjectDetail,
+    messages: lastMessages
+  };
+}
 
 export function HomeHero() {
   const router = useRouter();
@@ -62,6 +94,7 @@ export function HomeHero() {
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
   const [error, setError] = useState("");
+  const [handoffReady, setHandoffReady] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const speechBaseTextRef = useRef("");
   const speechCommittedTextRef = useRef("");
@@ -87,23 +120,48 @@ export function HomeHero() {
     try {
       setLoading(true);
       setError("");
+      setHandoffReady(false);
+
       const data = await apiRequest<{ project: { id: string; title: string }; resumeToken: string }>("/projects", {
         method: "POST",
         body: JSON.stringify({ topicRaw: nextTopic })
       });
+
       saveStoredProject({ id: data.project.id, token: data.resumeToken, title: data.project.title });
+      router.prefetch(`/projects/${data.project.id}`);
+
+      await streamApiRequest(`/projects/${data.project.id}/workflow/stream`, {
+        token: data.resumeToken,
+        body: {
+          userMessage: nextTopic
+        },
+        onEvent: (event) => {
+          if (event.type === "error") {
+            throw new Error(event.message);
+          }
+        }
+      });
+
+      const { detail, messages } = await fetchHydratedProjectSnapshot(data.project.id, data.resumeToken);
+
       setPendingProjectBootstrap({
         projectId: data.project.id,
         topic: nextTopic,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        detail,
+        messages
       });
-      router.prefetch(`/projects/${data.project.id}`);
-      startTransition(() => {
-        router.push(`/projects/${data.project.id}`);
-      });
+
+      setHandoffReady(true);
+      window.setTimeout(() => {
+        startTransition(() => {
+          router.push(`/projects/${data.project.id}`);
+        });
+      }, 180);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "创建项目失败，请稍后重试。");
+      setError(requestError instanceof Error ? requestError.message : "\u521b\u5efa\u9879\u76ee\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002");
       setLoading(false);
+      setHandoffReady(false);
     }
   };
 
@@ -134,7 +192,7 @@ export function HomeHero() {
     const SpeechRecognitionCtor = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
 
     if (!SpeechRecognitionCtor) {
-      setError("当前浏览器暂不支持语音输入。");
+      setError("\u5f53\u524d\u6d4f\u89c8\u5668\u6682\u4e0d\u652f\u6301\u8bed\u97f3\u8f93\u5165\u3002");
       return;
     }
 
@@ -189,12 +247,12 @@ export function HomeHero() {
       if (event.error !== "aborted") {
         setError(
           event.error === "not-allowed"
-            ? "请先允许浏览器使用麦克风。"
+            ? "\u8bf7\u5148\u5141\u8bb8\u6d4f\u89c8\u5668\u4f7f\u7528\u9ea6\u514b\u98ce\u3002"
             : event.error === "service-not-allowed"
-              ? "当前浏览器禁止了语音识别服务。"
+              ? "\u5f53\u524d\u6d4f\u89c8\u5668\u7981\u6b62\u4e86\u8bed\u97f3\u8bc6\u522b\u670d\u52a1\u3002"
               : event.error === "audio-capture"
-                ? "没有检测到可用麦克风。"
-                : "语音识别失败，请重试。"
+                ? "\u6ca1\u6709\u68c0\u6d4b\u5230\u53ef\u7528\u9ea6\u514b\u98ce\u3002"
+                : "\u8bed\u97f3\u8bc6\u522b\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5\u3002"
         );
       }
     };
@@ -206,7 +264,7 @@ export function HomeHero() {
           return;
         } catch {
           keepListeningRef.current = false;
-          setError("语音识别中断，请重新开始。");
+          setError("\u8bed\u97f3\u8bc6\u522b\u4e2d\u65ad\uff0c\u8bf7\u91cd\u65b0\u5f00\u59cb\u3002");
         }
       }
 
@@ -227,7 +285,11 @@ export function HomeHero() {
   };
 
   return (
-    <section className="relative overflow-hidden rounded-[40px] border border-white/70 px-5 py-8 sm:px-8 sm:py-10 lg:px-12 lg:py-12">
+    <section
+      className={`relative overflow-hidden rounded-[40px] border border-white/70 px-5 py-8 transition-[opacity,transform,filter] duration-200 sm:px-8 sm:py-10 lg:px-12 lg:py-12 ${
+        handoffReady ? "translate-y-1 scale-[0.995] opacity-0 blur-[2px]" : "translate-y-0 scale-100 opacity-100 blur-0"
+      }`}
+    >
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(150,193,255,0.28),transparent_24%),radial-gradient(circle_at_84%_16%,rgba(225,240,167,0.34),transparent_22%),radial-gradient(circle_at_50%_68%,rgba(255,255,255,0.92),transparent_38%)]" />
       <div className="pointer-events-none absolute inset-x-[14%] top-10 h-52 rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.84),transparent_72%)] blur-3xl" />
 
@@ -239,7 +301,7 @@ export function HomeHero() {
               fontFamily: `"Arial Rounded MT Bold", "Trebuchet MS", "Aptos", "PingFang SC", "Microsoft YaHei", sans-serif`
             }}
           >
-            {"Hi，我是Tank，你的实证论文助手"}
+            {"Hi\uff0c\u6211\u662fTank\uff0c\u4f60\u7684\u5b9e\u8bc1\u8bba\u6587\u52a9\u624b"}
           </h1>
         </div>
 
@@ -249,12 +311,12 @@ export function HomeHero() {
               <div className="pointer-events-none absolute inset-0 z-10 px-4 py-4 sm:px-6 sm:py-5">
                 <p className="max-w-3xl text-lg leading-8 text-slate-500 sm:text-[1.06rem]">
                   {
-                    "请输入你的研究主题、研究对象、解释变量、被解释变量、控制变量、样本区间和固定效应。你可以写得很乱，我会先帮你整理成结构化研究设定。"
+                    "\u8bf7\u8f93\u5165\u4f60\u7684\u7814\u7a76\u4e3b\u9898\u3001\u7814\u7a76\u5bf9\u8c61\u3001\u89e3\u91ca\u53d8\u91cf\u3001\u88ab\u89e3\u91ca\u53d8\u91cf\u3001\u63a7\u5236\u53d8\u91cf\u3001\u6837\u672c\u533a\u95f4\u548c\u56fa\u5b9a\u6548\u5e94\u3002\u4f60\u53ef\u4ee5\u5199\u5f97\u5f88\u4e71\uff0c\u6211\u4f1a\u5148\u5e2e\u4f60\u6574\u7406\u6210\u7ed3\u6784\u5316\u7814\u7a76\u8bbe\u5b9a\u3002"
                   }
                 </p>
                 <p className="mt-4 max-w-3xl text-base leading-8 text-slate-400 sm:text-[1rem]">
                   {
-                    "例如：研究数字金融对企业创新的影响；样本是2011-2022年中国A股上市公司（剔除ST和金融股）；解释变量是数字金融指数；被解释变量是专利申请数量；控制变量包括企业规模、资产负债率、ROA；固定效应为企业和年份固定效应。"
+                    "\u4f8b\u5982\uff1a\u7814\u7a76\u6570\u5b57\u91d1\u878d\u5bf9\u4f01\u4e1a\u521b\u65b0\u7684\u5f71\u54cd\uff1b\u6837\u672c\u662f2011-2022\u5e74\u4e2d\u56fdA\u80a1\u4e0a\u5e02\u516c\u53f8\uff08\u5254\u9664ST\u548c\u91d1\u878d\u80a1\uff09\uff1b\u89e3\u91ca\u53d8\u91cf\u662f\u6570\u5b57\u91d1\u878d\u6307\u6570\uff1b\u88ab\u89e3\u91ca\u53d8\u91cf\u662f\u4e13\u5229\u7533\u8bf7\u6570\u91cf\uff1b\u63a7\u5236\u53d8\u91cf\u5305\u62ec\u4f01\u4e1a\u89c4\u6a21\u3001\u8d44\u4ea7\u8d1f\u503a\u7387\u3001ROA\uff1b\u56fa\u5b9a\u6548\u5e94\u4e3a\u4f01\u4e1a\u548c\u5e74\u4efd\u56fa\u5b9a\u6548\u5e94\u3002"
                   }
                 </p>
               </div>
@@ -272,7 +334,7 @@ export function HomeHero() {
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-4 px-1">
             <button className="text-sm font-medium text-slate-500 transition hover:text-slate-900" type="button">
-              {"Enter发送，Ctrl+Enter换行"}
+              {"Enter\u53d1\u9001\uff0cCtrl+Enter\u6362\u884c"}
             </button>
 
             <div className="flex items-center gap-2.5">
@@ -295,7 +357,7 @@ export function HomeHero() {
                 onClick={() => void createProject()}
                 type="button"
               >
-                {loading ? <ThinkingBubble bare className="text-white" /> : <span className="w-full text-center">确认</span>}
+                {loading ? <ThinkingBubble bare className="text-white" /> : <span className="w-full text-center">{"\u786e\u8ba4"}</span>}
               </button>
             </div>
           </div>

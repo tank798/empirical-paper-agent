@@ -8,6 +8,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState
@@ -144,6 +145,8 @@ const SUPPORTED_ATTACHMENT_EXTENSIONS = new Set([
 const MAX_ATTACHMENT_CHARACTERS = 20000;
 const MAX_SPREADSHEET_ROWS = 80;
 const MAX_SPREADSHEET_SHEETS = 4;
+
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 function textValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
@@ -604,6 +607,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const [liveTurn, setLiveTurn] = useState<LiveTurnState | null>(null);
   const [confirmProcessing, setConfirmProcessing] = useState(false);
   const [workflowProgress, setWorkflowProgress] = useState<WorkflowProgressPayload | null>(null);
+  const [bootstrapResolved, setBootstrapResolved] = useState(false);
+  const [pageEntered, setPageEntered] = useState(false);
 
   const [pendingBootstrapTopic, setPendingBootstrapTopic] = useState<string | null>(null);
   const [initializingProject, setInitializingProject] = useState(false);
@@ -617,9 +622,15 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const speechInterimTextRef = useRef("");
   const keepListeningRef = useRef(false);
 
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
+    const pendingBootstrap = getPendingProjectBootstrap(projectId);
+    const hasHydratedBootstrap = Boolean(pendingBootstrap?.detail && pendingBootstrap?.messages);
+
     setStored(getStoredProject(projectId));
     setAvailableProjects(getStoredProjects());
+    setDetail(hasHydratedBootstrap ? pendingBootstrap?.detail ?? null : null);
+    setMessages(hasHydratedBootstrap ? pendingBootstrap?.messages ?? [] : []);
+    setLoading(!hasHydratedBootstrap);
     setLiveTurn(null);
     setError("");
     setComposerError("");
@@ -627,11 +638,13 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setAttachment(null);
     setListening(false);
     setSelectedStageId("topic");
-    setPendingBootstrapTopic(getPendingProjectBootstrap(projectId)?.topic ?? null);
-    setInitializingProject(Boolean(getPendingProjectBootstrap(projectId)?.topic));
+    setPendingBootstrapTopic(hasHydratedBootstrap ? null : pendingBootstrap?.topic ?? null);
+    setInitializingProject(Boolean(pendingBootstrap?.topic) && !hasHydratedBootstrap);
     setOptimisticStageId(null);
     setConfirmProcessing(false);
     setWorkflowProgress(null);
+    setBootstrapResolved(true);
+    setPageEntered(false);
     finalizedTurnIdRef.current = null;
     bootstrapStartedRef.current = false;
     keepListeningRef.current = false;
@@ -640,6 +653,20 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     recognitionRef.current?.stop();
     recognitionRef.current = null;
   }, [projectId]);
+
+  useEffect(() => {
+    if (!bootstrapResolved) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      setPageEntered(true);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [bootstrapResolved, projectId]);
 
   useEffect(() => {
     if (stored !== null || availableProjects.length !== 1) {
@@ -677,8 +704,12 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     let ignore = false;
 
     const load = async () => {
+      const hasBootstrapData = Boolean(getPendingProjectBootstrap(projectId)?.detail && getPendingProjectBootstrap(projectId)?.messages);
+
       try {
-        setLoading(true);
+        if (!hasBootstrapData) {
+          setLoading(true);
+        }
         const [detailData, messageData] = await Promise.all([
           apiRequest<ProjectDetail>(`/projects/${projectId}`, { token: stored.token }),
           apiRequest<AssistantMessageEnvelope[]>(`/projects/${projectId}/messages`, { token: stored.token })
@@ -691,6 +722,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         setDetail(detailData);
         setMessages(messageData);
         setError("");
+        clearPendingProjectBootstrap(projectId);
       } catch (requestError) {
         if (!ignore) {
           setError(requestError instanceof Error ? requestError.message : "加载项目失败，请稍后重试。");
@@ -1105,6 +1137,10 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     ? "例如：研究对象改成中国A股上市公司（剔除ST和金融股）\n例如：控制变量补充企业规模、资产负债率、ROA\n例如：固定效应改成企业固定效应和年份固定效应"
     : "例如：请解释一下这一步的代码逻辑\n例如：把控制变量再补充完整一点\n例如：请重写一版更详细的 Stata 代码";
 
+  if (!bootstrapResolved) {
+    return <section aria-hidden="true" className="mx-auto max-w-[1100px] px-6 pb-8 pt-6 opacity-0" />;
+  }
+
   if (showInitialProjectLoading) {
     return (
       <WorkspacePlaceholder>
@@ -1175,7 +1211,10 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         </div>
       ) : null}
 
-      <section className="mx-auto max-w-[1100px] space-y-6 px-6 pb-8 pt-6">
+      <section className={clsx(
+        "mx-auto max-w-[1100px] space-y-6 px-6 pb-8 pt-6 transition-[opacity,transform] duration-200",
+        pageEntered ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
+      )}>
       <div className="border-b border-slate-200 pb-4">
         <div className="flex flex-wrap gap-[10px] sm:gap-3">
           {stageMeta.map((stage, index) => {
@@ -1219,12 +1258,15 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
                   topicConfirmAction={
                     selectedStage.id === "topic" && message.messageType === "topic_confirm" && showTopicConfirmBar
                       ? {
-                          hint: "如需调整研究设定，请继续补充说明；如无问题，请点击下方确认。",
+                          hint: "如无问题，请确认主题；如需修改，请点击下方微调。",
                           label: "确认主题",
                           disabled: sending || confirmProcessing,
                           locked: confirmProcessing,
                           onConfirm: () => {
                             void confirmTopic();
+                          },
+                          onRefineSubmit: async (value: string) => {
+                            await streamMessage(value);
                           }
                         }
                       : null

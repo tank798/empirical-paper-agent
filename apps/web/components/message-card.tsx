@@ -1,6 +1,7 @@
-﻿"use client";
+"use client";
 
 import clsx from "clsx";
+import { useState, type KeyboardEvent } from "react";
 import type { AssistantMessageEnvelope } from "@empirical/shared";
 import {
   normalizeAssistantCopy,
@@ -16,6 +17,7 @@ type TopicConfirmAction = {
   disabled?: boolean;
   locked?: boolean;
   onConfirm: () => void;
+  onRefineSubmit?: (value: string) => Promise<void> | void;
 };
 
 type MessageCardProps = {
@@ -38,11 +40,27 @@ function renderJsonList(items: unknown, emptyLabel = "暂无补充内容。") {
   );
 }
 
+function CheckIcon() {
+  return (
+    <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
+      <path
+        d="M3.333 8.333 6.4 11.4l6.267-6.8"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
 export function MessageCard({
   message,
   fullWidth = false,
   topicConfirmAction = null
 }: MessageCardProps) {
+  const [refineOpen, setRefineOpen] = useState(false);
+  const [refineValue, setRefineValue] = useState("");
   const json = message.contentJson as Record<string, any>;
   const contentText = normalizeAssistantCopy(message.contentText);
   const isUser = message.role === "user";
@@ -82,6 +100,26 @@ export function MessageCard({
     }
   ].filter((item) => item.value);
 
+  const submitInlineRefine = async () => {
+    if (!topicConfirmAction?.onRefineSubmit || !refineValue.trim() || topicConfirmAction.disabled) {
+      return;
+    }
+
+    const nextValue = refineValue.trim();
+    setRefineValue("");
+    setRefineOpen(false);
+    await topicConfirmAction.onRefineSubmit(nextValue);
+  };
+
+  const handleRefineKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    event.preventDefault();
+    void submitInlineRefine();
+  };
+
   const card = (
     <article
       className={clsx(
@@ -94,7 +132,7 @@ export function MessageCard({
       {isTopicConfirm ? (
         <div>
           <div className="mb-5">
-            <h3 className="text-base font-semibold text-slate-950">研究设定</h3>
+            <h3 className="text-base font-semibold text-slate-950">{"研究设定"}</h3>
           </div>
 
           <p className="text-[20px] font-semibold leading-[1.5] text-slate-950">
@@ -115,18 +153,64 @@ export function MessageCard({
 
           {topicConfirmAction ? (
             <div className="mt-8 flex flex-col items-center">
-              <p className="mb-4 text-sm font-normal leading-7 text-slate-500">
-                {topicConfirmAction.hint}
-              </p>
               {!topicConfirmAction.locked ? (
-                <button
-                  className="topic-confirm-inline-button topic-confirm-appear inline-flex h-[58px] w-[70%] min-w-[320px] max-w-[780px] items-center justify-center rounded-full px-7 text-base font-semibold tracking-[0.02em] text-white transition hover:-translate-y-0.5 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={topicConfirmAction.disabled}
-                  onClick={topicConfirmAction.onConfirm}
-                  type="button"
-                >
-                  {topicConfirmAction.label}
-                </button>
+                <div className="topic-confirm-appear topic-confirm-floating flex w-full justify-center">
+                  <button
+                    className="group relative inline-flex w-[72%] min-w-[18rem] max-w-[35rem] items-center justify-center rounded-full bg-[linear-gradient(135deg,#6366F1,#A855F7)] p-[2px] text-white transition duration-300 hover:shadow-[0_24px_60px_rgba(99,102,241,0.2)] disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={topicConfirmAction.disabled}
+                    onClick={topicConfirmAction.onConfirm}
+                    type="button"
+                  >
+                    <span className="topic-confirm-glass inline-flex h-[58px] w-full items-center justify-center gap-2.5 rounded-full px-7 text-base font-semibold tracking-[0.08em] text-white">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/18 bg-white/8 text-white">
+                        <CheckIcon />
+                      </span>
+                      <span>{topicConfirmAction.label}</span>
+                    </span>
+                  </button>
+                </div>
+              ) : null}
+
+              {topicConfirmAction.onRefineSubmit && !topicConfirmAction.locked ? (
+                <div className="mt-4 w-full max-w-[720px] text-center">
+                  <button
+                    className="text-sm font-normal text-slate-400 transition hover:text-slate-600"
+                    onClick={() => setRefineOpen((current) => !current)}
+                    type="button"
+                  >
+                    {"内容不准确？点击此处微调"}
+                  </button>
+
+                  <div
+                    className={clsx(
+                      "overflow-hidden transition-all duration-300 ease-out",
+                      refineOpen ? "mt-3 max-h-24 opacity-100" : "max-h-0 opacity-0"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 rounded-[18px] border border-slate-200 bg-white/86 px-3 py-3 shadow-[0_12px_32px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                      <input
+                        className="h-11 flex-1 bg-transparent px-2 text-sm font-normal text-slate-900 outline-none placeholder:text-slate-400"
+                        disabled={topicConfirmAction.disabled}
+                        onChange={(event) => setRefineValue(event.target.value)}
+                        onKeyDown={handleRefineKeyDown}
+                        placeholder={"例如：把研究对象改成中国A股上市公司（剔除ST和金融股）"}
+                        value={refineValue}
+                      />
+                      <button
+                        className="inline-flex h-10 items-center justify-center rounded-full bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={topicConfirmAction.disabled || !refineValue.trim()}
+                        onClick={() => void submitInlineRefine()}
+                        type="button"
+                      >
+                        {"更新"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {!topicConfirmAction.locked ? (
+                <p className="mt-4 text-xs font-normal tracking-[0.02em] text-slate-400">{topicConfirmAction.hint}</p>
               ) : null}
             </div>
           ) : null}
@@ -164,7 +248,7 @@ export function MessageCard({
 
           {message.messageType === "sop_guide" ? (
             <div className="mt-4 rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-              <p className="text-sm font-normal text-slate-600">推荐起点：{normalizeDisplayText(json.recommendedStart)}</p>
+              <p className="text-sm font-normal text-slate-600">{"推荐起点："}{normalizeDisplayText(json.recommendedStart)}</p>
               {renderJsonList(json.steps)}
             </div>
           ) : null}
@@ -173,13 +257,13 @@ export function MessageCard({
             <div className="mt-4 space-y-4">
               <div className="grid gap-4 lg:grid-cols-2">
                 <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-                  <p className="text-sm font-medium text-slate-800">这一环节在做什么</p>
+                  <p className="text-sm font-medium text-slate-800">{"这一环节在做什么"}</p>
                   <p className="mt-2 text-sm font-normal leading-7 text-slate-700">{normalizeDisplayText(json.purpose)}</p>
-                  <p className="mt-4 text-sm font-medium text-slate-800">和当前研究有什么关系</p>
+                  <p className="mt-4 text-sm font-medium text-slate-800">{"和当前研究有什么关系"}</p>
                   <p className="mt-2 text-sm font-normal leading-7 text-slate-700">{normalizeDisplayText(json.meaning)}</p>
                 </div>
                 <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-                  <p className="text-sm font-medium text-slate-800">变量与模型</p>
+                  <p className="text-sm font-medium text-slate-800">{"变量与模型"}</p>
                   {renderJsonList(json.variableDesign)}
                   <p className="mt-4 text-sm font-normal leading-7 text-slate-700">{normalizeDisplayText(json.modelSpec)}</p>
                 </div>
@@ -187,16 +271,16 @@ export function MessageCard({
 
               {json.stataCode ? (
                 <div className="rounded-[14px] bg-slate-950 p-4 text-sm text-slate-100">
-                  <p className="mb-3 text-xs font-normal uppercase tracking-[0.18em] text-slate-400">Stata 代码</p>
+                  <p className="mb-3 text-xs font-normal uppercase tracking-[0.18em] text-slate-400">{"Stata 代码"}</p>
                   <pre className="overflow-x-auto whitespace-pre-wrap leading-7">{normalizeDisplayText(json.stataCode)}</pre>
                 </div>
               ) : null}
 
               {json.export?.exportCode ? (
                 <div className="rounded-[14px] border border-amber-100 bg-amber-50 p-4 text-sm text-amber-900">
-                  <p className="font-medium">回归表导出</p>
-                  <p className="mt-2 font-normal">当前写入模式：{formatWriteMode(json.export.writeMode)}</p>
-                  <p className="mt-1 font-normal">目标文件：{normalizeDisplayText(json.export.filePath)}</p>
+                  <p className="font-medium">{"回归表导出"}</p>
+                  <p className="mt-2 font-normal">{"当前写入模式："}{formatWriteMode(json.export.writeMode)}</p>
+                  <p className="mt-1 font-normal">{"目标文件："}{normalizeDisplayText(json.export.filePath)}</p>
                   <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-xs leading-6">
                     {normalizeDisplayText(json.export.exportCode)}
                   </pre>
@@ -205,11 +289,11 @@ export function MessageCard({
 
               <div className="grid gap-4 lg:grid-cols-2">
                 <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-                  <p className="text-sm font-medium text-slate-800">代码说明</p>
+                  <p className="text-sm font-medium text-slate-800">{"代码说明"}</p>
                   {renderJsonList(json.codeExplanation)}
                 </div>
                 <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-                  <p className="text-sm font-medium text-slate-800">阅读建议</p>
+                  <p className="text-sm font-medium text-slate-800">{"阅读建议"}</p>
                   {renderJsonList(json.interpretationGuide || json.checkItems)}
                 </div>
               </div>
@@ -226,14 +310,14 @@ export function MessageCard({
 
               {Array.isArray(json.keyPoints) && json.keyPoints.length > 0 ? (
                 <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-                  <p className="text-sm font-medium text-slate-800">关键要点</p>
+                  <p className="text-sm font-medium text-slate-800">{"关键要点"}</p>
                   {renderJsonList(json.keyPoints)}
                 </div>
               ) : null}
 
               {Array.isArray(json.suggestedNextActions) && json.suggestedNextActions.length > 0 ? (
                 <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-                  <p className="text-sm font-medium text-slate-800">建议下一步</p>
+                  <p className="text-sm font-medium text-slate-800">{"建议下一步"}</p>
                   {renderJsonList(json.suggestedNextActions)}
                 </div>
               ) : null}
@@ -243,13 +327,13 @@ export function MessageCard({
           {message.messageType === "result_interpret" ? (
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-                <p className="text-sm font-medium text-slate-800">通俗解释</p>
+                <p className="text-sm font-medium text-slate-800">{"通俗解释"}</p>
                 <p className="mt-2 text-sm font-normal leading-7 text-slate-700">
                   {normalizeDisplayText(json.plainExplanation)}
                 </p>
               </div>
               <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-                <p className="text-sm font-medium text-slate-800">论文写法</p>
+                <p className="text-sm font-medium text-slate-800">{"论文写法"}</p>
                 <p className="mt-2 text-sm font-normal leading-7 text-slate-700">
                   {normalizeDisplayText(json.paperStyleExplanation)}
                 </p>
@@ -260,13 +344,13 @@ export function MessageCard({
           {message.messageType === "stata_error_fix" ? (
             <div className="mt-4 space-y-4">
               <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-                <p className="text-sm font-medium text-slate-800">错误解释</p>
+                <p className="text-sm font-medium text-slate-800">{"错误解释"}</p>
                 <p className="mt-2 whitespace-pre-wrap text-sm font-normal leading-7 text-slate-700">
                   {normalizeDisplayText(json.explanation)}
                 </p>
               </div>
               <div className="rounded-[14px] bg-slate-950 p-4 text-sm text-slate-100">
-                <p className="mb-3 text-xs font-normal uppercase tracking-[0.18em] text-slate-400">修复代码</p>
+                <p className="mb-3 text-xs font-normal uppercase tracking-[0.18em] text-slate-400">{"修复代码"}</p>
                 <pre className="overflow-x-auto whitespace-pre-wrap leading-7">{normalizeDisplayText(json.fixCode)}</pre>
               </div>
             </div>
