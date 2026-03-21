@@ -511,6 +511,14 @@ function getStageMessages(messages: AssistantMessageEnvelope[], stage: StageDefi
   const stageMessages = messages.filter(
     (message) => message.role !== "user" && Boolean(message.step) && stage.steps.includes(message.step as WorkflowStep)
   );
+
+  if (stage.id === "topic") {
+    const latestTopicConfirm = [...stageMessages].reverse().find((message) => message.messageType === "topic_confirm");
+    if (latestTopicConfirm) {
+      return [latestTopicConfirm];
+    }
+  }
+
   const latestIndexByKey = new Map<string, number>();
 
   stageMessages.forEach((message, index) => {
@@ -593,6 +601,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const [listening, setListening] = useState(false);
   const [selectedStageId, setSelectedStageId] = useState<StageId>("topic");
   const [liveTurn, setLiveTurn] = useState<LiveTurnState | null>(null);
+  const [confirmProcessing, setConfirmProcessing] = useState(false);
 
   const [pendingBootstrapTopic, setPendingBootstrapTopic] = useState<string | null>(null);
   const [initializingProject, setInitializingProject] = useState(false);
@@ -619,6 +628,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setPendingBootstrapTopic(getPendingProjectBootstrap(projectId)?.topic ?? null);
     setInitializingProject(Boolean(getPendingProjectBootstrap(projectId)?.topic));
     setOptimisticStageId(null);
+    setConfirmProcessing(false);
     finalizedTurnIdRef.current = null;
     bootstrapStartedRef.current = false;
     keepListeningRef.current = false;
@@ -714,7 +724,26 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const topicNeedsConfirmation = currentStep === WorkflowStep.TOPIC_NORMALIZE;
   const showInitialProjectLoading = Boolean(pendingBootstrapTopic) && (stored === undefined || loading || messages.length === 0);
   const showStageLoadingState = Boolean(optimisticStageId === selectedStage.id && sending && selectedStageMessages.length === 0);
+  const showTopicConfirmBar = topicNeedsConfirmation && selectedStage.id === "topic";
+  const workflowLockActive = confirmProcessing;
 
+  useEffect(() => {
+    if (!confirmProcessing) {
+      return;
+    }
+
+    const hasDownstreamMessages = messages.some(
+      (message) =>
+        message.role !== "user" &&
+        Boolean(message.step) &&
+        STAGE_ID_BY_STEP[message.step as WorkflowStep] &&
+        STAGE_ID_BY_STEP[message.step as WorkflowStep] !== "topic"
+    );
+
+    if (hasDownstreamMessages || activeStageId !== "topic") {
+      setConfirmProcessing(false);
+    }
+  }, [activeStageId, confirmProcessing, messages]);
 
   useEffect(() => {
     if (!liveTurn || !liveTurn.assistantMessage || !stored || finalizedTurnIdRef.current === liveTurn.id) {
@@ -870,6 +899,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       setSending(false);
       setInitializingProject(false);
       setOptimisticStageId(null);
+      setConfirmProcessing(false);
     }
   };
 
@@ -1103,7 +1133,23 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   }
 
   return (
-    <section className="mx-auto max-w-[1100px] space-y-6 px-6 pb-8 pt-6">
+    <>
+      {workflowLockActive ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/14 backdrop-blur-[10px]">
+          <div className="workflow-lock-aura absolute left-[14%] top-[18%] h-72 w-72 rounded-full bg-[radial-gradient(circle,rgba(99,102,241,0.26),transparent_68%)] blur-3xl" />
+          <div className="workflow-lock-aura absolute bottom-[14%] right-[12%] h-80 w-80 rounded-full bg-[radial-gradient(circle,rgba(168,85,247,0.18),transparent_70%)] blur-3xl" style={{ animationDelay: "-1.8s" }} />
+          <div className="workflow-lock-panel relative mx-6 w-full max-w-xl rounded-[28px] border border-white/70 bg-white/82 px-8 py-8 text-center shadow-[0_30px_80px_rgba(15,23,42,0.16)] backdrop-blur-xl">
+            <div className="mx-auto flex justify-center">
+              <ThinkingBubble label={"Tank 正在处理中，请稍等片刻"} />
+            </div>
+            <p className="mt-4 text-sm font-normal leading-7 text-slate-600">
+              {"当前研究设定已锁定，Tank 正在依次生成后续模块内容。"}
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      <section className="mx-auto max-w-[1100px] space-y-6 px-6 pb-8 pt-6">
       <div className="border-b border-slate-200 pb-4">
         <div className="flex flex-wrap gap-[10px] sm:gap-3">
           {stageMeta.map((stage, index) => {
@@ -1113,7 +1159,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
               <button
                 key={stage.id}
                 className={clsx(
-                  "inline-flex h-[38px] items-center rounded-full border px-3 text-[13px] font-medium whitespace-nowrap transition focus:outline-none focus:ring-2 focus:ring-slate-200",
+                  "interactive-chip inline-flex h-[38px] items-center rounded-full border px-3 text-[13px] font-medium whitespace-nowrap transition focus:outline-none focus:ring-2 focus:ring-slate-200",
                   stage.isActive
                     ? "border-slate-950 bg-slate-950 text-white"
                     : "border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100",
@@ -1141,15 +1187,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
             {selectedStageMessages.map((message, index) => (
               <MessageCard
                 key={message.id ?? `${message.messageType}-${message.createdAt ?? index}`}
-                canConfirmTopic={
-                  selectedStageIsActive &&
-                  currentStep === WorkflowStep.TOPIC_NORMALIZE &&
-                  message.messageType === "topic_confirm"
-                }
                 fullWidth
                 message={message}
-                onConfirmTopic={() => void confirmTopic()}
-                topicConfirmPending={sending}
               />
             ))}
           </div>
@@ -1171,7 +1210,18 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         )}
       </div>
 
-      <div className="rounded-[20px] border border-[#e5e7eb] bg-white p-6 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+      <div className="surface-hover-lift rounded-[20px] border border-[#e5e7eb] bg-white p-6 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+        {showTopicConfirmBar ? (
+          <button
+            className="topic-confirm-floating mb-4 inline-flex h-14 w-full items-center justify-center rounded-[16px] bg-slate-950 px-6 text-base font-semibold tracking-[0.02em] text-white shadow-[0_20px_40px_rgba(15,23,42,0.16)] transition hover:-translate-y-0.5 hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={sending || confirmProcessing}
+            onClick={() => void confirmTopic()}
+            type="button"
+          >
+            {"确认主题"}
+          </button>
+        ) : null}
+
         <p className="mb-3.5 text-sm font-normal leading-[1.6] text-slate-600">{helperText}</p>
 
         {attachment ? (
@@ -1200,7 +1250,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
 
         <textarea
           className="min-h-[120px] w-full resize-y rounded-[14px] border border-slate-200 bg-white px-4 py-3.5 text-sm font-normal leading-[1.7] text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-300 focus:ring-4 focus:ring-slate-200/60 disabled:cursor-not-allowed disabled:bg-slate-50"
-          disabled={sending}
+          disabled={sending || confirmProcessing}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={handleComposerKeyDown}
           placeholder={placeholderText}
@@ -1217,8 +1267,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
               type="file"
             />
             <button
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={sending}
+              className="interactive-round inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={sending || confirmProcessing}
               onClick={() => fileInputRef.current?.click()}
               type="button"
             >
@@ -1241,12 +1291,12 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
           <div className="flex items-center gap-2">
             <button
               className={clsx(
-                "inline-flex h-10 w-10 items-center justify-center rounded-full border text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                "interactive-round inline-flex h-10 w-10 items-center justify-center rounded-full border text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
                 listening
                   ? "border-slate-900 bg-slate-900 text-white shadow-[0_8px_18px_rgba(15,23,42,0.18)]"
                   : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
               )}
-              disabled={sending}
+              disabled={sending || confirmProcessing}
               onClick={handleMicClick}
               type="button"
             >
@@ -1254,10 +1304,10 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
             </button>
             <button
               className={clsx(
-                "inline-flex h-10 items-center justify-center rounded-[10px] px-[18px] text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-60",
+                "interactive-chip inline-flex h-10 items-center justify-center rounded-[10px] px-[18px] text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-60",
                 sending ? "bg-slate-950 hover:bg-slate-950" : "bg-slate-950 hover:bg-[#111827]"
               )}
-              disabled={sending || (!input.trim() && !attachment)}
+              disabled={sending || confirmProcessing || (!input.trim() && !attachment)}
               onClick={() => void streamMessage(input, { attachment })}
               type="button"
             >
@@ -1266,7 +1316,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
           </div>
         </div>
       </div>
-    </section>
+      </section>
+    </>
   );
 }
 

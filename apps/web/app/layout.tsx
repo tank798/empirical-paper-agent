@@ -16,7 +16,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <header className="mb-6 flex items-center">
             <nav className="flex items-center">
               <Link
-                className="inline-flex h-10 items-center rounded-[12px] bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-900"
+                className="interactive-chip inline-flex h-10 items-center rounded-[12px] bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-900"
                 href="/projects"
               >
                 项目库

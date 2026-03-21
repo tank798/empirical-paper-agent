@@ -9,13 +9,9 @@ import {
   normalizeResearchObjectText
 } from "../lib/message-display";
 import { formatWriteMode, messageTypeMeta, moduleLabelMap, workflowStepMeta } from "../lib/presentation";
-import { ThinkingBubble } from "./thinking-bubble";
 
 type MessageCardProps = {
   message: AssistantMessageEnvelope;
-  canConfirmTopic?: boolean;
-  topicConfirmPending?: boolean;
-  onConfirmTopic?: () => void;
   fullWidth?: boolean;
 };
 
@@ -35,9 +31,6 @@ function renderJsonList(items: unknown, emptyLabel = "暂无补充内容。") {
 
 export function MessageCard({
   message,
-  canConfirmTopic = false,
-  topicConfirmPending = false,
-  onConfirmTopic,
   fullWidth = false
 }: MessageCardProps) {
   const json = message.contentJson as Record<string, any>;
@@ -82,7 +75,7 @@ export function MessageCard({
   const card = (
     <article
       className={clsx(
-        "rounded-[20px] border border-[#e5e7eb] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)]",
+        "surface-hover-lift rounded-[20px] border border-[#e5e7eb] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)]",
         isTopicConfirm ? "p-7" : "p-5",
         isSystemNotice ? "border-amber-100 bg-amber-50/80" : ""
       )}
@@ -109,18 +102,6 @@ export function MessageCard({
             ))}
           </div>
 
-          {canConfirmTopic ? (
-            <div className="mt-5 flex justify-end">
-              <button
-                className="inline-flex h-10 items-center justify-center rounded-[10px] bg-slate-950 px-[18px] text-sm font-medium text-white transition hover:bg-[#111827] disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={topicConfirmPending}
-                onClick={onConfirmTopic}
-                type="button"
-              >
-                {topicConfirmPending ? <ThinkingBubble bare className="text-white" /> : "确认并生成"}
-              </button>
-            </div>
-          ) : null}
         </div>
       ) : (
         <>

@@ -159,3 +159,72 @@ h4 {
     animation: thinking-bubble-spark 1.5s ease-in-out infinite;
   }
 }
+
+
+@keyframes topic-confirm-float {
+  0%,
+  100% {
+    transform: translateY(0);
+    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.16);
+  }
+
+  50% {
+    transform: translateY(-4px);
+    box-shadow: 0 28px 54px rgba(15, 23, 42, 0.2);
+  }
+}
+
+@keyframes workflow-lock-aura {
+  0%,
+  100% {
+    opacity: 0.42;
+    transform: scale(0.94);
+  }
+
+  50% {
+    opacity: 0.88;
+    transform: scale(1.06);
+  }
+}
+
+@layer utilities {
+  .surface-hover-lift {
+    transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+  }
+
+  .surface-hover-lift:hover {
+    transform: translateY(-2px);
+    border-color: rgba(148, 163, 184, 0.34);
+    box-shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+  }
+
+  .interactive-chip {
+    transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+  }
+
+  .interactive-chip:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+  }
+
+  .interactive-round {
+    transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+  }
+
+  .interactive-round:hover {
+    transform: translateY(-1px) scale(1.01);
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+  }
+
+  .topic-confirm-floating {
+    animation: topic-confirm-float 2.8s ease-in-out infinite;
+  }
+
+  .workflow-lock-aura {
+    animation: workflow-lock-aura 4s ease-in-out infinite;
+  }
+
+  .workflow-lock-panel {
+    animation: tank-breathe 2.2s ease-in-out infinite;
+  }
+}
