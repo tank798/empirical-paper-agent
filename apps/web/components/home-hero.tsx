@@ -3,6 +3,7 @@
 import { startTransition, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiRequest } from "../lib/api";
+import { appendCommittedSpeech, buildSpeechText, finalizeSpeechText } from "../lib/speech";
 import { saveStoredProject, setPendingProjectBootstrap } from "../lib/storage";
 import { ThinkingBubble } from "./thinking-bubble";
 
@@ -53,9 +54,6 @@ function MicIcon() {
   );
 }
 
-function mergeSpeechText(baseText: string, committedText: string, interimText: string) {
-  return [baseText, committedText, interimText].filter(Boolean).join("\n");
-}
 
 export function HomeHero() {
   const router = useRouter();
@@ -164,7 +162,7 @@ export function HomeHero() {
         }
 
         if (result.isFinal) {
-          nextCommitted = [nextCommitted, chunk].filter(Boolean).join("\n");
+          nextCommitted = appendCommittedSpeech(nextCommitted, chunk);
         } else {
           interimChunks.push(chunk);
         }
@@ -173,7 +171,7 @@ export function HomeHero() {
       speechCommittedTextRef.current = nextCommitted;
       speechInterimTextRef.current = interimChunks.join("");
       setTopic(
-        mergeSpeechText(
+        buildSpeechText(
           speechBaseTextRef.current,
           speechCommittedTextRef.current,
           speechInterimTextRef.current
@@ -212,6 +210,15 @@ export function HomeHero() {
         }
       }
 
+      setTopic(
+        finalizeSpeechText(
+          speechBaseTextRef.current,
+          speechCommittedTextRef.current,
+          speechInterimTextRef.current
+        )
+      );
+      speechCommittedTextRef.current = "";
+      speechInterimTextRef.current = "";
       setListening(false);
       recognitionRef.current = null;
     };

@@ -20,6 +20,7 @@ import {
   type WorkflowStreamPhase as WorkflowStreamPhaseValue
 } from "@empirical/shared";
 import { apiRequest, streamApiRequest } from "../lib/api";
+import { appendCommittedSpeech, buildSpeechText, finalizeSpeechText } from "../lib/speech";
 import { normalizeAssistantCopy, normalizeDisplayText, normalizeResearchObjectText } from "../lib/message-display";
 import { clearPendingProjectBootstrap, getPendingProjectBootstrap, getStoredProject, getStoredProjects } from "../lib/storage";
 import { MessageCard } from "./message-card";
@@ -969,7 +970,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         }
 
         if (result.isFinal) {
-          nextCommitted = [nextCommitted, chunk].filter(Boolean).join("\n");
+          nextCommitted = appendCommittedSpeech(nextCommitted, chunk);
         } else {
           interimChunks.push(chunk);
         }
@@ -978,9 +979,11 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       speechCommittedTextRef.current = nextCommitted;
       speechInterimTextRef.current = interimChunks.join("");
       setInput(
-        [speechBaseTextRef.current, speechCommittedTextRef.current, speechInterimTextRef.current]
-          .filter(Boolean)
-          .join("\n")
+        buildSpeechText(
+          speechBaseTextRef.current,
+          speechCommittedTextRef.current,
+          speechInterimTextRef.current
+        )
       );
     };
 
@@ -1015,6 +1018,15 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         }
       }
 
+      setInput(
+        finalizeSpeechText(
+          speechBaseTextRef.current,
+          speechCommittedTextRef.current,
+          speechInterimTextRef.current
+        )
+      );
+      speechCommittedTextRef.current = "";
+      speechInterimTextRef.current = "";
       setListening(false);
       recognitionRef.current = null;
     };
