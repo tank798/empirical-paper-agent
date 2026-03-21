@@ -721,10 +721,19 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const stageMeta = useMemo(() => getStageMeta(detail, displayedStageId), [detail, displayedStageId]);
   const selectedStageMessages = useMemo(() => getStageMessages(messages, selectedStage), [messages, selectedStage]);
   const selectedStageIsActive = selectedStage.id === displayedStageId;
-  const topicNeedsConfirmation = currentStep === WorkflowStep.TOPIC_NORMALIZE;
   const showInitialProjectLoading = Boolean(pendingBootstrapTopic) && (stored === undefined || loading || messages.length === 0);
   const showStageLoadingState = Boolean(optimisticStageId === selectedStage.id && sending && selectedStageMessages.length === 0);
-  const showTopicConfirmBar = topicNeedsConfirmation && selectedStage.id === "topic";
+  const hasDownstreamMessages = messages.some(
+    (message) =>
+      message.role !== "user" &&
+      Boolean(message.step) &&
+      STAGE_ID_BY_STEP[message.step as WorkflowStep] &&
+      STAGE_ID_BY_STEP[message.step as WorkflowStep] !== "topic"
+  );
+  const showTopicConfirmBar =
+    selectedStage.id === "topic" &&
+    selectedStageMessages.some((message) => message.messageType === "topic_confirm") &&
+    !hasDownstreamMessages;
   const workflowLockActive = confirmProcessing;
 
   useEffect(() => {
@@ -732,18 +741,10 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       return;
     }
 
-    const hasDownstreamMessages = messages.some(
-      (message) =>
-        message.role !== "user" &&
-        Boolean(message.step) &&
-        STAGE_ID_BY_STEP[message.step as WorkflowStep] &&
-        STAGE_ID_BY_STEP[message.step as WorkflowStep] !== "topic"
-    );
-
     if (hasDownstreamMessages || activeStageId !== "topic") {
       setConfirmProcessing(false);
     }
-  }, [activeStageId, confirmProcessing, messages]);
+  }, [activeStageId, confirmProcessing, hasDownstreamMessages]);
 
   useEffect(() => {
     if (!liveTurn || !liveTurn.assistantMessage || !stored || finalizedTurnIdRef.current === liveTurn.id) {
@@ -1077,10 +1078,10 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     }
   };
 
-  const helperText = topicNeedsConfirmation
-    ? "如需调整研究设定，可直接补充；如无问题，请点击上方确认并生成。"
+  const helperText = showTopicConfirmBar
+    ? "如需调整研究设定，可直接补充；如无问题，请点击上方确认主题。"
     : "可以继续追问当前模块，也可以直接修改研究设定。";
-  const placeholderText = topicNeedsConfirmation
+  const placeholderText = showTopicConfirmBar
     ? "例如：研究对象改成中国A股上市公司（剔除ST和金融股）\n例如：控制变量补充企业规模、资产负债率、ROA\n例如：固定效应改成企业固定效应和年份固定效应"
     : "例如：请解释一下这一步的代码逻辑\n例如：把控制变量再补充完整一点\n例如：请重写一版更详细的 Stata 代码";
 
