@@ -591,7 +591,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const [attachment, setAttachment] = useState<ComposerAttachment | null>(null);
   const [listening, setListening] = useState(false);
   const [selectedStageId, setSelectedStageId] = useState<StageId>("topic");
-  const [liveTurn, setLiveTurn] = useState<LiveTurnState | null>(null);
+  const [liveTurn, setLiveTurn] = useState<LiveTurnState | null>(null);
+
   const [pendingBootstrapTopic, setPendingBootstrapTopic] = useState<string | null>(null);
   const [initializingProject, setInitializingProject] = useState(false);
   const [optimisticStageId, setOptimisticStageId] = useState<StageId | null>(null);
@@ -600,6 +601,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const speechBaseTextRef = useRef("");
+  const speechCommittedTextRef = useRef("");
+  const speechInterimTextRef = useRef("");
   const keepListeningRef = useRef(false);
 
   useEffect(() => {
@@ -618,6 +621,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     finalizedTurnIdRef.current = null;
     bootstrapStartedRef.current = false;
     keepListeningRef.current = false;
+    speechCommittedTextRef.current = "";
+    speechInterimTextRef.current = "";
     recognitionRef.current?.stop();
     recognitionRef.current = null;
   }, [projectId]);
@@ -638,6 +643,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   useEffect(() => {
     return () => {
       keepListeningRef.current = false;
+      speechCommittedTextRef.current = "";
+      speechInterimTextRef.current = "";
       recognitionRef.current?.stop();
       recognitionRef.current = null;
     };
@@ -940,6 +947,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
 
     const recognition = new SpeechRecognitionCtor();
     speechBaseTextRef.current = input.trim();
+    speechCommittedTextRef.current = "";
+    speechInterimTextRef.current = "";
     setComposerError("");
     setListening(true);
     keepListeningRef.current = true;
@@ -949,22 +958,30 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     recognition.interimResults = true;
 
     recognition.onresult = (event) => {
-      const pieces: string[] = [];
+      let nextCommitted = speechCommittedTextRef.current;
+      const interimChunks: string[] = [];
 
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const chunk = event.results[index]?.[0]?.transcript?.trim();
-        if (chunk) {
-          pieces.push(chunk);
+        const result = event.results[index];
+        const chunk = result?.[0]?.transcript?.trim();
+        if (!chunk) {
+          continue;
+        }
+
+        if (result.isFinal) {
+          nextCommitted = [nextCommitted, chunk].filter(Boolean).join("\n");
+        } else {
+          interimChunks.push(chunk);
         }
       }
 
-      const transcript = pieces.join("").trim();
-      if (!transcript) {
-        return;
-      }
-
-      const baseText = speechBaseTextRef.current;
-      setInput([baseText, transcript].filter(Boolean).join(baseText && transcript ? "\n" : ""));
+      speechCommittedTextRef.current = nextCommitted;
+      speechInterimTextRef.current = interimChunks.join("");
+      setInput(
+        [speechBaseTextRef.current, speechCommittedTextRef.current, speechInterimTextRef.current]
+          .filter(Boolean)
+          .join("\n")
+      );
     };
 
     recognition.onerror = (event) => {

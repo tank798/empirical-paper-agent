@@ -53,6 +53,10 @@ function MicIcon() {
   );
 }
 
+function mergeSpeechText(baseText: string, committedText: string, interimText: string) {
+  return [baseText, committedText, interimText].filter(Boolean).join("\n");
+}
+
 export function HomeHero() {
   const router = useRouter();
   const [topic, setTopic] = useState("");
@@ -62,6 +66,8 @@ export function HomeHero() {
   const [error, setError] = useState("");
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const speechBaseTextRef = useRef("");
+  const speechCommittedTextRef = useRef("");
+  const speechInterimTextRef = useRef("");
   const keepListeningRef = useRef(false);
 
   const showGhostText = !focused && !topic.trim();
@@ -136,6 +142,8 @@ export function HomeHero() {
 
     const recognition = new SpeechRecognitionCtor();
     speechBaseTextRef.current = topic.trim();
+    speechCommittedTextRef.current = "";
+    speechInterimTextRef.current = "";
     setError("");
     setListening(true);
     keepListeningRef.current = true;
@@ -145,22 +153,32 @@ export function HomeHero() {
     recognition.interimResults = true;
 
     recognition.onresult = (event) => {
-      const pieces: string[] = [];
+      let nextCommitted = speechCommittedTextRef.current;
+      const interimChunks: string[] = [];
 
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const chunk = event.results[index]?.[0]?.transcript?.trim();
-        if (chunk) {
-          pieces.push(chunk);
+        const result = event.results[index];
+        const chunk = result?.[0]?.transcript?.trim();
+        if (!chunk) {
+          continue;
+        }
+
+        if (result.isFinal) {
+          nextCommitted = [nextCommitted, chunk].filter(Boolean).join("\n");
+        } else {
+          interimChunks.push(chunk);
         }
       }
 
-      const transcript = pieces.join("").trim();
-      if (!transcript) {
-        return;
-      }
-
-      const baseText = speechBaseTextRef.current;
-      setTopic([baseText, transcript].filter(Boolean).join(baseText && transcript ? "\n" : ""));
+      speechCommittedTextRef.current = nextCommitted;
+      speechInterimTextRef.current = interimChunks.join("");
+      setTopic(
+        mergeSpeechText(
+          speechBaseTextRef.current,
+          speechCommittedTextRef.current,
+          speechInterimTextRef.current
+        )
+      );
     };
 
     recognition.onerror = (event) => {
@@ -281,4 +299,3 @@ export function HomeHero() {
     </section>
   );
 }
-
