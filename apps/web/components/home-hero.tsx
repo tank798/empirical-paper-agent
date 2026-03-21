@@ -1,19 +1,76 @@
 ﻿"use client";
 
-import { startTransition, type KeyboardEvent, useState } from "react";
+import { startTransition, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiRequest } from "../lib/api";
 import { saveStoredProject, setPendingProjectBootstrap } from "../lib/storage";
 import { ThinkingBubble } from "./thinking-bubble";
+
+type SpeechRecognitionAlternativeLike = {
+  transcript: string;
+};
+
+type SpeechRecognitionResultLike = {
+  isFinal?: boolean;
+  length: number;
+  [index: number]: SpeechRecognitionAlternativeLike;
+};
+
+type SpeechRecognitionEventLike = Event & {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionResultLike>;
+};
+
+type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onend: (() => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+type SpeechRecognitionConstructorLike = new () => SpeechRecognitionLike;
+
+function MicIcon() {
+  return (
+    <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
+      <path
+        d="M8 2.667A1.833 1.833 0 0 0 6.167 4.5v3A1.833 1.833 0 0 0 8 9.333 1.833 1.833 0 0 0 9.833 7.5v-3A1.833 1.833 0 0 0 8 2.667Z"
+        stroke="currentColor"
+        strokeWidth="1.4"
+      />
+      <path
+        d="M4.833 6.833a3.167 3.167 0 1 0 6.334 0M8 10.667v2.666M5.667 13.333h4.666"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.4"
+      />
+    </svg>
+  );
+}
 
 export function HomeHero() {
   const router = useRouter();
   const [topic, setTopic] = useState("");
   const [focused, setFocused] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [listening, setListening] = useState(false);
   const [error, setError] = useState("");
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const speechBaseTextRef = useRef("");
 
   const showGhostText = !focused && !topic.trim();
+
+  useEffect(() => {
+    return () => {
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+    };
+  }, []);
 
   const createProject = async () => {
     const nextTopic = topic.trim();
@@ -51,6 +108,71 @@ export function HomeHero() {
 
     event.preventDefault();
     void createProject();
+  };
+
+  const handleMicClick = () => {
+    if (loading) {
+      return;
+    }
+
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+
+    const speechWindow = window as typeof window & {
+      SpeechRecognition?: SpeechRecognitionConstructorLike;
+      webkitSpeechRecognition?: SpeechRecognitionConstructorLike;
+    };
+    const SpeechRecognitionCtor = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+
+    if (!SpeechRecognitionCtor) {
+      setError("当前浏览器暂不支持语音输入。");
+      return;
+    }
+
+    const recognition = new SpeechRecognitionCtor();
+    speechBaseTextRef.current = topic.trim();
+    setError("");
+    setListening(true);
+    recognitionRef.current = recognition;
+    recognition.lang = "zh-CN";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+
+    recognition.onresult = (event) => {
+      const pieces: string[] = [];
+
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const chunk = event.results[index]?.[0]?.transcript?.trim();
+        if (chunk) {
+          pieces.push(chunk);
+        }
+      }
+
+      const transcript = pieces.join("").trim();
+      if (!transcript) {
+        return;
+      }
+
+      const baseText = speechBaseTextRef.current;
+      setTopic([baseText, transcript].filter(Boolean).join(baseText && transcript ? "\n" : ""));
+    };
+
+    recognition.onerror = (event) => {
+      setError(
+        event.error === "not-allowed"
+          ? "请先允许浏览器使用麦克风。"
+          : "语音识别失败，请重试。"
+      );
+    };
+
+    recognition.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+
+    recognition.start();
   };
 
   return (
@@ -102,14 +224,29 @@ export function HomeHero() {
               {"Enter发送，Ctrl+Enter换行"}
             </button>
 
-            <button
-              className="inline-flex min-w-[188px] items-center justify-center rounded-full bg-slate-950 px-6 py-3 text-lg font-semibold text-white shadow-floating transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-55"
-              disabled={loading || !topic.trim()}
-              onClick={() => void createProject()}
-              type="button"
-            >
-              {loading ? <ThinkingBubble bare className="text-white" /> : <span className="w-full text-center">开始对话</span>}
-            </button>
+            <div className="flex items-center gap-2.5">
+              <button
+                className={`inline-flex h-11 w-11 items-center justify-center rounded-full border text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                  listening
+                    ? "border-slate-950 bg-slate-950 text-white shadow-[0_10px_24px_rgba(15,23,42,0.18)]"
+                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+                }`}
+                disabled={loading}
+                onClick={handleMicClick}
+                type="button"
+              >
+                <MicIcon />
+              </button>
+
+              <button
+                className="inline-flex min-w-[132px] items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-base font-semibold text-white shadow-floating transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-55"
+                disabled={loading || !topic.trim()}
+                onClick={() => void createProject()}
+                type="button"
+              >
+                {loading ? <ThinkingBubble bare className="text-white" /> : <span className="w-full text-center">确认</span>}
+              </button>
+            </div>
           </div>
         </div>
 
