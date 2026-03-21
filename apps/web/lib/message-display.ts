@@ -1,32 +1,42 @@
-﻿export const DEFAULT_RESEARCH_OBJECT = "\u4e2d\u56fdA\u80a1\u4e0a\u5e02\u516c\u53f8";
-export const DEFAULT_RELATIONSHIP_TEXT = "\u6b63\u5411\u3001\u8d1f\u5411\u548c\u4e0d\u663e\u8457";
+﻿export const DEFAULT_RESEARCH_OBJECT = "中国A股上市公司";
+export const DEFAULT_RELATIONSHIP_TEXT = "正向、负向和不显著";
 
 const GENERIC_RESEARCH_OBJECTS = new Set([
-  "\u4e2d\u56fd\u4f01\u4e1a",
-  "\u4f01\u4e1a",
-  "\u4e0a\u5e02\u516c\u53f8",
-  "\u4e2d\u56fd\u4e0a\u5e02\u516c\u53f8",
-  "A \u80a1\u4e0a\u5e02\u516c\u53f8",
-  "A\u80a1\u4e0a\u5e02\u516c\u53f8",
+  "中国企业",
+  "企业",
+  "上市公司",
+  "中国上市公司",
+  "A 股上市公司",
+  "A股上市公司",
   "A-share listed firms"
 ]);
 
 const WORKFLOW_TERM_LABELS: Record<string, string> = {
-  TOPIC_DETECT: "\u4e3b\u9898\u8bc6\u522b",
-  TOPIC_NORMALIZE: "\u4e3b\u9898\u786e\u8ba4",
-  SOP_GUIDE: "\u7814\u7a76\u8def\u5f84\u68b3\u7406",
-  DATA_CLEANING: "\u6570\u636e\u5904\u7406",
-  DATA_CHECK: "\u6570\u636e\u68c0\u67e5",
-  BASELINE_REGRESSION: "\u57fa\u51c6\u56de\u5f52"
+  TOPIC_DETECT: "研究设定整理",
+  TOPIC_NORMALIZE: "研究设定确认",
+  SOP_GUIDE: "研究路径",
+  DATA_CLEANING: "数据处理",
+  DATA_CHECK: "数据检查",
+  BASELINE_REGRESSION: "基准回归",
+  ROBUSTNESS: "稳健性检验",
+  IV: "内生性分析",
+  MECHANISM: "机制分析",
+  HETEROGENEITY: "异质性分析",
+  EXPORT_TABLE: "回归表导出"
 };
 
 const WORKFLOW_ADVANCE_COPY: Record<string, string> = {
-  TOPIC_DETECT: "\u63a5\u4e0b\u6765\u6211\u4f1a\u5148\u5e2e\u60a8\u8bc6\u522b\u5e76\u6536\u655b\u7814\u7a76\u4e3b\u9898\u3002",
-  TOPIC_NORMALIZE: "\u63a5\u4e0b\u6765\u6211\u4f1a\u5148\u6574\u7406\u5e76\u786e\u8ba4\u7814\u7a76\u8bbe\u5b9a\u3002",
-  SOP_GUIDE: "\u63a5\u4e0b\u6765\u6211\u4f1a\u5148\u4e3a\u60a8\u68b3\u7406\u7814\u7a76\u8def\u5f84\u3001\u53d8\u91cf\u6784\u5efa\u548c\u57fa\u51c6\u56de\u5f52\u601d\u8def\u3002",
-  DATA_CLEANING: "\u63a5\u4e0b\u6765\u6211\u4f1a\u5148\u8fdb\u5165\u6570\u636e\u5904\u7406\u3002",
-  DATA_CHECK: "\u63a5\u4e0b\u6765\u6211\u4f1a\u5148\u505a\u6570\u636e\u68c0\u67e5\u3002",
-  BASELINE_REGRESSION: "\u63a5\u4e0b\u6765\u6211\u4f1a\u5148\u8fdb\u5165\u57fa\u51c6\u56de\u5f52\u3002"
+  TOPIC_DETECT: "接下来我会先帮您整理研究设定。",
+  TOPIC_NORMALIZE: "接下来我会先确认研究设定。",
+  SOP_GUIDE: "接下来我会先整理研究路径。",
+  DATA_CLEANING: "接下来我会先进入数据处理。",
+  DATA_CHECK: "接下来我会先做数据检查。",
+  BASELINE_REGRESSION: "接下来我会先进入基准回归。",
+  ROBUSTNESS: "接下来我会继续生成稳健性检验。",
+  IV: "接下来我会继续生成内生性分析。",
+  MECHANISM: "接下来我会继续生成机制分析。",
+  HETEROGENEITY: "接下来我会继续生成异质性分析。",
+  EXPORT_TABLE: "接下来我会继续整理导出结果。"
 };
 
 function decodeEscapedUnicode(value: string) {
@@ -49,27 +59,26 @@ export function normalizeDisplayText(value: unknown) {
   if (text.includes("请提供以下关键信息以生成完整 SOP")) {
     text = [
       "我建议的变量构建方法如下：",
-      "1. 核心解释变量：金融监管强度的具体衡量指标（如监管处罚数量、监管发文数量等）",
-      "2. 被解释变量：企业ESG表现的具体数据来源（如商道融绿、华证等）",
-      "3. 控制变量列表",
-      "4. 固定效应设定（是否使用行业、年份双固定效应）",
-      "5. 数据时间范围",
-      "如果你愿意，我可以基于这套设定继续生成数据清洗与回归代码。"
+      "1. 核心解释变量：请明确具体衡量指标与数据来源。",
+      "2. 被解释变量：请明确具体口径与数据来源。",
+      "3. 控制变量：请列出准备纳入的控制变量。",
+      "4. 固定效应设定：请说明是否使用企业、年份、行业或地区固定效应。",
+      "5. 样本区间：请说明时间范围与样本筛选规则。"
     ].join("\n");
   }
 
   text = text.replace(
-    /主题识别正确[，,]?\s*研究主题为[“「"]?([^”」"]+)[”」"]?[。.]?\s*当前进入\s*(TOPIC_DETECT|TOPIC_NORMALIZE|SOP_GUIDE|DATA_CLEANING|DATA_CHECK|BASELINE_REGRESSION)\s*阶段[，,]?\s*需要为您生成标准化的实证研究操作流程指南[。.]?/gi,
+    /主题识别正确[，,]?\s*研究主题为[“「"]?([^”」"]+)[”」"]?[。.]?\s*当前进入\s*(TOPIC_DETECT|TOPIC_NORMALIZE|SOP_GUIDE|DATA_CLEANING|DATA_CHECK|BASELINE_REGRESSION|ROBUSTNESS|IV|MECHANISM|HETEROGENEITY|EXPORT_TABLE)\s*阶段/gi,
     (_, topic, step) => `我已识别到您的研究主题“${topic}”。${WORKFLOW_ADVANCE_COPY[String(step).toUpperCase()] ?? "接下来我会继续帮您推进研究流程。"}`
   );
 
   text = text.replace(
-    /(接下来将进入|当前进入)\s*\*{0,2}(TOPIC_DETECT|TOPIC_NORMALIZE|SOP_GUIDE|DATA_CLEANING|DATA_CHECK|BASELINE_REGRESSION)\*{0,2}\s*阶段/gi,
+    /(接下来将进入|当前进入)\s*\*{0,2}(TOPIC_DETECT|TOPIC_NORMALIZE|SOP_GUIDE|DATA_CLEANING|DATA_CHECK|BASELINE_REGRESSION|ROBUSTNESS|IV|MECHANISM|HETEROGENEITY|EXPORT_TABLE)\*{0,2}\s*阶段/gi,
     (_, __, step) => WORKFLOW_ADVANCE_COPY[String(step).toUpperCase()] ?? "接下来我会继续推进当前研究流程。"
   );
 
   text = text.replace(
-    /当前模块(?:为|是)\s*[「“"]?\*{0,2}(TOPIC_DETECT|TOPIC_NORMALIZE|SOP_GUIDE|DATA_CLEANING|DATA_CHECK|BASELINE_REGRESSION)\*{0,2}[」”"]?/gi,
+    /当前模块(?:为|是)\s*[「“"]?\*{0,2}(TOPIC_DETECT|TOPIC_NORMALIZE|SOP_GUIDE|DATA_CLEANING|DATA_CHECK|BASELINE_REGRESSION|ROBUSTNESS|IV|MECHANISM|HETEROGENEITY|EXPORT_TABLE)\*{0,2}[」”"]?/gi,
     (_, step) => `当前这一步是「${WORKFLOW_TERM_LABELS[String(step).toUpperCase()] ?? "研究流程"}」`
   );
 

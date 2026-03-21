@@ -1,4 +1,4 @@
-import { Body, Controller, Headers, Param, Post, Res } from "@nestjs/common";
+﻿import { Body, Controller, Headers, Param, Post, Res } from "@nestjs/common";
 import {
   workflowNextInputSchema,
   type WorkflowNextResponse,
@@ -52,7 +52,7 @@ export class WorkflowController {
       sendEvent({
         type: "status",
         phase: "thinking",
-        message: "Tank 正在思考中..."
+        message: "Tank正在思考中..."
       });
 
       const result = (await this.workflowService.handleNext({
@@ -66,7 +66,7 @@ export class WorkflowController {
       sendEvent({
         type: "status",
         phase: "typing",
-        message: "Tank 正在生成这一轮内容..."
+        message: "Tank正在思考中..."
       });
       sendEvent({ type: "message", response: result });
       sendEvent({ type: "done" });

@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+﻿import { Injectable } from "@nestjs/common";
 import { AssistantMessageType, WorkflowStep } from "@empirical/shared";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -71,5 +71,21 @@ export class MessagesService {
       contentText: message.contentText,
       contentJson: (message.contentJson as Record<string, unknown>) ?? {}
     }));
+  }
+
+  async clearAssistantMessagesForSteps(projectId: string, steps: WorkflowStep[]) {
+    if (steps.length === 0) {
+      return;
+    }
+
+    await this.prisma.message.deleteMany({
+      where: {
+        projectId,
+        role: "assistant",
+        step: {
+          in: steps
+        }
+      }
+    });
   }
 }

@@ -1,5 +1,5 @@
-import { AssistantMessageType, SkillName, WorkflowStep, dataCleaningInputSchema, dataCleaningOutputSchema } from "@empirical/shared";
-import { buildDataCleaningOutput } from "../skill.utils";
+﻿import { AssistantMessageType, SkillName, WorkflowStep, dataCleaningInputSchema, dataCleaningOutputSchema } from "@empirical/shared";
+import { buildDataCleaningOutputTemplate } from "../workflow-output.builder";
 import type { SkillDefinition } from "../skill.types";
 
 export const dataCleaningSkill: SkillDefinition<any, any> = {
@@ -9,5 +9,5 @@ export const dataCleaningSkill: SkillDefinition<any, any> = {
   messageType: AssistantMessageType.SKILL_OUTPUT,
   inputSchema: dataCleaningInputSchema,
   outputSchema: dataCleaningOutputSchema,
-  fallback: (input) => buildDataCleaningOutput(input)
+  fallback: (input) => buildDataCleaningOutputTemplate(input)
 };

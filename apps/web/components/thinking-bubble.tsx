@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import clsx from "clsx";
 
@@ -48,9 +48,15 @@ export function ThinkingBubble({
       <span className="min-w-0 text-[15px] font-medium tracking-[0.01em]">{resolvedLabel}</span>
       {isThinking ? (
         <span aria-hidden="true" className="inline-flex w-[1.8em] shrink-0 justify-start text-left">
-          <span className="thinking-bubble-dot" style={{ animationDelay: "0s" }}>.</span>
-          <span className="thinking-bubble-dot" style={{ animationDelay: "0.18s" }}>.</span>
-          <span className="thinking-bubble-dot" style={{ animationDelay: "0.36s" }}>.</span>
+          <span className="thinking-bubble-dot" style={{ animationDelay: "0s" }}>
+            .
+          </span>
+          <span className="thinking-bubble-dot" style={{ animationDelay: "0.18s" }}>
+            .
+          </span>
+          <span className="thinking-bubble-dot" style={{ animationDelay: "0.36s" }}>
+            .
+          </span>
         </span>
       ) : null}
     </span>

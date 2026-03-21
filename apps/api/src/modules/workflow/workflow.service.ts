@@ -1,21 +1,108 @@
-import { Injectable } from "@nestjs/common";
+﻿import { Injectable } from "@nestjs/common";
 import {
   AssistantMessageType,
   ProjectStepStatus,
   SkillName,
-  WorkflowStep
+  WorkflowStep,
+  type ResearchProfile
 } from "@empirical/shared";
 import { MessagesService } from "../messages/messages.service";
 import { ProjectsService } from "../projects/projects.service";
 import { ResearchProfileService } from "../research-profile/research-profile.service";
-import { normalizeResearchObject } from "../skills/skill.utils";
 import { SkillsService } from "../skills/skills.service";
+
+type SetupDraft = {
+  normalizedTopic: string;
+  independentVariable: string;
+  dependentVariable: string;
+  researchObject: string;
+  relationship: string;
+  controls: string[];
+  fixedEffects: string[];
+  sampleScope: string;
+  clusterVar: string;
+  panelId: string;
+  timeVar: string;
+  notes: string;
+};
+
+type SetupFieldKey =
+  | "normalizedTopic"
+  | "researchObject"
+  | "independentVariable"
+  | "dependentVariable"
+  | "controls"
+  | "sampleScope"
+  | "fixedEffects";
+
+type WorkflowRunEntry = {
+  step: WorkflowStep;
+  skillName: SkillName;
+  contentText: string;
+};
+
+const DEFAULT_RELATIONSHIP_LABEL = "正向、负向和不显著";
+const DEFAULT_RESEARCH_OBJECT = "中国A股上市公司";
+
+const REQUIRED_SETUP_FIELDS: Array<{ key: SetupFieldKey; label: string; example: string }> = [
+  { key: "normalizedTopic", label: "研究主题", example: "研究主题：数字金融对企业创新的影响" },
+  { key: "researchObject", label: "研究对象", example: "研究对象：中国A股上市公司（剔除ST和金融股）" },
+  { key: "independentVariable", label: "解释变量", example: "解释变量：数字金融" },
+  { key: "dependentVariable", label: "被解释变量", example: "被解释变量：企业创新" },
+  {
+    key: "controls",
+    label: "控制变量",
+    example: "控制变量：企业规模、资产负债率、ROA、现金流、股权集中度"
+  },
+  { key: "sampleScope", label: "样本区间", example: "样本区间：2011-2022年" },
+  { key: "fixedEffects", label: "固定效应", example: "固定效应：企业固定效应、年份固定效应" }
+];
+
+const GENERATED_WORKFLOW: WorkflowRunEntry[] = [
+  {
+    step: WorkflowStep.SOP_GUIDE,
+    skillName: SkillName.SOP_GUIDE,
+    contentText: "我已经整理出这项研究的完整推进路径。"
+  },
+  {
+    step: WorkflowStep.DATA_CLEANING,
+    skillName: SkillName.DATA_CLEANING,
+    contentText: "我已经生成数据处理与清洗建议。"
+  },
+  {
+    step: WorkflowStep.DATA_CHECK,
+    skillName: SkillName.DATA_CHECK,
+    contentText: "我已经生成数据检查与描述统计建议。"
+  },
+  {
+    step: WorkflowStep.BASELINE_REGRESSION,
+    skillName: SkillName.BASELINE_REGRESSION,
+    contentText: "我已经生成基准回归代码与导出命令。"
+  },
+  {
+    step: WorkflowStep.ROBUSTNESS,
+    skillName: SkillName.ROBUSTNESS,
+    contentText: "我已经生成稳健性检验方案与代码模板。"
+  },
+  {
+    step: WorkflowStep.IV,
+    skillName: SkillName.IV,
+    contentText: "我已经生成内生性分析与工具变量模板。"
+  },
+  {
+    step: WorkflowStep.MECHANISM,
+    skillName: SkillName.MECHANISM,
+    contentText: "我已经生成机制分析思路与代码模板。"
+  },
+  {
+    step: WorkflowStep.HETEROGENEITY,
+    skillName: SkillName.HETEROGENEITY,
+    contentText: "我已经生成异质性分析方案与代码模板。"
+  }
+];
 
 @Injectable()
 export class WorkflowService {
-  private static readonly DEFAULT_RELATIONSHIP_LABEL =
-    "\u6b63\u5411\u3001\u8d1f\u5411\u548c\u4e0d\u663e\u8457";
-
   constructor(
     private readonly projectsService: ProjectsService,
     private readonly messagesService: MessagesService,
@@ -35,15 +122,18 @@ export class WorkflowService {
       params.resumeToken
     );
 
+    const requestedStep = (params.requestedStep ?? project.currentStep) as WorkflowStep;
+
     await this.messagesService.createMessage({
       projectId: params.projectId,
       role: "user",
       messageType: AssistantMessageType.SYSTEM_NOTICE,
-      step: project.currentStep as WorkflowStep,
+      step: requestedStep,
       contentText: params.userMessage,
       contentJson: {
         userMessage: params.userMessage,
-        payload: params.payload ?? {}
+        payload: params.payload ?? {},
+        requestedStep
       }
     });
 
@@ -51,38 +141,38 @@ export class WorkflowService {
       await this.researchProfileService.mergeExplicitUpdates(params.projectId, params.payload ?? {});
     }
 
-    const currentStep = (params.requestedStep ?? project.currentStep) as WorkflowStep;
-
     if (this.looksLikeStataError(params.userMessage)) {
       return this.runSideSkill(
         params.projectId,
-        currentStep,
+        requestedStep,
         SkillName.STATA_ERROR_DEBUG,
-        { userMessage: params.userMessage, ...params.payload }
+        { userMessage: params.userMessage, ...params.payload },
+        project.currentStep as WorkflowStep
       );
     }
 
     if (this.looksLikeRegressionResult(params.userMessage)) {
       return this.runSideSkill(
         params.projectId,
-        currentStep,
+        requestedStep,
         SkillName.RESULT_INTERPRET,
         {
           userMessage: params.userMessage,
-          currentModule: project.currentStep,
+          currentModule: requestedStep,
           ...params.payload
-        }
+        },
+        project.currentStep as WorkflowStep
       );
     }
 
     const interpreter = await this.skillsService.executeSkill({
       projectId: params.projectId,
       skillName: SkillName.WORKFLOW_INPUT_INTERPRETER,
-      step: currentStep,
+      step: requestedStep,
       payload: {
         userMessage: params.userMessage,
-        currentStep,
-        currentModule: project.currentStep
+        currentStep: requestedStep,
+        currentModule: requestedStep
       }
     });
 
@@ -98,11 +188,20 @@ export class WorkflowService {
       ...interpretedUpdates
     };
     const effectiveUserMessage =
-      (typeof interpreter.data.normalizedUserMessage === "string" && interpreter.data.normalizedUserMessage.trim()) ||
-      params.userMessage;
+      (typeof interpreter.data.normalizedUserMessage === "string" &&
+        interpreter.data.normalizedUserMessage.trim()) || params.userMessage;
+
+    if (!this.isSetupStep(requestedStep) && this.hasSetupUpdates(effectivePayload)) {
+      return this.resetToSetupConfirmation(
+        params.projectId,
+        effectiveUserMessage,
+        effectivePayload,
+        "研究设定已变化。我先帮您更新摘要，确认后会重新生成整套 Stata 工作流。"
+      );
+    }
 
     if (interpreter.data.route === "ask_clarification") {
-      return this.runSystemNotice(params.projectId, currentStep, {
+      return this.runSystemNotice(params.projectId, requestedStep, {
         message: interpreter.data.clarificationQuestion,
         reason: interpreter.data.reason,
         guidanceTitle: interpreter.data.guidanceTitle,
@@ -115,78 +214,161 @@ export class WorkflowService {
     if (interpreter.data.route === "general_research_chat") {
       return this.runSideSkill(
         params.projectId,
-        currentStep,
+        requestedStep,
         SkillName.GENERAL_RESEARCH_CHAT,
         {
           userQuestion: effectiveUserMessage,
-          currentModule: project.currentStep,
+          currentModule: requestedStep,
           ...effectivePayload
-        }
+        },
+        project.currentStep as WorkflowStep
       );
     }
 
-    switch (currentStep) {
-      case WorkflowStep.TOPIC_DETECT:
-        return this.handleTopicEntry(params.projectId, effectiveUserMessage);
-      case WorkflowStep.TOPIC_NORMALIZE:
-        return this.handleTopicConfirmation(params.projectId, effectiveUserMessage, effectivePayload);
-      case WorkflowStep.SOP_GUIDE:
-        return this.handleSopGuide(params.projectId);
-      case WorkflowStep.DATA_CLEANING:
-        return this.handleDataCleaning(params.projectId, effectiveUserMessage, effectivePayload);
-      case WorkflowStep.DATA_CHECK:
-        return this.handleDataCheck(params.projectId, effectiveUserMessage, effectivePayload);
-      case WorkflowStep.BASELINE_REGRESSION:
-        return this.handleBaseline(params.projectId, effectivePayload);
-      default:
-        return this.runSystemNotice(params.projectId, currentStep, {
-          message: "\u8fd9\u4e2a\u73af\u8282\u6682\u65f6\u8fd8\u5728\u8865\u5145\u4e2d\uff0c\u8bf7\u5148\u7ee7\u7eed\u5f53\u524d\u5df2\u5f00\u653e\u7684\u7814\u7a76\u6b65\u9aa4\u3002"
-        });
+    if (this.isSetupStep(requestedStep)) {
+      return this.handleSetupCollection(
+        params.projectId,
+        effectiveUserMessage,
+        effectivePayload,
+        this.isConfirmation(effectiveUserMessage)
+      );
     }
+
+    return this.handleGeneratedModuleInput(
+      params.projectId,
+      requestedStep,
+      effectiveUserMessage,
+      effectivePayload,
+      project.currentStep as WorkflowStep
+    );
   }
 
-  private async handleTopicEntry(projectId: string, userMessage: string) {
-    const detect = await this.skillsService.executeSkill({
-      projectId,
-      skillName: SkillName.TOPIC_DETECT,
-      step: WorkflowStep.TOPIC_DETECT,
-      payload: { userInput: userMessage }
-    });
+  private async handleSetupCollection(
+    projectId: string,
+    userMessage: string,
+    payload: Record<string, unknown>,
+    confirmed: boolean
+  ) {
+    const draft = await this.buildSetupDraft(projectId, userMessage, payload);
+    const missingFields = this.getMissingSetupFields(draft);
+    const hasAnySetupContent = this.hasAnySetupContent(draft);
 
-    if (!detect.data.isValidTopic || detect.data.topicType === "not_topic") {
-      return this.runSystemNotice(projectId, WorkflowStep.TOPIC_DETECT, detect.data);
+    await this.projectsService.updateStepStatus(
+      projectId,
+      WorkflowStep.TOPIC_DETECT,
+      hasAnySetupContent ? ProjectStepStatus.COMPLETED : ProjectStepStatus.IN_PROGRESS,
+      {}
+    );
+    await this.projectsService.updateStepStatus(
+      projectId,
+      WorkflowStep.TOPIC_NORMALIZE,
+      ProjectStepStatus.IN_PROGRESS,
+      {}
+    );
+    await this.projectsService.updateCurrentStep(projectId, WorkflowStep.TOPIC_NORMALIZE, SkillName.TOPIC_NORMALIZE);
+
+    if (!hasAnySetupContent || this.isMeaninglessSetupInput(userMessage, draft)) {
+      await this.clearSetupAssistantMessages(projectId);
+      return this.runSystemNotice(projectId, WorkflowStep.TOPIC_NORMALIZE, this.buildSetupCollectionPrompt());
     }
 
-    const normalized = await this.skillsService.executeSkill({
+    await this.persistSetupDraft(projectId, draft);
+
+    if (missingFields.length > 0) {
+      await this.clearSetupAssistantMessages(projectId);
+
+      if (confirmed) {
+        return this.runSystemNotice(projectId, WorkflowStep.TOPIC_NORMALIZE, this.buildMissingFieldsNotice(draft, missingFields));
+      }
+
+      return this.runSystemNotice(projectId, WorkflowStep.TOPIC_NORMALIZE, this.buildMissingFieldsNotice(draft, missingFields));
+    }
+
+    if (!confirmed) {
+      await this.clearSetupAssistantMessages(projectId);
+      const assistantMessage = await this.messagesService.createMessage({
+        projectId,
+        role: "assistant",
+        messageType: AssistantMessageType.TOPIC_CONFIRM,
+        step: WorkflowStep.TOPIC_NORMALIZE,
+        contentText: "我已经整理好一版研究设定。确认后我会一次性生成完整的 Stata 工作流。",
+        contentJson: this.buildSetupConfirmationContent(draft)
+      });
+
+      return {
+        projectId,
+        currentStep: WorkflowStep.TOPIC_NORMALIZE,
+        assistantMessage
+      };
+    }
+
+    await this.researchProfileService.mergeExplicitUpdates(projectId, draft as unknown as Partial<ResearchProfile>);
+    const primaryMessage = await this.runFullWorkflowGeneration(projectId, draft);
+
+    return {
       projectId,
-      skillName: SkillName.TOPIC_NORMALIZE,
-      step: WorkflowStep.TOPIC_DETECT,
-      payload: { rawTopic: userMessage }
-    });
-
-    const normalizedData = {
-      ...normalized.data,
-      researchObject: normalizeResearchObject(normalized.data.researchObject),
-      relationship: this.normalizeRelationshipLabel(
-        normalized.data.relationship,
-        normalized.data.normalizedTopic
-      )
+      currentStep: WorkflowStep.DATA_CLEANING,
+      assistantMessage: primaryMessage
     };
+  }
 
-    await this.projectsService.updateTopic(projectId, normalizedData.normalizedTopic);
-    await this.projectsService.updateStepStatus(projectId, WorkflowStep.TOPIC_DETECT, ProjectStepStatus.COMPLETED, {
-      topicType: detect.data.topicType
-    });
+  private async handleGeneratedModuleInput(
+    projectId: string,
+    requestedStep: WorkflowStep,
+    userMessage: string,
+    payload: Record<string, unknown>,
+    projectCurrentStep: WorkflowStep
+  ) {
+    if (this.wantsRegenerateModule(userMessage)) {
+      return this.runModuleSkill(projectId, requestedStep, payload, projectCurrentStep);
+    }
+
+    if (this.wantsNext(userMessage)) {
+      return this.runSystemNotice(projectId, requestedStep, {
+        message: "整套工作流已经生成完成。您可以点击上方模块查看对应内容，或直接在当前模块继续追问与修改。"
+      });
+    }
+
+    return this.runSideSkill(
+      projectId,
+      requestedStep,
+      SkillName.GENERAL_RESEARCH_CHAT,
+      {
+        userQuestion: userMessage,
+        currentModule: requestedStep,
+        ...payload
+      },
+      projectCurrentStep
+    );
+  }
+
+  private async resetToSetupConfirmation(
+    projectId: string,
+    userMessage: string,
+    payload: Record<string, unknown>,
+    message: string
+  ) {
+    const draft = await this.buildSetupDraft(projectId, userMessage, payload);
+    await this.persistSetupDraft(projectId, draft);
+    await this.resetGeneratedSteps(projectId);
+    await this.projectsService.updateStepStatus(projectId, WorkflowStep.TOPIC_DETECT, ProjectStepStatus.COMPLETED, {});
     await this.projectsService.updateStepStatus(projectId, WorkflowStep.TOPIC_NORMALIZE, ProjectStepStatus.IN_PROGRESS, {});
     await this.projectsService.updateCurrentStep(projectId, WorkflowStep.TOPIC_NORMALIZE, SkillName.TOPIC_NORMALIZE);
+
+    const missingFields = this.getMissingSetupFields(draft);
+    await this.clearSetupAssistantMessages(projectId);
+
+    if (missingFields.length > 0) {
+      return this.runSystemNotice(projectId, WorkflowStep.TOPIC_NORMALIZE, this.buildMissingFieldsNotice(draft, missingFields, message));
+    }
 
     const assistantMessage = await this.messagesService.createMessage({
       projectId,
       role: "assistant",
-      messageType: normalized.messageType,
+      messageType: AssistantMessageType.TOPIC_CONFIRM,
       step: WorkflowStep.TOPIC_NORMALIZE,
-      contentText: normalizedData.confirmationMessage,
-      contentJson: normalizedData
+      contentText: message,
+      contentJson: this.buildSetupConfirmationContent(draft)
     });
 
     return {
@@ -196,239 +378,460 @@ export class WorkflowService {
     };
   }
 
-  private async handleTopicConfirmation(
+  private async buildSetupDraft(
     projectId: string,
     userMessage: string,
-    payload: Record<string, unknown> = {}
-  ) {
-    if (!this.isConfirmation(userMessage)) {
-      if (this.hasTopicConfirmationUpdates(payload)) {
-        return this.handleTopicConfirmationUpdate(projectId, payload);
-      }
+    payload: Record<string, unknown>
+  ): Promise<SetupDraft> {
+    const stored = await this.researchProfileService.getByProjectId(projectId);
+    const draft: SetupDraft = {
+      normalizedTopic: this.stringValue(payload.normalizedTopic) || stored?.normalizedTopic || "",
+      independentVariable: this.stringValue(payload.independentVariable) || stored?.independentVariable || "",
+      dependentVariable: this.stringValue(payload.dependentVariable) || stored?.dependentVariable || "",
+      researchObject:
+        this.normalizeResearchObjectDraft(this.stringValue(payload.researchObject)) ||
+        this.normalizeResearchObjectDraft(stored?.researchObject) ||
+        "",
+      relationship: this.normalizeRelationshipLabel(
+        this.stringValue(payload.relationship) || stored?.relationship || DEFAULT_RELATIONSHIP_LABEL,
+        this.stringValue(payload.normalizedTopic) || stored?.normalizedTopic || ""
+      ),
+      controls: this.arrayValue(payload.controls).length > 0 ? this.arrayValue(payload.controls) : stored?.controls ?? [],
+      fixedEffects:
+        this.arrayValue(payload.fixedEffects).length > 0 ? this.arrayValue(payload.fixedEffects) : stored?.fixedEffects ?? [],
+      sampleScope: this.stringValue(payload.sampleScope) || stored?.sampleScope || "",
+      clusterVar: this.stringValue(payload.clusterVar) || stored?.clusterVar || "",
+      panelId: this.stringValue(payload.panelId) || stored?.panelId || "",
+      timeVar: this.stringValue(payload.timeVar) || stored?.timeVar || "",
+      notes: this.stringValue(payload.notes) || stored?.notes || ""
+    };
 
-      if (this.looksLikeTopicResetRequest(userMessage)) {
-        const assistantMessage = await this.messagesService.createMessage({
-          projectId,
-          role: "assistant",
-          messageType: AssistantMessageType.SYSTEM_NOTICE,
-          step: WorkflowStep.TOPIC_NORMALIZE,
-          contentText: "这个主题方向我先不直接往下推进。你可以告诉我想保留什么、想替换什么，我再帮你重新整理成新的研究设定。",
-          contentJson: {
-            reason: "用户否定了当前题目，但还没有提供新的明确方向。",
-            guidanceTitle: "你可以这样告诉我",
-            guidanceOptions: [
-              "直接说你更想研究什么现象或结果",
-              "例如：我更想研究金融监管对企业 ESG 的影响",
-              "例如：把样本换成中国 A 股上市公司"
-            ]
-          }
-        });
-
-        return {
-          projectId,
-          currentStep: WorkflowStep.TOPIC_NORMALIZE,
-          assistantMessage
-        };
-      }
-
-      if (!this.looksLikeNewTopicCandidate(userMessage)) {
-        return this.runSideSkill(
-          projectId,
-          WorkflowStep.TOPIC_NORMALIZE,
-          SkillName.GENERAL_RESEARCH_CHAT,
-          {
-            userQuestion: userMessage,
-            currentModule: WorkflowStep.TOPIC_NORMALIZE,
-            ...payload
-          }
-        );
-      }
-
-      return this.handleTopicEntry(projectId, userMessage);
+    if (draft.controls.length === 0 && typeof payload.controls === "string") {
+      draft.controls = this.splitItems(String(payload.controls));
+    }
+    if (draft.fixedEffects.length === 0 && typeof payload.fixedEffects === "string") {
+      draft.fixedEffects = this.splitItems(String(payload.fixedEffects));
     }
 
-    const messages = await this.messagesService.getRecentMessages(projectId);
-    const latestConfirm = [...messages]
-      .reverse()
-      .find((message) => message.messageType === AssistantMessageType.TOPIC_CONFIRM);
-    const content = (latestConfirm?.contentJson ?? {}) as Record<string, string>;
+    if ((draft.normalizedTopic && !draft.independentVariable) || (draft.normalizedTopic && !draft.dependentVariable)) {
+      const inferredFromTopic = this.inferTopicFromSentence(draft.normalizedTopic);
+      draft.independentVariable ||= inferredFromTopic.independentVariable;
+      draft.dependentVariable ||= inferredFromTopic.dependentVariable;
+    }
 
-    await this.researchProfileService.initializeFromNormalization(projectId, {
-      normalizedTopic: content.normalizedTopic ?? "",
-      independentVariable: content.independentVariable ?? "",
-      dependentVariable: content.dependentVariable ?? "",
-      researchObject: normalizeResearchObject(content.researchObject),
-      relationship: this.normalizeRelationshipLabel(content.relationship, content.normalizedTopic)
+    if (!draft.normalizedTopic && draft.independentVariable && draft.dependentVariable) {
+      draft.normalizedTopic = `${draft.independentVariable}对${draft.dependentVariable}的影响研究`;
+    }
+
+    if (this.shouldTryNormalizeTopic(userMessage, draft)) {
+      try {
+        const normalized = await this.skillsService.executeSkill({
+          projectId,
+          skillName: SkillName.TOPIC_NORMALIZE,
+          step: WorkflowStep.TOPIC_NORMALIZE,
+          payload: {
+            rawTopic: userMessage
+          }
+        });
+        const normalizedData = normalized.data as {
+          normalizedTopic?: string;
+          independentVariable?: string;
+          dependentVariable?: string;
+        };
+        draft.normalizedTopic ||= this.stringValue(normalizedData.normalizedTopic);
+        draft.independentVariable ||= this.stringValue(normalizedData.independentVariable);
+        draft.dependentVariable ||= this.stringValue(normalizedData.dependentVariable);
+      } catch {
+        // keep deterministic draft
+      }
+    }
+
+    if ((!draft.independentVariable || !draft.dependentVariable) && draft.normalizedTopic) {
+      const inferred = this.inferTopicFromSentence(draft.normalizedTopic);
+      draft.independentVariable ||= inferred.independentVariable;
+      draft.dependentVariable ||= inferred.dependentVariable;
+    }
+
+    if (!draft.normalizedTopic && draft.independentVariable && draft.dependentVariable) {
+      draft.normalizedTopic = `${draft.independentVariable}对${draft.dependentVariable}的影响研究`;
+    }
+
+    draft.relationship = DEFAULT_RELATIONSHIP_LABEL;
+
+    return draft;
+  }
+
+  private async persistSetupDraft(projectId: string, draft: SetupDraft) {
+    await this.researchProfileService.mergeExplicitUpdates(projectId, {
+      normalizedTopic: draft.normalizedTopic,
+      independentVariable: draft.independentVariable,
+      dependentVariable: draft.dependentVariable,
+      researchObject: draft.researchObject,
+      relationship: draft.relationship,
+      controls: draft.controls,
+      fixedEffects: draft.fixedEffects,
+      sampleScope: draft.sampleScope || null,
+      clusterVar: draft.clusterVar || null,
+      panelId: draft.panelId || null,
+      timeVar: draft.timeVar || null,
+      notes: draft.notes || null
     });
 
-    const sop = await this.skillsService.executeSkill({
+    if (draft.normalizedTopic) {
+      await this.projectsService.updateTopic(projectId, draft.normalizedTopic);
+    }
+  }
+
+  private async runFullWorkflowGeneration(projectId: string, draft: SetupDraft) {
+    await this.resetGeneratedSteps(projectId);
+    await this.projectsService.updateStepStatus(projectId, WorkflowStep.TOPIC_DETECT, ProjectStepStatus.COMPLETED, {});
+    await this.projectsService.updateStepStatus(projectId, WorkflowStep.TOPIC_NORMALIZE, ProjectStepStatus.COMPLETED, {});
+
+    let primaryMessage = null as Awaited<ReturnType<MessagesService["createMessage"]>> | null;
+
+    for (const entry of GENERATED_WORKFLOW) {
+      await this.projectsService.updateStepStatus(projectId, entry.step, ProjectStepStatus.IN_PROGRESS, { generatedInBatch: true });
+
+      const run = await this.skillsService.executeSkill({
+        projectId,
+        skillName: entry.skillName,
+        step: entry.step,
+        payload: {
+          normalizedTopic: draft.normalizedTopic,
+          researchObject: draft.researchObject,
+          independentVariable: draft.independentVariable,
+          dependentVariable: draft.dependentVariable,
+          controls: draft.controls,
+          fixedEffects: draft.fixedEffects,
+          sampleScope: draft.sampleScope,
+          clusterVar: draft.clusterVar || undefined,
+          panelId: draft.panelId || undefined,
+          timeVar: draft.timeVar || undefined,
+          notes: draft.notes || undefined
+        }
+      });
+
+      const assistantMessage = await this.messagesService.createMessage({
+        projectId,
+        role: "assistant",
+        messageType: run.messageType,
+        step: entry.step,
+        contentText: entry.contentText,
+        contentJson: run.data
+      });
+
+      await this.projectsService.updateStepStatus(projectId, entry.step, ProjectStepStatus.COMPLETED, { generatedInBatch: true });
+
+      if (entry.step === WorkflowStep.DATA_CLEANING) {
+        primaryMessage = assistantMessage;
+      }
+    }
+
+    await this.projectsService.updateStepStatus(projectId, WorkflowStep.DATA_CLEANING, ProjectStepStatus.IN_PROGRESS, {
+      generatedInBatch: true,
+      selectedByDefault: true
+    });
+    await this.projectsService.updateCurrentStep(projectId, WorkflowStep.DATA_CLEANING, SkillName.DATA_CLEANING);
+
+    if (primaryMessage) {
+      return primaryMessage;
+    }
+
+    const fallbackMessage = await this.messagesService.createMessage({
       projectId,
-      skillName: SkillName.SOP_GUIDE,
-      step: WorkflowStep.SOP_GUIDE,
-      payload: {
-        normalizedTopic: content.normalizedTopic,
-        researchObject: normalizeResearchObject(content.researchObject)
+      role: "assistant",
+      messageType: AssistantMessageType.SYSTEM_NOTICE,
+      step: WorkflowStep.DATA_CLEANING,
+      contentText: "我已经生成完整的 Stata 工作流，可以在上方模块中分别查看。",
+      contentJson: {
+        message: "我已经生成完整的 Stata 工作流，可以在上方模块中分别查看。"
       }
     });
 
-    await this.projectsService.updateStepStatus(projectId, WorkflowStep.TOPIC_NORMALIZE, ProjectStepStatus.COMPLETED, {});
-    await this.projectsService.updateStepStatus(projectId, WorkflowStep.SOP_GUIDE, ProjectStepStatus.IN_PROGRESS, {});
-    await this.projectsService.updateCurrentStep(projectId, WorkflowStep.SOP_GUIDE, SkillName.SOP_GUIDE);
+    return fallbackMessage;
+  }
+
+  private async resetGeneratedSteps(projectId: string) {
+    await this.messagesService.clearAssistantMessagesForSteps(
+      projectId,
+      GENERATED_WORKFLOW.map((entry) => entry.step)
+    );
+
+    for (const entry of GENERATED_WORKFLOW) {
+      await this.projectsService.updateStepStatus(projectId, entry.step, ProjectStepStatus.PENDING, {});
+    }
+  }
+
+  private async clearSetupAssistantMessages(projectId: string) {
+    await this.messagesService.clearAssistantMessagesForSteps(projectId, [
+      WorkflowStep.TOPIC_DETECT,
+      WorkflowStep.TOPIC_NORMALIZE
+    ]);
+  }
+
+  private async runModuleSkill(
+    projectId: string,
+    requestedStep: WorkflowStep,
+    payload: Record<string, unknown>,
+    projectCurrentStep: WorkflowStep
+  ) {
+    const skillName = this.resolveSkillForStep(requestedStep);
+    if (!skillName) {
+      return this.runSystemNotice(projectId, requestedStep, {
+        message: "这个模块暂时不支持单独重跑，请先调整研究设定后重新生成。"
+      });
+    }
+
+    const run = await this.skillsService.executeSkill({
+      projectId,
+      skillName,
+      step: requestedStep,
+      payload
+    });
+
+    await this.messagesService.clearAssistantMessagesForSteps(projectId, [requestedStep]);
 
     const assistantMessage = await this.messagesService.createMessage({
       projectId,
       role: "assistant",
-      messageType: sop.messageType,
-      step: WorkflowStep.SOP_GUIDE,
-      contentText: sop.data.message,
-      contentJson: sop.data
+      messageType: run.messageType,
+      step: requestedStep,
+      contentText: this.getStepIntroText(requestedStep),
+      contentJson: run.data
     });
 
     return {
       projectId,
-      currentStep: WorkflowStep.SOP_GUIDE,
+      currentStep: projectCurrentStep,
       assistantMessage
     };
   }
 
-  private async handleSopGuide(projectId: string) {
-    const run = await this.skillsService.executeSkill({
-      projectId,
-      skillName: SkillName.DATA_CLEANING,
-      step: WorkflowStep.DATA_CLEANING,
-      payload: {}
-    });
+  private resolveSkillForStep(step: WorkflowStep) {
+    const mapping: Partial<Record<WorkflowStep, SkillName>> = {
+      [WorkflowStep.SOP_GUIDE]: SkillName.SOP_GUIDE,
+      [WorkflowStep.DATA_CLEANING]: SkillName.DATA_CLEANING,
+      [WorkflowStep.DATA_CHECK]: SkillName.DATA_CHECK,
+      [WorkflowStep.BASELINE_REGRESSION]: SkillName.BASELINE_REGRESSION,
+      [WorkflowStep.ROBUSTNESS]: SkillName.ROBUSTNESS,
+      [WorkflowStep.IV]: SkillName.IV,
+      [WorkflowStep.MECHANISM]: SkillName.MECHANISM,
+      [WorkflowStep.HETEROGENEITY]: SkillName.HETEROGENEITY
+    };
 
-    await this.projectsService.updateStepStatus(projectId, WorkflowStep.SOP_GUIDE, ProjectStepStatus.COMPLETED, {});
-    await this.projectsService.updateStepStatus(projectId, WorkflowStep.DATA_CLEANING, ProjectStepStatus.IN_PROGRESS, {});
-    await this.projectsService.updateCurrentStep(projectId, WorkflowStep.DATA_CLEANING, SkillName.DATA_CLEANING);
-
-    const assistantMessage = await this.messagesService.createMessage({
-      projectId,
-      role: "assistant",
-      messageType: run.messageType,
-      step: WorkflowStep.DATA_CLEANING,
-      contentText: "已进入数据清洗阶段。",
-      contentJson: run.data
-    });
-
-    return { projectId, currentStep: WorkflowStep.DATA_CLEANING, assistantMessage };
+    return mapping[step];
   }
 
-  private async handleDataCleaning(
-    projectId: string,
-    userMessage: string,
-    payload: Record<string, unknown>
+  private buildSetupCollectionPrompt() {
+    return {
+      message:
+        "请直接把研究设定告诉我，我会先帮您整理成结构化摘要，再确认是否生成整套 Stata 工作流。",
+      guidanceTitle: "建议至少包含这些信息",
+      guidanceOptions: REQUIRED_SETUP_FIELDS.map((item) => item.example)
+    };
+  }
+
+  private buildMissingFieldsNotice(
+    draft: SetupDraft,
+    missingFields: Array<{ key: SetupFieldKey; label: string; example: string }>,
+    prefixMessage?: string
   ) {
-    if (this.wantsNext(userMessage) || this.wantsDataCheck(userMessage)) {
-      const run = await this.skillsService.executeSkill({
-        projectId,
-        skillName: SkillName.DATA_CHECK,
-        step: WorkflowStep.DATA_CHECK,
-        payload
-      });
+    const intro = prefixMessage || "我已经先帮您整理出一版研究设定。为了直接生成整套 Stata 工作流，还需要您再补充以下信息：";
+    const labels = missingFields.map((item) => item.label).join("、");
 
-      await this.projectsService.updateStepStatus(projectId, WorkflowStep.DATA_CLEANING, ProjectStepStatus.COMPLETED, {});
-      await this.projectsService.updateStepStatus(projectId, WorkflowStep.DATA_CHECK, ProjectStepStatus.IN_PROGRESS, {});
-      await this.projectsService.updateCurrentStep(projectId, WorkflowStep.DATA_CHECK, SkillName.DATA_CHECK);
+    return {
+      message: `${intro}${labels}。`,
+      reason: "研究设定尚未补齐。",
+      guidanceTitle: "可以直接这样补充",
+      guidanceOptions: missingFields.map((item) => item.example),
+      currentDraft: this.buildSetupConfirmationContent(draft)
+    };
+  }
 
-      const assistantMessage = await this.messagesService.createMessage({
-        projectId,
-        role: "assistant",
-        messageType: run.messageType,
-        step: WorkflowStep.DATA_CHECK,
-        contentText: "已进入数据检查阶段。",
-        contentJson: run.data
-      });
+  private buildSetupConfirmationContent(draft: SetupDraft) {
+    return {
+      normalizedTopic: draft.normalizedTopic,
+      independentVariable: draft.independentVariable,
+      dependentVariable: draft.dependentVariable,
+      researchObject: draft.researchObject,
+      relationship: draft.relationship,
+      controls: draft.controls,
+      sampleScope: draft.sampleScope,
+      fixedEffects: draft.fixedEffects,
+      confirmationMessage: "如无问题，请确认并直接生成整套 Stata 工作流。"
+    };
+  }
 
-      return { projectId, currentStep: WorkflowStep.DATA_CHECK, assistantMessage };
+  private getMissingSetupFields(draft: SetupDraft) {
+    return REQUIRED_SETUP_FIELDS.filter((field) => {
+      const value = draft[field.key];
+      if (Array.isArray(value)) {
+        return value.length === 0;
+      }
+      return !String(value ?? "").trim();
+    });
+  }
+
+  private hasAnySetupContent(draft: SetupDraft) {
+    return Boolean(
+      draft.normalizedTopic ||
+        draft.independentVariable ||
+        draft.dependentVariable ||
+        draft.researchObject ||
+        draft.controls.length ||
+        draft.sampleScope ||
+        draft.fixedEffects.length
+    );
+  }
+
+  private inferTopicFromSentence(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return {
+        independentVariable: "",
+        dependentVariable: ""
+      };
     }
 
-    const run = await this.skillsService.executeSkill({
-      projectId,
-      skillName: SkillName.DATA_CLEANING,
-      step: WorkflowStep.DATA_CLEANING,
-      payload
-    });
-
-    const assistantMessage = await this.messagesService.createMessage({
-      projectId,
-      role: "assistant",
-      messageType: run.messageType,
-      step: WorkflowStep.DATA_CLEANING,
-      contentText: "已更新数据清洗建议。",
-      contentJson: run.data
-    });
-
-    return { projectId, currentStep: WorkflowStep.DATA_CLEANING, assistantMessage };
-  }
-
-  private async handleDataCheck(
-    projectId: string,
-    userMessage: string,
-    payload: Record<string, unknown>
-  ) {
-    if (this.wantsNext(userMessage) || this.wantsBaseline(userMessage)) {
-      const run = await this.skillsService.executeSkill({
-        projectId,
-        skillName: SkillName.BASELINE_REGRESSION,
-        step: WorkflowStep.BASELINE_REGRESSION,
-        payload
-      });
-
-      await this.projectsService.updateStepStatus(projectId, WorkflowStep.DATA_CHECK, ProjectStepStatus.COMPLETED, {});
-      await this.projectsService.updateStepStatus(projectId, WorkflowStep.BASELINE_REGRESSION, ProjectStepStatus.IN_PROGRESS, {});
-      await this.projectsService.updateCurrentStep(projectId, WorkflowStep.BASELINE_REGRESSION, SkillName.BASELINE_REGRESSION);
-
-      const assistantMessage = await this.messagesService.createMessage({
-        projectId,
-        role: "assistant",
-        messageType: run.messageType,
-        step: WorkflowStep.BASELINE_REGRESSION,
-        contentText: "已进入基准回归阶段。",
-        contentJson: run.data
-      });
-
-      return { projectId, currentStep: WorkflowStep.BASELINE_REGRESSION, assistantMessage };
+    const match = trimmed.match(/^(.+?)(?:对|与|和)(.+?)(?:的)?(?:影响|效应|关系)(?:研究)?$/);
+    if (!match) {
+      return {
+        independentVariable: "",
+        dependentVariable: ""
+      };
     }
 
-    const run = await this.skillsService.executeSkill({
-      projectId,
-      skillName: SkillName.DATA_CHECK,
-      step: WorkflowStep.DATA_CHECK,
-      payload
-    });
-
-    const assistantMessage = await this.messagesService.createMessage({
-      projectId,
-      role: "assistant",
-      messageType: run.messageType,
-      step: WorkflowStep.DATA_CHECK,
-      contentText: "已更新数据检查建议。",
-      contentJson: run.data
-    });
-
-    return { projectId, currentStep: WorkflowStep.DATA_CHECK, assistantMessage };
+    return {
+      independentVariable: match[1]?.trim() ?? "",
+      dependentVariable: match[2]?.trim() ?? ""
+    };
   }
 
-  private async handleBaseline(projectId: string, payload: Record<string, unknown>) {
-    const run = await this.skillsService.executeSkill({
-      projectId,
-      skillName: SkillName.BASELINE_REGRESSION,
-      step: WorkflowStep.BASELINE_REGRESSION,
-      payload
-    });
+  private shouldTryNormalizeTopic(userMessage: string, draft: SetupDraft) {
+    if (draft.normalizedTopic && draft.independentVariable && draft.dependentVariable) {
+      return false;
+    }
 
-    const assistantMessage = await this.messagesService.createMessage({
-      projectId,
-      role: "assistant",
-      messageType: run.messageType,
-      step: WorkflowStep.BASELINE_REGRESSION,
-      contentText: "已更新基准回归建议。",
-      contentJson: run.data
-    });
+    const trimmed = userMessage.trim();
+    if (!trimmed || trimmed.length < 6) {
+      return false;
+    }
 
-    return { projectId, currentStep: WorkflowStep.BASELINE_REGRESSION, assistantMessage };
+    return /研究|影响|效应|关系|解释变量|被解释变量|研究对象|样本|控制变量|固定效应|是否|对/.test(trimmed);
+  }
+
+  private normalizeResearchObjectDraft(value?: string | null) {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      return "";
+    }
+
+    const normalized = trimmed.replace(/A股上市公司|A 股上市公司|A-share listed firms/i, DEFAULT_RESEARCH_OBJECT);
+    return normalized === "上市公司" || normalized === "企业" || normalized === "中国企业"
+      ? DEFAULT_RESEARCH_OBJECT
+      : normalized;
+  }
+
+  private normalizeRelationshipLabel(value: string, normalizedTopic: string) {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return DEFAULT_RELATIONSHIP_LABEL;
+    }
+
+    if (/^(causal effect|因果影响)$/i.test(trimmed)) {
+      return DEFAULT_RELATIONSHIP_LABEL;
+    }
+
+    if (normalizedTopic && trimmed === normalizedTopic) {
+      return DEFAULT_RELATIONSHIP_LABEL;
+    }
+
+    if (/(对.+的影响|影响研究)$/i.test(trimmed)) {
+      return DEFAULT_RELATIONSHIP_LABEL;
+    }
+
+    return DEFAULT_RELATIONSHIP_LABEL;
+  }
+
+  private hasSetupUpdates(payload: Record<string, unknown>) {
+    return [
+      "normalizedTopic",
+      "independentVariable",
+      "dependentVariable",
+      "researchObject",
+      "controls",
+      "sampleScope",
+      "fixedEffects",
+      "clusterVar",
+      "panelId",
+      "timeVar",
+      "notes"
+    ].some((key) => {
+      const value = payload[key];
+      if (Array.isArray(value)) {
+        return value.length > 0;
+      }
+      return typeof value === "string" ? value.trim().length > 0 : value != null;
+    });
+  }
+
+  private isSetupStep(step: WorkflowStep) {
+    return step === WorkflowStep.TOPIC_DETECT || step === WorkflowStep.TOPIC_NORMALIZE;
+  }
+
+  private isMeaninglessSetupInput(userMessage: string, draft: SetupDraft) {
+    if (this.hasAnySetupContent(draft)) {
+      return false;
+    }
+
+    const normalized = userMessage.trim().toLowerCase();
+    return (
+      /^(hi|hello|hey|ok|okay|yes|no|你好|您好|在吗|哈喽|嗨)$/.test(normalized) ||
+      /搞鸡毛|搞什么|随便聊|闲聊/.test(userMessage) ||
+      normalized.length <= 4
+    );
+  }
+
+  private wantsRegenerateModule(userMessage: string) {
+    return /重新生成|重跑|再来一版|再生成|给我代码|代码模板|stata代码|详细一点/.test(userMessage);
+  }
+
+  private wantsNext(userMessage: string) {
+    return /^(继续|下一步|往下|继续推进|开始|继续生成|继续吧)$/i.test(userMessage.trim());
+  }
+
+  private isConfirmation(userMessage: string) {
+    return /^(确认|确认主题|确认并生成|ok|okay|yes|可以|好的|没问题)$/i.test(userMessage.trim());
+  }
+
+  private looksLikeStataError(userMessage: string) {
+    return /r\(\d+\)|not found|invalid syntax|command .* not found|type mismatch|variable .* not found|stata/i.test(
+      userMessage
+    );
+  }
+
+  private looksLikeRegressionResult(userMessage: string) {
+    return /coef\.|adj\s*r2|r-squared|observations|number of obs|t\s*=|p\s*</i.test(userMessage);
+  }
+
+  private stringValue(value: unknown) {
+    return typeof value === "string" ? value.trim() : "";
+  }
+
+  private arrayValue(value: unknown) {
+    if (!Array.isArray(value)) {
+      return [] as string[];
+    }
+
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+
+  private splitItems(value: string) {
+    return value
+      .replace(/[，、；;]/g, ",")
+      .split(/[\s,\/]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
 
   private cleanProfileUpdatePayload(payload: Record<string, unknown>) {
@@ -448,79 +851,19 @@ export class WorkflowService {
     );
   }
 
-  private hasTopicConfirmationUpdates(payload: Record<string, unknown>) {
-    return ["normalizedTopic", "independentVariable", "dependentVariable", "researchObject", "relationship"].some(
-      (key) => {
-        const value = payload[key];
-        return typeof value === "string" && value.trim().length > 0;
-      }
-    );
-  }
-
-  private buildTopicTitle(independentVariable: string, dependentVariable: string, fallback: string) {
-    if (independentVariable && dependentVariable) {
-      return `${independentVariable}对${dependentVariable}的影响研究`;
-    }
-
-    return fallback;
-  }
-
-  private async handleTopicConfirmationUpdate(projectId: string, payload: Record<string, unknown>) {
-    const messages = await this.messagesService.getRecentMessages(projectId);
-    const latestConfirm = [...messages]
-      .reverse()
-      .find((message) => message.messageType === AssistantMessageType.TOPIC_CONFIRM);
-
-    const previous = (latestConfirm?.contentJson ?? {}) as Record<string, string>;
-    if (!previous.normalizedTopic && typeof payload.normalizedTopic !== "string") {
-      return this.runSystemNotice(projectId, WorkflowStep.TOPIC_NORMALIZE, {
-        message: "当前还没有可修改的研究设定，请先生成一次题目标准化结果。"
-      });
-    }
-
-    const independentVariable =
-      (typeof payload.independentVariable === "string" && payload.independentVariable.trim()) ||
-      previous.independentVariable ||
-      "";
-    const dependentVariable =
-      (typeof payload.dependentVariable === "string" && payload.dependentVariable.trim()) ||
-      previous.dependentVariable ||
-      "";
-    const researchObject = normalizeResearchObject(
-      (typeof payload.researchObject === "string" && payload.researchObject.trim()) || previous.researchObject || ""
-    );
-    const normalizedTopic =
-      (typeof payload.normalizedTopic === "string" && payload.normalizedTopic.trim()) ||
-      this.buildTopicTitle(independentVariable, dependentVariable, previous.normalizedTopic || "");
-    const relationship = this.normalizeRelationshipLabel(
-      (typeof payload.relationship === "string" && payload.relationship.trim()) || previous.relationship,
-      normalizedTopic
-    );
-
-    await this.projectsService.updateTopic(projectId, normalizedTopic);
-
-    const assistantMessage = await this.messagesService.createMessage({
-      projectId,
-      role: "assistant",
-      messageType: AssistantMessageType.TOPIC_CONFIRM,
-      step: WorkflowStep.TOPIC_NORMALIZE,
-      contentText: "已根据你的反馈更新研究设定。",
-      contentJson: {
-        normalizedTopic,
-        independentVariable,
-        dependentVariable,
-        researchObject,
-        relationship,
-        confirmationMessage: "请确认是否采用这个版本的研究设定。",
-        candidateTopics: [normalizedTopic].filter(Boolean)
-      }
-    });
-
-    return {
-      projectId,
-      currentStep: WorkflowStep.TOPIC_NORMALIZE,
-      assistantMessage
+  private getStepIntroText(step: WorkflowStep) {
+    const stepCopy: Partial<Record<WorkflowStep, string>> = {
+      [WorkflowStep.SOP_GUIDE]: "我已经更新研究路径建议。",
+      [WorkflowStep.DATA_CLEANING]: "我已经更新数据处理建议。",
+      [WorkflowStep.DATA_CHECK]: "我已经更新数据检查建议。",
+      [WorkflowStep.BASELINE_REGRESSION]: "我已经更新基准回归代码。",
+      [WorkflowStep.ROBUSTNESS]: "我已经更新稳健性检验方案。",
+      [WorkflowStep.IV]: "我已经更新内生性分析方案。",
+      [WorkflowStep.MECHANISM]: "我已经更新机制分析方案。",
+      [WorkflowStep.HETEROGENEITY]: "我已经更新异质性分析方案。"
     };
+
+    return stepCopy[step] ?? "我已经更新当前模块内容。";
   }
 
   private async runSideSkill(
@@ -530,7 +873,8 @@ export class WorkflowService {
       | typeof SkillName.GENERAL_RESEARCH_CHAT
       | typeof SkillName.RESULT_INTERPRET
       | typeof SkillName.STATA_ERROR_DEBUG,
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
+    projectCurrentStep: WorkflowStep
   ) {
     const run = await this.skillsService.executeSkill({
       projectId,
@@ -553,7 +897,7 @@ export class WorkflowService {
       contentJson: run.data
     });
 
-    return { projectId, currentStep, assistantMessage };
+    return { projectId, currentStep: projectCurrentStep, assistantMessage };
   }
 
   private async runSystemNotice(
@@ -563,124 +907,18 @@ export class WorkflowService {
   ) {
     const assistantMessage = await this.messagesService.createMessage({
       projectId,
-      role: "system",
+      role: "assistant",
       messageType: AssistantMessageType.SYSTEM_NOTICE,
       step: currentStep,
-      contentText: (payload.message as string) ?? (payload.reason as string) ?? "系统提示",
+      contentText: typeof payload.message === "string" ? payload.message : "",
       contentJson: payload
     });
 
-    return { projectId, currentStep, assistantMessage };
-  }
-
-  private shouldRouteToGeneralResearchChat(text: string, currentStep: WorkflowStep) {
-    if (currentStep === WorkflowStep.TOPIC_DETECT) {
-      return false;
-    }
-
-    if (this.isConfirmation(text) || this.wantsNext(text) || this.wantsDataCheck(text) || this.wantsBaseline(text)) {
-      return false;
-    }
-
-    if (currentStep === WorkflowStep.TOPIC_NORMALIZE && this.looksLikeTopicRevision(text)) {
-      return false;
-    }
-
-    return this.looksLikeResearchQuestion(text);
-  }
-
-  private looksLikeResearchQuestion(text: string) {
-    return /[?？]|^(什么|为什么|如何|怎么|是否|可否|能否|请问|解释|请解释|帮我解释|我想问|想问|如果|区别)/i.test(text) || /(什么意思|为什么|怎么|如何|区别|逻辑|文献|理论|机制|指标|变量构建|固定效应|稳健性|内生性|控制变量|中介效应|异质性)/i.test(text);
-  }
-
-  private looksLikeTopicRevision(text: string) {
-    return /(\u6539\u6210|\u6539\u4e3a|\u6362\u6210|\u4fee\u6539|\u8865\u5145|\u7814\u7a76\u5bf9\u8c61|\u89e3\u91ca\u53d8\u91cf|\u88ab\u89e3\u91ca\u53d8\u91cf|\u5173\u7cfb\u7c7b\u578b|\u9898\u76ee|\u4e3b\u9898)/i.test(text);
-  }
-
-  private looksLikeNewTopicCandidate(text: string) {
-    return /(\u5bf9|\u4e0e|\u5f71\u54cd|\u6548\u5e94|\u5173\u7cfb|\u662f\u5426|\u4f5c\u7528\u4e8e|impact|effect|relation)/i.test(text)
-      && text.trim().length >= 6;
-  }
-
-  private normalizeRelationshipLabel(value: string | undefined, normalizedTopic?: string) {
-    const trimmed = typeof value === "string" ? value.trim() : "";
-
-    if (!trimmed) {
-      return WorkflowService.DEFAULT_RELATIONSHIP_LABEL;
-    }
-
-    if (/^(causal effect|\u56e0\u679c\u5f71\u54cd)$/i.test(trimmed)) {
-      return WorkflowService.DEFAULT_RELATIONSHIP_LABEL;
-    }
-
-    if (normalizedTopic && trimmed === normalizedTopic.trim()) {
-      return WorkflowService.DEFAULT_RELATIONSHIP_LABEL;
-    }
-
-    if (/(\u5bf9.+\u7684\u5f71\u54cd|\u5f71\u54cd\u7814\u7a76)$/i.test(trimmed)) {
-      return WorkflowService.DEFAULT_RELATIONSHIP_LABEL;
-    }
-
-    return trimmed;
-  }
-
-  private looksLikeTopicResetRequest(text: string) {
-    return /(\u6362\u4e00\u4e2a|\u6362\u4e2a|\u91cd\u65b0\u6765|\u91cd\u6765|\u91cd\u5199|\u91cd\u505a|\u53e6\u4e00\u4e2a|\u4e0d\u884c|\u4e0d\u592a\u884c|\u4e0d\u5408\u9002|\u91cd\u65b0\u9009\u9898|\u91cd\u65b0\u6362\u9898)/i.test(text) && !this.looksLikeTopicCandidate(text);
-  }
-
-  private looksLikeTopicCandidate(text: string) {
-    return /(对|与|影响|效应|关系|是否|提升|抑制|作用于|impact|effect|relation)/i.test(text) && text.trim().length >= 6;
-  }
-
-  private isConfirmation(text: string) {
-    const normalized = text
-      .trim()
-      .toLowerCase()
-      .replace(/[\s,，。.!！?？；;、]/g, "");
-
-    return [
-      "yes",
-      "ok",
-      "okay",
-      "confirm",
-      "confirmed",
-      "start",
-      "continue",
-      "go",
-      "yescontinue",
-      "是",
-      "是的",
-      "好",
-      "好的",
-      "确认",
-      "确认主题",
-      "继续",
-      "是的继续",
-      "好的继续",
-      "继续进入后续流程",
-      "进入下一步"
-    ].includes(normalized);
-  }
-
-  private wantsNext(text: string) {
-    return /(next|continue|start|go|\u4e0b\u4e00\u6b65|\u7ee7\u7eed|\u5f00\u59cb)/i.test(text);
-  }
-
-  private wantsDataCheck(text: string) {
-    return /(data check|describe|summarize|\u6570\u636e\u68c0\u67e5)/i.test(text);
-  }
-
-  private wantsBaseline(text: string) {
-    return /(baseline|regression|reghdfe|\u57fa\u51c6\u56de\u5f52|\u56de\u5f52)/i.test(text);
-  }
-
-  private looksLikeStataError(text: string) {
-    return /(not found|invalid syntax|error|r\(\d+\)|\u62a5\u9519|\u627e\u4e0d\u5230)/i.test(text);
-  }
-
-  private looksLikeRegressionResult(text: string) {
-    return /(R.?2|Adj|coef\.|t\)|P>|\*\*\*|Number of obs|reghdfe)/i.test(text);
+    return {
+      projectId,
+      currentStep,
+      assistantMessage
+    };
   }
 }
-
 

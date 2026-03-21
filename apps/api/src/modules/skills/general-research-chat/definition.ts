@@ -5,7 +5,7 @@
   generalResearchChatInputSchema,
   generalResearchChatOutputSchema
 } from "@empirical/shared";
-import { buildGeneralResearchChatOutput } from "../skill.utils";
+import { buildGeneralResearchChatFallback } from "../workflow-output.builder";
 import type { SkillDefinition } from "../skill.types";
 
 export const generalResearchChatSkill: SkillDefinition<any, any> = {
@@ -15,5 +15,5 @@ export const generalResearchChatSkill: SkillDefinition<any, any> = {
   messageType: AssistantMessageType.RESEARCH_CHAT,
   inputSchema: generalResearchChatInputSchema,
   outputSchema: generalResearchChatOutputSchema,
-  fallback: (input) => buildGeneralResearchChatOutput(input)
+  fallback: (input) => buildGeneralResearchChatFallback(input)
 };

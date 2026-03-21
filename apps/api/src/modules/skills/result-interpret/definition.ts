@@ -1,5 +1,11 @@
-import { AssistantMessageType, SkillName, WorkflowStep, resultInterpretInputSchema, resultInterpretOutputSchema } from "@empirical/shared";
-import { interpretRegressionResult } from "../skill.utils";
+﻿import {
+  AssistantMessageType,
+  SkillName,
+  WorkflowStep,
+  resultInterpretInputSchema,
+  resultInterpretOutputSchema
+} from "@empirical/shared";
+import { buildResultInterpretFallback } from "../workflow-output.builder";
 import type { SkillDefinition } from "../skill.types";
 
 export const resultInterpretSkill: SkillDefinition<any, any> = {
@@ -9,5 +15,5 @@ export const resultInterpretSkill: SkillDefinition<any, any> = {
   messageType: AssistantMessageType.RESULT_INTERPRET,
   inputSchema: resultInterpretInputSchema,
   outputSchema: resultInterpretOutputSchema,
-  fallback: (input) => interpretRegressionResult(input)
+  fallback: (input) => buildResultInterpretFallback(input)
 };

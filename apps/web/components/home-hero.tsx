@@ -6,7 +6,6 @@ import { apiRequest } from "../lib/api";
 import { saveStoredProject, setPendingProjectBootstrap } from "../lib/storage";
 import { ThinkingBubble } from "./thinking-bubble";
 
-
 export function HomeHero() {
   const router = useRouter();
   const [topic, setTopic] = useState("");
@@ -46,13 +45,7 @@ export function HomeHero() {
   };
 
   const handleTopicKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (
-      event.key !== "Enter" ||
-      event.ctrlKey ||
-      event.metaKey ||
-      event.shiftKey ||
-      event.altKey
-    ) {
+    if (event.key !== "Enter" || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
       return;
     }
 
@@ -82,10 +75,14 @@ export function HomeHero() {
             {showGhostText ? (
               <div className="pointer-events-none absolute inset-0 z-10 px-4 py-4 sm:px-6 sm:py-5">
                 <p className="max-w-3xl text-lg leading-8 text-slate-500 sm:text-[1.06rem]">
-                  {"可直接写下研究主题、变量设定、回归结果或 Stata 报错；系统会自动调度相应技能，沿论文流程继续推进。"}
+                  {
+                    "请输入你的研究主题、研究对象、解释变量、被解释变量、控制变量、样本区间和固定效应。你可以写得很乱，我会先帮你整理成结构化研究设定。"
+                  }
                 </p>
                 <p className="mt-4 max-w-3xl text-base leading-8 text-slate-400 sm:text-[1rem]">
-                  {"例如：以 2011-2022 年沪深 A 股上市公司为样本，考察数字金融是否提升企业创新产出。"}
+                  {
+                    "例如：研究数字金融对企业创新的影响；样本是2011-2022年中国A股上市公司（剔除ST和金融股）；解释变量是数字金融指数；被解释变量是专利申请数量；控制变量包括企业规模、资产负债率、ROA；固定效应为企业和年份固定效应。"
+                  }
                 </p>
               </div>
             ) : null}
@@ -106,12 +103,12 @@ export function HomeHero() {
             </button>
 
             <button
-              className="inline-flex min-w-[188px] items-center justify-center rounded-full bg-slate-950 px-6 py-3 text-base font-semibold text-white shadow-floating transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-55"
+              className="inline-flex min-w-[188px] items-center justify-center rounded-full bg-slate-950 px-6 py-3 text-lg font-semibold text-white shadow-floating transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-55"
               disabled={loading || !topic.trim()}
               onClick={() => void createProject()}
               type="button"
             >
-              {loading ? <ThinkingBubble bare className="text-white" /> : <span>{"开始对话"}</span>}
+              {loading ? <ThinkingBubble bare className="text-white" /> : <span className="w-full text-center">开始对话</span>}
             </button>
           </div>
         </div>

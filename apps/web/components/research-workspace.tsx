@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import clsx from "clsx";
 import Link from "next/link";
@@ -101,6 +101,16 @@ const STAGE_ID_BY_STEP: Record<WorkflowStep, StageId> = {
   [WorkflowStep.HETEROGENEITY]: "heterogeneity",
   [WorkflowStep.IV]: "iv",
   [WorkflowStep.EXPORT_TABLE]: "baseline"
+};
+
+const REQUESTED_STEP_BY_STAGE: Record<StageId, WorkflowStep> = {
+  topic: WorkflowStep.TOPIC_NORMALIZE,
+  data: WorkflowStep.DATA_CLEANING,
+  baseline: WorkflowStep.BASELINE_REGRESSION,
+  robustness: WorkflowStep.ROBUSTNESS,
+  iv: WorkflowStep.IV,
+  mechanism: WorkflowStep.MECHANISM,
+  heterogeneity: WorkflowStep.HETEROGENEITY
 };
 
 const SUPPORTED_ATTACHMENT_EXTENSIONS = new Set([
@@ -225,7 +235,7 @@ async function readPdfAttachment(file: File): Promise<ComposerAttachment> {
       continue;
     }
 
-    const nextChunk = "?" + pageNumber + "?\n" + pageText;
+    const nextChunk = "第" + pageNumber + "页\n" + pageText;
     totalLength += nextChunk.length;
     pageTexts.push(nextChunk);
 
@@ -342,7 +352,7 @@ function formatAttachmentSize(size: number) {
 }
 
 function buildComposerSubmission(rawMessage: string, attachment: ComposerAttachment | null) {
-  const baseMessage = rawMessage.trim() || (attachment ? "请结合附件内容继续处理" : "");
+  const baseMessage = rawMessage.trim() || (attachment ? "请结合附件内容继续处理。" : "");
 
   if (!attachment) {
     return {
@@ -432,11 +442,11 @@ function buildStreamPreview(message: AssistantMessageEnvelope) {
 
   if (message.messageType === "topic_confirm") {
     return [
-      textValue(json.normalizedTopic) || "已生成标准化题目。",
-      textValue(json.independentVariable) ? `核心解释变量：${textValue(json.independentVariable)}` : "",
+      textValue(json.normalizedTopic) || "已生成研究设定摘要。",
+      textValue(json.independentVariable) ? `解释变量：${textValue(json.independentVariable)}` : "",
       textValue(json.dependentVariable) ? `被解释变量：${textValue(json.dependentVariable)}` : "",
       normalizeResearchObjectText(json.researchObject) ? `研究对象：${normalizeResearchObjectText(json.researchObject)}` : "",
-      "如果没有问题，直接确认主题即可。"
+      "如无问题，请确认并直接生成整套 Stata 工作流。"
     ]
       .filter(Boolean)
       .join("\n");
@@ -444,7 +454,7 @@ function buildStreamPreview(message: AssistantMessageEnvelope) {
 
   if (message.messageType === "sop_guide") {
     const steps = listValue(json.steps).map((step, index) => `${index + 1}. ${step}`);
-    return [normalizeAssistantCopy(message.contentText) || "已生成研究推进路径。", ...steps].filter(Boolean).join("\n");
+    return [normalizeAssistantCopy(message.contentText) || "已生成研究路径建议。", ...steps].filter(Boolean).join("\n");
   }
 
   if (message.messageType === "skill_output") {
@@ -452,7 +462,7 @@ function buildStreamPreview(message: AssistantMessageEnvelope) {
     const readingGuide = listValue(json.interpretationGuide || json.checkItems);
 
     return [
-      textValue(json.purpose) || normalizeAssistantCopy(message.contentText) || "已生成这一轮结果。",
+      textValue(json.purpose) || normalizeAssistantCopy(message.contentText) || "已生成当前模块结果。",
       textValue(json.meaning),
       variableDesign.length > 0 ? `变量与模型：${variableDesign.join("；")}` : "",
       readingGuide.length > 0 ? `阅读重点：${readingGuide.slice(0, 3).join("；")}` : "",
@@ -496,26 +506,27 @@ function buildStreamPreview(message: AssistantMessageEnvelope) {
 }
 
 function getStageMessages(messages: AssistantMessageEnvelope[], stage: StageDefinition) {
+  const replaceableMessageTypes = new Set(["topic_confirm", "sop_guide", "skill_output"]);
   const stageMessages = messages.filter(
     (message) => message.role !== "user" && Boolean(message.step) && stage.steps.includes(message.step as WorkflowStep)
   );
+  const latestIndexByKey = new Map<string, number>();
 
-  if (stage.id !== "topic") {
-    return stageMessages;
-  }
+  stageMessages.forEach((message, index) => {
+    if (!replaceableMessageTypes.has(message.messageType)) {
+      return;
+    }
 
-  const latestTopicConfirmIndex = stageMessages.reduce(
-    (latestIndex, message, index) => (message.messageType === "topic_confirm" ? index : latestIndex),
-    -1
-  );
+    latestIndexByKey.set(`${message.step ?? "none"}:${message.messageType}`, index);
+  });
 
-  if (latestTopicConfirmIndex < 0) {
-    return stageMessages;
-  }
+  return stageMessages.filter((message, index) => {
+    if (!replaceableMessageTypes.has(message.messageType)) {
+      return true;
+    }
 
-  return stageMessages.filter(
-    (message, index) => message.messageType !== "topic_confirm" || index === latestTopicConfirmIndex
-  );
+    return latestIndexByKey.get(`${message.step ?? "none"}:${message.messageType}`) === index;
+  });
 }
 
 function getStageMeta(detail: ProjectDetail | null, activeStageId: StageId) {
@@ -742,7 +753,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       return;
     }
 
-    const localUserMessage = createLocalUserMessage(submission.userMessage, detail?.project.currentStep ?? null);
+    const requestedStep = REQUESTED_STEP_BY_STAGE[selectedStageId] ?? detail?.project.currentStep ?? WorkflowStep.TOPIC_NORMALIZE;
+    const localUserMessage = createLocalUserMessage(submission.userMessage, requestedStep ?? null);
     const liveTurnId = Date.now() + "-" + Math.random().toString(16).slice(2);
     let receivedMessage = false;
 
@@ -759,14 +771,13 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setSending(true);
     setError("");
     setComposerError("");
-    setInput("");
-    setAttachment(null);
 
     try {
       await streamApiRequest(`/projects/${projectId}/workflow/stream`, {
         token: stored.token,
         body: {
           userMessage: submission.userMessage,
+          requestedStep,
           payload: {
             ...submission.payload,
             ...(options.payload ?? {})
@@ -800,7 +811,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
                 ...current,
                 assistantMessage: event.response.assistantMessage,
                 phase: WorkflowStreamPhase.TYPING,
-                statusText: "Tank正在整理回复...",
+                statusText: "Tank正在思考中...",
                 streamingText: buildStreamPreview(event.response.assistantMessage)
               };
             });
@@ -825,6 +836,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         setSending(false);
         setInitializingProject(false);
         setOptimisticStageId(null);
+        setInput("");
+        setAttachment(null);
       }
     } catch (requestError) {
       const messageText = requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。";
@@ -837,7 +850,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         return {
           ...current,
           phase: WorkflowStreamPhase.COMPLETE,
-          statusText: "已完成",
+          statusText: "稍后再试",
           streamingText: messageText,
           error: messageText
         };
@@ -877,7 +890,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const confirmTopic = async () => {
     setOptimisticStageId("data");
     setSelectedStageId("data");
-    await streamMessage("\u786e\u8ba4\u4e3b\u9898");
+    await streamMessage("确认并生成");
   };
 
   const handleAttachmentPick = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -979,11 +992,11 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   };
 
   const helperText = topicNeedsConfirmation
-    ? "如需修改题目，可直接补充；否则点击上方确认主题。"
-    : "继续补充研究问题、结果解释或 Stata 报错。";
+    ? "如需调整研究设定，可直接补充；如无问题，请点击上方确认并生成。"
+    : "可以继续追问当前模块，也可以直接修改研究设定。";
   const placeholderText = topicNeedsConfirmation
-    ? "例如：把研究对象改为中国A股上市公司\n例如：改成数字金融对企业创新的影响"
-    : "继续描述变量、结果或 Stata 报错。";
+    ? "例如：研究对象改成中国A股上市公司（剔除ST和金融股）\n例如：控制变量补充企业规模、资产负债率、ROA\n例如：固定效应改成企业固定效应和年份固定效应"
+    : "例如：请解释一下这一步的代码逻辑\n例如：把控制变量再补充完整一点\n例如：请重写一版更详细的 Stata 代码";
 
   if (showInitialProjectLoading) {
     return (
@@ -994,11 +1007,19 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   }
 
   if (stored === undefined || loading) {
-    return <WorkspacePlaceholder>Tank 正在恢复当前对话...</WorkspacePlaceholder>;
+    return (
+      <WorkspacePlaceholder>
+        <ThinkingBubble className="w-fit" />
+      </WorkspacePlaceholder>
+    );
   }
 
   if (!stored && availableProjects.length === 1) {
-    return <WorkspacePlaceholder>正在切换到最近的项目...</WorkspacePlaceholder>;
+    return (
+      <WorkspacePlaceholder>
+        <ThinkingBubble className="w-fit" />
+      </WorkspacePlaceholder>
+    );
   }
 
   if (!stored) {
@@ -1078,7 +1099,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
           </div>
         ) : showStageLoadingState ? (
           <WorkspaceStageLoadingCard
-            description={normalizeDisplayText("\u5df2\u6536\u5230\u786e\u8ba4\uff0cTank \u6b63\u5728\u8fdb\u5165\u4e0b\u4e00\u73af\u8282\u5e76\u51c6\u5907\u65b0\u7684\u7814\u7a76\u8f93\u51fa\u3002")}
+            description={normalizeDisplayText("已收到确认，Tank 正在生成整套 Stata 工作流，并把结果分别写入上方各个模块。")}
           />
         ) : (
           <div className="rounded-[20px] border border-slate-200 bg-white p-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
@@ -1087,7 +1108,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
             </p>
             <p className="mt-2 text-sm font-normal leading-7 text-slate-600">
               {selectedStageIsActive
-                ? "Tank 进入该环节后，会在这里显示结构化结果。"
+                ? "Tank 进入这个环节后，会在这里显示结构化结果。"
                 : "点击其他流程块，可以继续回看已经完成的研究环节。"}
             </p>
           </div>
@@ -1107,7 +1128,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
                 <p className="truncate text-sm font-medium text-slate-900">{attachment.name}</p>
                 <p className="mt-1 text-xs font-normal text-slate-500">
                   {formatAttachmentSize(attachment.size)}
-                  {attachment.truncated ? " · 内容已截断" : " · 已完成解析"}
+                  {attachment.truncated ? " · 内容已截断" : " · 内容已完成解析"}
                 </p>
               </div>
             </div>
@@ -1153,7 +1174,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
                 <p className="mt-1 text-xs font-normal text-rose-500">{composerError}</p>
               ) : attachment ? (
                 <p className="mt-1 truncate text-xs font-normal text-slate-500">
-                  已附加 {attachment.name}，发送后 Tank 会一起读取
+                  已附加 {attachment.name}，发送后 Tank 会一起读取。
                 </p>
               ) : listening ? (
                 <p className="mt-1 text-xs font-normal text-slate-500">正在监听语音输入...</p>
@@ -1184,7 +1205,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
               onClick={() => void streamMessage(input, { attachment })}
               type="button"
             >
-              {sending ? <ThinkingBubble bare className="text-white" /> : "\u53d1\u9001"}
+              {sending ? <ThinkingBubble bare className="text-white" /> : "发送"}
             </button>
           </div>
         </div>
@@ -1192,6 +1213,15 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     </section>
   );
 }
+
+
+
+
+
+
+
+
+
 
 
 

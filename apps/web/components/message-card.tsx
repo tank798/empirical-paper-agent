@@ -1,8 +1,13 @@
-"use client";
+﻿"use client";
 
 import clsx from "clsx";
 import type { AssistantMessageEnvelope } from "@empirical/shared";
-import { normalizeAssistantCopy, normalizeDisplayText, normalizeRelationshipText, normalizeResearchObjectText } from "../lib/message-display";
+import {
+  normalizeAssistantCopy,
+  normalizeDisplayText,
+  normalizeRelationshipText,
+  normalizeResearchObjectText
+} from "../lib/message-display";
 import { formatWriteMode, messageTypeMeta, moduleLabelMap, workflowStepMeta } from "../lib/presentation";
 import { ThinkingBubble } from "./thinking-bubble";
 
@@ -28,14 +33,6 @@ function renderJsonList(items: unknown, emptyLabel = "暂无补充内容。") {
   );
 }
 
-function AgentAvatar() {
-  return (
-    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-[linear-gradient(145deg,#0f172a_0%,#1e293b_58%,#4f63ff_100%)] text-xs font-semibold text-white shadow-[0_10px_24px_rgba(37,47,75,0.12)]">
-      T
-    </div>
-  );
-}
-
 export function MessageCard({
   message,
   canConfirmTopic = false,
@@ -52,7 +49,6 @@ export function MessageCard({
   const meta = !isUser ? messageTypeMeta[message.messageType] : null;
   const stepLabel = message.step ? workflowStepMeta[message.step]?.short ?? message.step : null;
   const moduleLabel = typeof json.moduleName === "string" ? moduleLabelMap[json.moduleName] ?? json.moduleName : null;
-  const isComingSoon = json.status === "coming_soon";
 
   if (isUser) {
     return (
@@ -64,12 +60,24 @@ export function MessageCard({
     );
   }
 
-  const topicFields = [
-    { label: "核心解释变量", value: json.independentVariable },
+  const setupFields = [
+    { label: "解释变量", value: json.independentVariable },
     { label: "被解释变量", value: json.dependentVariable },
     { label: "研究对象", value: normalizeResearchObjectText(json.researchObject) },
-    { label: "\u5173\u7cfb\u7c7b\u578b", value: normalizeRelationshipText(json.relationship, json.normalizedTopic) }
-  ];
+    {
+      label: "控制变量",
+      value: Array.isArray(json.controls) ? json.controls.join("、") : normalizeDisplayText(json.controls)
+    },
+    { label: "样本区间", value: normalizeDisplayText(json.sampleScope) },
+    {
+      label: "固定效应",
+      value: Array.isArray(json.fixedEffects) ? json.fixedEffects.join("、") : normalizeDisplayText(json.fixedEffects)
+    },
+    {
+      label: "关系类型",
+      value: normalizeRelationshipText(json.relationship, json.normalizedTopic)
+    }
+  ].filter((item) => item.value);
 
   const card = (
     <article
@@ -85,16 +93,18 @@ export function MessageCard({
             <h3 className="text-base font-semibold text-slate-950">研究设定</h3>
           </div>
 
-          <p className="text-[20px] font-semibold leading-[1.5] text-slate-950">{normalizeDisplayText(json.normalizedTopic)}</p>
+          <p className="text-[20px] font-semibold leading-[1.5] text-slate-950">
+            {normalizeDisplayText(json.normalizedTopic)}
+          </p>
 
-          <div className="mt-6 grid gap-4 md:grid-cols-4">
-            {topicFields.map((item) => (
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {setupFields.map((item) => (
               <div
                 key={item.label}
                 className="flex min-h-[80px] flex-col rounded-[14px] border border-[#eef2f7] bg-slate-50 px-4 py-3.5"
               >
                 <p className="mb-1.5 text-xs font-normal text-slate-500">{item.label}</p>
-                <p className="break-words text-[15px] font-medium leading-[1.4] text-slate-950">{item.value}</p>
+                <p className="break-words text-[15px] font-medium leading-[1.5] text-slate-950">{item.value}</p>
               </div>
             ))}
           </div>
@@ -107,7 +117,7 @@ export function MessageCard({
                 onClick={onConfirmTopic}
                 type="button"
               >
-                {topicConfirmPending ? <ThinkingBubble bare className="text-white" /> : "\u786e\u8ba4\u4e3b\u9898 \u2192"}
+                {topicConfirmPending ? <ThinkingBubble bare className="text-white" /> : "确认并生成"}
               </button>
             </div>
           ) : null}
@@ -118,55 +128,58 @@ export function MessageCard({
             <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-600">
               {normalizeDisplayText(meta?.label ?? message.messageType)}
             </span>
-            {moduleLabel ? <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-500">{normalizeDisplayText(moduleLabel)}</span> : null}
-            {stepLabel ? <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-500">{normalizeDisplayText(stepLabel)}</span> : null}
+            {moduleLabel ? (
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-500">
+                {normalizeDisplayText(moduleLabel)}
+              </span>
+            ) : null}
+            {stepLabel ? (
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-500">
+                {normalizeDisplayText(stepLabel)}
+              </span>
+            ) : null}
           </div>
 
-          {contentText && !isResearchChat ? <p className="mt-4 whitespace-pre-wrap text-sm font-normal leading-7 text-slate-800">{contentText}</p> : null}
+          {contentText && !isResearchChat ? (
+            <p className="mt-4 whitespace-pre-wrap text-sm font-normal leading-7 text-slate-800">{contentText}</p>
+          ) : null}
 
           {message.messageType === "system_notice" && Array.isArray(json.guidanceOptions) && json.guidanceOptions.length > 0 ? (
             <div className="mt-4 rounded-[14px] border border-white/80 bg-white/90 p-4">
-              <p className="text-sm font-medium text-slate-800">{typeof json.guidanceTitle === "string" ? normalizeDisplayText(json.guidanceTitle) : "\u53ef\u53c2\u8003\u7684\u7814\u7a76\u4e3b\u9898"}</p>
+              <p className="text-sm font-medium text-slate-800">
+                {typeof json.guidanceTitle === "string" ? normalizeDisplayText(json.guidanceTitle) : "可以直接这样补充"}
+              </p>
               {renderJsonList(json.guidanceOptions)}
             </div>
           ) : null}
 
           {message.messageType === "sop_guide" ? (
             <div className="mt-4 rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-              <p className="text-sm font-normal text-slate-600">推荐起点：{json.recommendedStart}</p>
+              <p className="text-sm font-normal text-slate-600">推荐起点：{normalizeDisplayText(json.recommendedStart)}</p>
               {renderJsonList(json.steps)}
             </div>
           ) : null}
 
-          {message.messageType === "skill_output" && isComingSoon ? (
-            <div className="mt-4 rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-              <p className="text-sm font-medium text-slate-800">能力已预留</p>
-              <p className="mt-2 text-sm font-normal leading-7 text-slate-600">
-                {json.message ?? "当前模块已完成目录、接口和 schema 预留，后续阶段会补齐真实推理与代码生成。"}
-              </p>
-            </div>
-          ) : null}
-
-          {message.messageType === "skill_output" && !isComingSoon ? (
+          {message.messageType === "skill_output" ? (
             <div className="mt-4 space-y-4">
               <div className="grid gap-4 lg:grid-cols-2">
                 <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
                   <p className="text-sm font-medium text-slate-800">这一环节在做什么</p>
-                  <p className="mt-2 text-sm font-normal leading-7 text-slate-700">{json.purpose}</p>
-                  <p className="mt-4 text-sm font-medium text-slate-800">和你的题目有什么关系</p>
-                  <p className="mt-2 text-sm font-normal leading-7 text-slate-700">{json.meaning}</p>
+                  <p className="mt-2 text-sm font-normal leading-7 text-slate-700">{normalizeDisplayText(json.purpose)}</p>
+                  <p className="mt-4 text-sm font-medium text-slate-800">和当前研究有什么关系</p>
+                  <p className="mt-2 text-sm font-normal leading-7 text-slate-700">{normalizeDisplayText(json.meaning)}</p>
                 </div>
                 <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
                   <p className="text-sm font-medium text-slate-800">变量与模型</p>
                   {renderJsonList(json.variableDesign)}
-                  <p className="mt-4 text-sm font-normal leading-7 text-slate-700">{json.modelSpec}</p>
+                  <p className="mt-4 text-sm font-normal leading-7 text-slate-700">{normalizeDisplayText(json.modelSpec)}</p>
                 </div>
               </div>
 
               {json.stataCode ? (
                 <div className="rounded-[14px] bg-slate-950 p-4 text-sm text-slate-100">
                   <p className="mb-3 text-xs font-normal uppercase tracking-[0.18em] text-slate-400">Stata 代码</p>
-                  <pre className="overflow-x-auto whitespace-pre-wrap leading-7">{json.stataCode}</pre>
+                  <pre className="overflow-x-auto whitespace-pre-wrap leading-7">{normalizeDisplayText(json.stataCode)}</pre>
                 </div>
               ) : null}
 
@@ -174,8 +187,10 @@ export function MessageCard({
                 <div className="rounded-[14px] border border-amber-100 bg-amber-50 p-4 text-sm text-amber-900">
                   <p className="font-medium">回归表导出</p>
                   <p className="mt-2 font-normal">当前写入模式：{formatWriteMode(json.export.writeMode)}</p>
-                  <p className="mt-1 font-normal">目标文件：{json.export.filePath}</p>
-                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-xs leading-6">{json.export.exportCode}</pre>
+                  <p className="mt-1 font-normal">目标文件：{normalizeDisplayText(json.export.filePath)}</p>
+                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-xs leading-6">
+                    {normalizeDisplayText(json.export.exportCode)}
+                  </pre>
                 </div>
               ) : null}
 
@@ -196,7 +211,7 @@ export function MessageCard({
             <div className="mt-4 space-y-4">
               <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
                 <p className="whitespace-pre-wrap text-sm font-normal leading-7 text-slate-800">
-                  {contentText || json.answer}
+                  {contentText || normalizeDisplayText(json.answer)}
                 </p>
               </div>
 
@@ -219,35 +234,32 @@ export function MessageCard({
           {message.messageType === "result_interpret" ? (
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-                <p className="text-sm font-medium text-slate-800">白话解释</p>
-                <p className="mt-2 text-sm font-normal leading-7 text-slate-700">{json.plainExplanation}</p>
+                <p className="text-sm font-medium text-slate-800">通俗解释</p>
+                <p className="mt-2 text-sm font-normal leading-7 text-slate-700">
+                  {normalizeDisplayText(json.plainExplanation)}
+                </p>
               </div>
               <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-                <p className="text-sm font-medium text-slate-800">论文式表述</p>
-                <p className="mt-2 text-sm font-normal leading-7 text-slate-700">{json.paperStyleExplanation}</p>
-              </div>
-              <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-                <p className="text-sm font-medium text-slate-800">重点关注</p>
-                {renderJsonList(json.analysisPoints)}
-              </div>
-              <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-                <p className="text-sm font-medium text-slate-800">下一步建议</p>
-                <p className="mt-2 text-sm font-normal leading-7 text-slate-700">{json.nextSuggestion}</p>
-                {Array.isArray(json.missingInfo) && json.missingInfo.length > 0 ? (
-                  <p className="mt-3 text-sm font-normal leading-7 text-amber-700">建议补充：{json.missingInfo.join("、")}</p>
-                ) : null}
+                <p className="text-sm font-medium text-slate-800">论文写法</p>
+                <p className="mt-2 text-sm font-normal leading-7 text-slate-700">
+                  {normalizeDisplayText(json.paperStyleExplanation)}
+                </p>
               </div>
             </div>
           ) : null}
 
           {message.messageType === "stata_error_fix" ? (
-            <div className="mt-4 rounded-[14px] border border-slate-100 bg-slate-50 p-4">
-              <p className="text-sm font-normal text-slate-700">错误类型：{json.errorType}</p>
-              <p className="mt-2 text-sm font-normal leading-7 text-slate-700">{json.explanation}</p>
-              <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-[12px] bg-slate-950 p-4 text-xs leading-6 text-slate-100">
-                {json.fixCode}
-              </pre>
-              <p className="mt-3 text-sm font-normal leading-7 text-slate-700">{json.retryMessage}</p>
+            <div className="mt-4 space-y-4">
+              <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
+                <p className="text-sm font-medium text-slate-800">错误解释</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm font-normal leading-7 text-slate-700">
+                  {normalizeDisplayText(json.explanation)}
+                </p>
+              </div>
+              <div className="rounded-[14px] bg-slate-950 p-4 text-sm text-slate-100">
+                <p className="mb-3 text-xs font-normal uppercase tracking-[0.18em] text-slate-400">修复代码</p>
+                <pre className="overflow-x-auto whitespace-pre-wrap leading-7">{normalizeDisplayText(json.fixCode)}</pre>
+              </div>
             </div>
           ) : null}
         </>
@@ -255,35 +267,9 @@ export function MessageCard({
     </article>
   );
 
-  if (isSystemNotice) {
-    if (fullWidth) {
-      return <div className="min-w-0">{card}</div>;
-    }
-
-    return (
-      <div className="flex justify-center">
-        <div className="max-w-3xl">{card}</div>
-      </div>
-    );
-  }
-
   if (fullWidth) {
-    return <div className="min-w-0">{card}</div>;
+    return card;
   }
 
-  return (
-    <div className="flex items-start gap-3">
-      <AgentAvatar />
-      <div className="min-w-0 max-w-[86%]">
-        <div className="mb-2 flex items-center gap-2 pl-1 text-xs text-slate-500">
-          <span className={clsx("font-medium tracking-[0.14em]", meta?.tone)}>TANK</span>
-          {stepLabel ? <span>· {stepLabel}</span> : null}
-        </div>
-        {card}
-      </div>
-    </div>
-  );
+  return <div className="mx-auto max-w-[920px]">{card}</div>;
 }
-
-
-

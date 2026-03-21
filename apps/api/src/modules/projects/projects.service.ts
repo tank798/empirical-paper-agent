@@ -163,8 +163,18 @@ export class ProjectsService {
       where: { projectId_step: { projectId, step } },
       data: {
         status,
-        startedAt: status === ProjectStepStatus.IN_PROGRESS ? new Date() : undefined,
-        completedAt: status === ProjectStepStatus.COMPLETED ? new Date() : undefined,
+        startedAt:
+          status === ProjectStepStatus.IN_PROGRESS
+            ? new Date()
+            : status === ProjectStepStatus.PENDING
+              ? null
+              : undefined,
+        completedAt:
+          status === ProjectStepStatus.COMPLETED
+            ? new Date()
+            : status === ProjectStepStatus.PENDING || status === ProjectStepStatus.IN_PROGRESS
+              ? null
+              : undefined,
         metadataJson: metadata as never
       }
     });

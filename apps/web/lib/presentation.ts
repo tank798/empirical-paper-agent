@@ -1,4 +1,4 @@
-import {
+﻿import {
   AssistantMessageType,
   ExportWriteMode,
   ProjectStepStatus,
@@ -16,69 +16,69 @@ export const workflowStepMeta: Record<
   }
 > = {
   TOPIC_DETECT: {
-    label: "研究主题识别",
-    short: "选题识别",
-    description: "判断输入是否是一个可进入实证研究流程的题目。",
+    label: "研究设定整理",
+    short: "设定整理",
+    description: "识别用户输入中的研究设定信息，并整理出结构化研究摘要。",
     phase: "mvp"
   },
   TOPIC_NORMALIZE: {
-    label: "主题标准化确认",
-    short: "主题确认",
-    description: "把研究主题整理成论文式表述，并抽出核心变量骨架。",
+    label: "研究设定确认",
+    short: "设定确认",
+    description: "确认研究主题、研究对象、变量、控制变量、样本区间和固定效应。",
     phase: "mvp"
   },
   SOP_GUIDE: {
     label: "研究路径",
     short: "研究路径",
-    description: "给出当前题目的推荐推进路径和下一步动作。",
+    description: "生成整套 Stata 工作流之前的研究路径与模块安排。",
     phase: "mvp"
   },
   DATA_CLEANING: {
-    label: "数据清洗",
-    short: "数据清洗",
-    description: "生成清洗、缺失值处理和极值处理的基础 Stata 代码。",
+    label: "数据处理",
+    short: "数据处理",
+    description: "生成数据清洗、缺失值处理和异常值处理建议。",
     phase: "mvp"
   },
   DATA_CHECK: {
     label: "数据检查",
     short: "数据检查",
-    description: "检查变量类型、描述统计、时间分布和面板结构。",
+    description: "检查样本结构、描述统计与面板设定。",
     phase: "mvp"
   },
   BASELINE_REGRESSION: {
     label: "基准回归",
     short: "基准回归",
-    description: "生成基准回归命令和 outreg2 导出命令。",
+    description: "生成基准回归代码和结果导出命令。",
     phase: "mvp"
   },
   ROBUSTNESS: {
     label: "稳健性检验",
-    short: "稳健性",
-    description: "替换变量、缩尾样本和替代模型等稳健性方案。",
-    phase: "future"
+    short: "稳健性检验",
+    description: "围绕替代口径、替代样本和替代设定做稳健性检验。",
+    phase: "mvp"
   },
   MECHANISM: {
     label: "机制分析",
     short: "机制分析",
-    description: "围绕中介渠道或作用路径展开扩展分析。",
-    phase: "future"
+    description: "围绕中介渠道或作用路径展开机制分析。",
+    phase: "mvp"
   },
   HETEROGENEITY: {
     label: "异质性分析",
-    short: "异质性",
-    description: "从样本分组或交互项角度识别差异化效应。",
-    phase: "future"
+    short: "异质性分析",
+    description: "识别不同样本组中的差异化效应。",
+    phase: "mvp"
   },
   IV: {
-    label: "内生性检验（IV）",
-    short: "IV 检验",
+    label: "内生性分析",
+    short: "内生性分析",
     description: "构造工具变量并执行两阶段回归。",
-    phase: "future"
+    phase: "mvp"
   },
   EXPORT_TABLE: {
     label: "回归表导出",
-    short: "导出回归表",
-    description: "导出论文表格、研究记录和 Stata 代码清单。",
+    short: "回归表导出",
+    description: "导出论文表格、研究记录和代码清单。",
     phase: "future"
   }
 };
@@ -120,15 +120,15 @@ export const messageTypeMeta: Record<
   }
 > = {
   topic_confirm: {
-    label: "主题确认",
-    tone: "text-rust"
+    label: "研究设定",
+    tone: "text-slate-700"
   },
   sop_guide: {
     label: "研究路径",
     tone: "text-emerald-700"
   },
   skill_output: {
-    label: "技能输出",
+    label: "模块结果",
     tone: "text-slate-700"
   },
   research_chat: {
@@ -150,28 +150,27 @@ export const messageTypeMeta: Record<
 };
 
 export const moduleLabelMap: Record<string, string> = {
-  topic_detect: "研究主题识别",
-  topic_normalize: "主题标准化",
+  topic_detect: "研究设定整理",
+  topic_normalize: "研究设定确认",
   sop_guide: "研究路径",
-  data_cleaning: "数据清洗",
+  data_cleaning: "数据处理",
   data_check: "数据检查",
   baseline_regression: "基准回归",
   robustness: "稳健性检验",
   mechanism: "机制分析",
   heterogeneity: "异质性分析",
-  iv: "内生性检验（IV）",
+  iv: "内生性分析",
   general_research_chat: "研究问答",
   export_table: "回归表导出"
 };
 
 export const quickActionMap: Partial<Record<WorkflowStep, Array<{ label: string; value: string }>>> = {
-  SOP_GUIDE: [{ label: "进入数据清洗", value: "继续进入数据清洗" }],
   DATA_CLEANING: [
-    { label: "进入数据检查", value: "继续进入数据检查" },
-    { label: "补充清洗代码", value: "请补充一版更详细的数据清洗代码" }
+    { label: "继续看数据检查", value: "继续查看数据检查" },
+    { label: "补充数据清洗代码", value: "请补充一版更详细的数据清洗代码" }
   ],
   DATA_CHECK: [
-    { label: "进入基准回归", value: "开始基准回归" },
+    { label: "继续看基准回归", value: "继续查看基准回归" },
     { label: "补充检查项", value: "请补充数据检查说明" }
   ],
   BASELINE_REGRESSION: [
@@ -187,22 +186,22 @@ export const exportCards = [
   {
     type: "docx",
     title: "论文回归表（Word）",
-    description: "导出当前项目的表格版回归结果，后续支持 docx 模板。"
+    description: "导出当前项目的论文表格版回归结果。"
   },
   {
     type: "markdown",
     title: "研究记录（Markdown）",
-    description: "导出步骤记录、研究设定和关键说明，便于归档与协作。"
+    description: "导出研究设定、过程记录和关键说明。"
   },
   {
     type: "stata_bundle",
     title: "Stata 代码包",
-    description: "导出清洗、检查、回归和修复代码的分模块清单。"
+    description: "导出数据处理、回归与扩展检验代码清单。"
   },
   {
     type: "variable_notes",
-    title: "变量设计说明",
-    description: "导出变量口径、控制变量和固定效应设定说明。"
+    title: "变量说明",
+    description: "导出变量口径、控制变量和固定效应说明。"
   }
 ] as const;
 

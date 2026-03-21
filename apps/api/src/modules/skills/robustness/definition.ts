@@ -1,5 +1,5 @@
-import { AssistantMessageType, SkillName, WorkflowStep, placeholderSkillOutputSchema, regressionSkillInputSchema } from "@empirical/shared";
-import { buildPlaceholderSkillOutput } from "../skill.utils";
+﻿import { AssistantMessageType, SkillName, WorkflowStep, regressionSkillInputSchema, regressionSkillOutputSchema } from "@empirical/shared";
+import { buildRegressionModuleOutput } from "../workflow-output.builder";
 import type { SkillDefinition } from "../skill.types";
 
 export const robustnessSkill: SkillDefinition<any, any> = {
@@ -8,6 +8,6 @@ export const robustnessSkill: SkillDefinition<any, any> = {
   allowedSteps: [WorkflowStep.BASELINE_REGRESSION, WorkflowStep.ROBUSTNESS],
   messageType: AssistantMessageType.SKILL_OUTPUT,
   inputSchema: regressionSkillInputSchema,
-  outputSchema: placeholderSkillOutputSchema,
-  fallback: () => buildPlaceholderSkillOutput(SkillName.ROBUSTNESS)
+  outputSchema: regressionSkillOutputSchema,
+  fallback: (input) => buildRegressionModuleOutput(SkillName.ROBUSTNESS, input, "稳健性检验", "robustness")
 };

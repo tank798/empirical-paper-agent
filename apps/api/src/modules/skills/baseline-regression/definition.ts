@@ -1,5 +1,5 @@
-import { AssistantMessageType, SkillName, WorkflowStep, regressionSkillInputSchema, regressionSkillOutputSchema } from "@empirical/shared";
-import { buildRegressionOutput } from "../skill.utils";
+ï»¿import { AssistantMessageType, SkillName, WorkflowStep, regressionSkillInputSchema, regressionSkillOutputSchema } from "@empirical/shared";
+import { buildRegressionModuleOutput } from "../workflow-output.builder";
 import type { SkillDefinition } from "../skill.types";
 
 export const baselineRegressionSkill: SkillDefinition<any, any> = {
@@ -9,5 +9,5 @@ export const baselineRegressionSkill: SkillDefinition<any, any> = {
   messageType: AssistantMessageType.SKILL_OUTPUT,
   inputSchema: regressionSkillInputSchema,
   outputSchema: regressionSkillOutputSchema,
-  fallback: (input) => buildRegressionOutput(SkillName.BASELINE_REGRESSION, input, "»ù×¼»Ø¹é")
+  fallback: (input) => buildRegressionModuleOutput(SkillName.BASELINE_REGRESSION, input, "åŸºå‡†å›žå½’", "baseline")
 };

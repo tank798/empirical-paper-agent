@@ -1,5 +1,11 @@
-import { AssistantMessageType, SkillName, WorkflowStep, stataErrorDebugInputSchema, stataErrorDebugOutputSchema } from "@empirical/shared";
-import { classifyStataError } from "../skill.utils";
+﻿import {
+  AssistantMessageType,
+  SkillName,
+  WorkflowStep,
+  stataErrorDebugInputSchema,
+  stataErrorDebugOutputSchema
+} from "@empirical/shared";
+import { buildStataErrorFallback } from "../workflow-output.builder";
 import type { SkillDefinition } from "../skill.types";
 
 export const stataErrorDebugSkill: SkillDefinition<any, any> = {
@@ -9,5 +15,5 @@ export const stataErrorDebugSkill: SkillDefinition<any, any> = {
   messageType: AssistantMessageType.STATA_ERROR_FIX,
   inputSchema: stataErrorDebugInputSchema,
   outputSchema: stataErrorDebugOutputSchema,
-  fallback: (input) => classifyStataError(input)
+  fallback: (input) => buildStataErrorFallback(input)
 };

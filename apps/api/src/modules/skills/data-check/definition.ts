@@ -1,5 +1,5 @@
-import { AssistantMessageType, SkillName, WorkflowStep, dataCheckInputSchema, dataCheckOutputSchema } from "@empirical/shared";
-import { buildDataCheckOutput } from "../skill.utils";
+﻿import { AssistantMessageType, SkillName, WorkflowStep, dataCheckInputSchema, dataCheckOutputSchema } from "@empirical/shared";
+import { buildDataCheckOutputTemplate } from "../workflow-output.builder";
 import type { SkillDefinition } from "../skill.types";
 
 export const dataCheckSkill: SkillDefinition<any, any> = {
@@ -9,5 +9,5 @@ export const dataCheckSkill: SkillDefinition<any, any> = {
   messageType: AssistantMessageType.SKILL_OUTPUT,
   inputSchema: dataCheckInputSchema,
   outputSchema: dataCheckOutputSchema,
-  fallback: (input) => buildDataCheckOutput(input)
+  fallback: (input) => buildDataCheckOutputTemplate(input)
 };
