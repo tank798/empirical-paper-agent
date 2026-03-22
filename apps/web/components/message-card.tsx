@@ -102,6 +102,7 @@ export function MessageCard({
 }: MessageCardProps) {
   const [refineOpen, setRefineOpen] = useState(false);
   const [refineValue, setRefineValue] = useState("");
+  const [isRefining, setIsRefining] = useState(false);
   const json = message.contentJson as Record<string, any>;
   const contentText = normalizeAssistantCopy(message.contentText);
   const isUser = message.role === "user";
@@ -147,14 +148,20 @@ export function MessageCard({
   ].filter((item) => item.value);
 
   const submitInlineRefine = async () => {
-    if (!topicConfirmAction?.onRefineSubmit || !refineValue.trim() || topicConfirmAction.disabled) {
+    if (!topicConfirmAction?.onRefineSubmit || !refineValue.trim() || topicConfirmAction.disabled || isRefining) {
       return;
     }
 
     const nextValue = refineValue.trim();
     setRefineValue("");
     setRefineOpen(false);
-    await topicConfirmAction.onRefineSubmit(nextValue);
+    setIsRefining(true);
+
+    try {
+      await topicConfirmAction.onRefineSubmit(nextValue);
+    } finally {
+      setIsRefining(false);
+    }
   };
 
   const handleRefineKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -170,7 +177,7 @@ export function MessageCard({
     <article
       className={clsx(
         isTopicConfirm
-          ? "rounded-[20px] border border-[#e5e7eb] bg-white p-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)]"
+          ? "relative overflow-hidden rounded-[20px] border border-[#e5e7eb] bg-white p-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)]"
           : "surface-hover-lift rounded-[20px] border border-[#e5e7eb] bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]",
         isSystemNotice ? "border-amber-100 bg-amber-50/70" : "",
         isTopicConfirm && topicConfirmAction?.locked ? "pointer-events-none opacity-60 saturate-[0.82]" : ""
@@ -178,7 +185,8 @@ export function MessageCard({
     >
       {isTopicConfirm ? (
         <div>
-          <div className="mb-5">
+          <div className={clsx("transition-opacity duration-200", isRefining ? "opacity-35" : "opacity-100")}>
+            <div className="mb-5">
             <h3 className="text-base font-semibold text-slate-950">{"\u7814\u7a76\u8bbe\u5b9a"}</h3>
           </div>
 
@@ -219,7 +227,7 @@ export function MessageCard({
                     <div className="mx-auto flex max-w-[680px] items-center gap-2 rounded-[16px] border border-white/10 bg-slate-950/70 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-[10px]">
                       <input
                         className="h-10 flex-1 bg-transparent px-2 text-sm font-normal text-white outline-none placeholder:text-slate-400"
-                        disabled={topicConfirmAction.disabled}
+                        disabled={topicConfirmAction.disabled || isRefining}
                         onChange={(event) => setRefineValue(event.target.value)}
                         onKeyDown={handleRefineKeyDown}
                         placeholder={"\u4f8b\u5982\uff1a\u628a\u7814\u7a76\u5bf9\u8c61\u6539\u6210\u4e2d\u56fdA\u80a1\u4e0a\u5e02\u516c\u53f8\uff08\u5254\u9664ST\u548c\u91d1\u878d\u80a1\uff09"}
@@ -227,7 +235,7 @@ export function MessageCard({
                       />
                       <button
                         className="inline-flex h-9 items-center justify-center rounded-full border border-white/14 bg-white/8 px-4 text-sm font-medium text-white transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-60"
-                        disabled={topicConfirmAction.disabled || !refineValue.trim()}
+                        disabled={topicConfirmAction.disabled || isRefining || !refineValue.trim()}
                         onClick={() => void submitInlineRefine()}
                         type="button"
                       >
@@ -242,7 +250,7 @@ export function MessageCard({
                 <div className="topic-confirm-appear flex justify-center">
                   <button
                     className="topic-confirm-surface topic-confirm-floating inline-flex h-[54px] w-full max-w-[320px] items-center justify-center rounded-[16px] px-5 text-[15px] font-semibold tracking-[0.08em] text-slate-900 transition duration-300 disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={topicConfirmAction.disabled}
+                    disabled={topicConfirmAction.disabled || isRefining}
                     onClick={topicConfirmAction.onConfirm}
                     type="button"
                   >
@@ -250,6 +258,32 @@ export function MessageCard({
                   </button>
                 </div>
               ) : null}
+            </div>
+          ) : null}
+          </div>
+
+          {isRefining ? (
+            <div className="pointer-events-none absolute inset-0 z-20 rounded-[20px] bg-white/58 px-7 py-7 backdrop-blur-[1.5px] transition-opacity duration-200">
+              <div className="flex h-full flex-col justify-between gap-5">
+                <div className="space-y-4">
+                  <div className="skeleton-breathing-bar h-8 w-28 rounded-full" />
+                  <div className="skeleton-breathing-bar h-11 w-full max-w-[420px] rounded-[18px]" />
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {Array.from({ length: Math.max(setupFields.length, 6) }).map((_, index) => (
+                      <div key={index} className="rounded-[14px] border border-white/60 bg-white/45 p-4">
+                        <div className="skeleton-breathing-bar h-3.5 w-20 rounded-full" />
+                        <div className="mt-3 space-y-2">
+                          <div className="skeleton-breathing-bar h-4 w-full rounded-full" />
+                          <div className="skeleton-breathing-bar h-4 w-2/3 rounded-full" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex justify-center">
+                  <div className="skeleton-breathing-bar h-[54px] w-full max-w-[320px] rounded-[16px]" />
+                </div>
+              </div>
             </div>
           ) : null}
         </div>
@@ -273,7 +307,7 @@ export function MessageCard({
             ) : null}
           </div>
 
-          {contentText && !isResearchChat && message.messageType !== "skill_output" ? (
+          {contentText && !isResearchChat && message.messageType !== "skill_output" && !isSystemNotice ? (
             <p className="mt-4 whitespace-pre-wrap text-sm font-normal leading-7 text-slate-800">{contentText}</p>
           ) : null}
 
