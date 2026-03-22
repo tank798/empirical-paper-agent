@@ -265,10 +265,87 @@ function normalizeIntentText(text: string) {
 
 function splitItems(value: string) {
   return value
-    .replace(/[\uFF0C\u3001\uFF1B]/g, ",")
+    .replace(/[，、；]/g, ",")
     .split(/[\s,\/]+/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function splitFixedEffectItems(value: string) {
+  return value
+    .replace(/[\uFF0C\u3001\uFF1B]/g, ",")
+    .split(/(?:[\s,\/+]|\u548c|\u4e0e|\u53ca)+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeFixedEffectToken(value: string) {
+  const raw = cleanTerm(value);
+  const compact = raw.toLowerCase().replace(/\s+/g, "");
+  if (!compact) {
+    return [] as string[];
+  }
+
+  if (/\u53cc(?:\u5411|\u91cd)?\u56fa\u5b9a\u6548\u5e94|two[- ]?wayfixedeffects?|two[- ]?wayfe/.test(compact)) {
+    return ["\u4f01\u4e1a\u56fa\u5b9a\u6548\u5e94", "\u5e74\u4efd\u56fa\u5b9a\u6548\u5e94"];
+  }
+
+  const labels = new Set<string>();
+
+  if (/(\u4f01\u4e1a|\u516c\u53f8|\u4e2a\u4f53|\u4e3b\u4f53|firm|company|entity|firm_id|^id$)/i.test(raw)) {
+    labels.add("\u4f01\u4e1a\u56fa\u5b9a\u6548\u5e94");
+  }
+  if (/(\u5e74\u4efd|\u65f6\u95f4|year|time)/i.test(raw) || compact === "\u5e74") {
+    labels.add("\u5e74\u4efd\u56fa\u5b9a\u6548\u5e94");
+  }
+  if (/(\u884c\u4e1a|industry)/i.test(raw)) {
+    labels.add("\u884c\u4e1a\u56fa\u5b9a\u6548\u5e94");
+  }
+  if (/(\u5730\u533a|\u533a\u57df|region)/i.test(raw)) {
+    labels.add("\u5730\u533a\u56fa\u5b9a\u6548\u5e94");
+  }
+  if (/(\u7701\u4efd|province)/i.test(raw) || compact === "\u7701") {
+    labels.add("\u7701\u4efd\u56fa\u5b9a\u6548\u5e94");
+  }
+  if (/(\u57ce\u5e02|city)/i.test(raw) || compact === "\u5e02") {
+    labels.add("\u57ce\u5e02\u56fa\u5b9a\u6548\u5e94");
+  }
+
+  if (labels.size > 0) {
+    return Array.from(labels);
+  }
+
+  if (/\u56fa\u5b9a\u6548\u5e94|fixedeffects?|\bfe\b/i.test(raw)) {
+    return [raw];
+  }
+
+  return [raw.endsWith("\u56fa\u5b9a\u6548\u5e94") ? raw : `${raw}\u56fa\u5b9a\u6548\u5e94`];
+}
+
+export function normalizeFixedEffects(value?: string | string[] | null) {
+  const rawText = Array.isArray(value) ? value.join("\u3001") : value ?? "";
+  const text = rawText.trim();
+  if (!text) {
+    return [] as string[];
+  }
+
+  const normalized = new Set<string>();
+  if (/\u53cc(?:\u5411|\u91cd)?\u56fa\u5b9a\u6548\u5e94|two[- ]?way\s*fixed\s*effects?|two[- ]?way\s*fe/i.test(text)) {
+    normalized.add("\u4f01\u4e1a\u56fa\u5b9a\u6548\u5e94");
+    normalized.add("\u5e74\u4efd\u56fa\u5b9a\u6548\u5e94");
+  }
+
+  const items = Array.isArray(value)
+    ? value.flatMap((item) => splitFixedEffectItems(String(item)))
+    : splitFixedEffectItems(text);
+
+  for (const item of items.length > 0 ? items : [text]) {
+    for (const label of normalizeFixedEffectToken(item)) {
+      normalized.add(label);
+    }
+  }
+
+  return Array.from(normalized);
 }
 
 function firstMatch(text: string, patterns: RegExp[]) {
@@ -295,26 +372,7 @@ function looksLikeWorkflowQuestion(text: string) {
     return true;
   }
 
-  return /^(what|why|how|can|could|would|should|is|are|do|does|did|\u4ec0\u4e48|\u4e3a\u4ec0\u4e48|\u600e\u4e48|\u5982\u4f55|\u662f\u5426|\u53ef\u5426|\u80fd\u5426|\u8bf7\u95ee|\u89e3\u91ca|\u6211\u60f3\u95ee|\u60f3\u95ee)/i.test(text)
-    || /(\u56fa\u5b9a\u6548\u5e94|\u63a7\u5236\u53d8\u91cf|\u5185\u751f\u6027|\u7a33\u5065\u6027|\u673a\u5236|\u5f02\u8d28\u6027|\u53d8\u91cf\u6784\u5efa|\u6307\u6807|\u7406\u8bba|\u6587\u732e|\u8bc6\u522b\u7b56\u7565)/i.test(text);
-}
-
-function looksLikeWorkflowAdvance(text: string) {
-  return /(next|continue|start|go|\u4e0b\u4e00\u6b65|\u7ee7\u7eed|\u5f00\u59cb|\u5f80\u4e0b|\u7ee7\u7eed\u63a8\u8fdb)/i.test(text);
-}
-
-function looksLikeAmbiguousFeedback(text: string) {
-  return /(\u4e0d\u884c|\u4e0d\u592a\u884c|\u4e0d\u5bf9|\u4e0d\u592a\u5bf9|\u4e0d\u5408\u9002|\u4e0d\u597d|\u4e0d\u662f\u8fd9\u4e2a|\u6ca1\u61c2|\u4e0d\u660e\u767d|\u592a\u6cdb\u4e86|\u592a\u5bbd\u4e86|\u592a\u7a84\u4e86)/i.test(text);
-}
-
-function looksLikeTopicCandidateText(text: string) {
-  return /(\u5bf9|\u4e0e|\u5f71\u54cd|\u6548\u5e94|\u5173\u7cfb|\u662f\u5426|\u4f5c\u7528\u4e8e|impact|effect|relation)/i.test(text)
-    && text.trim().length >= 6;
-}
-
-function looksLikeTopicReset(text: string) {
-  return /(\u6362\u4e00\u4e2a|\u6362\u4e2a|\u91cd\u65b0\u6765|\u91cd\u6765|\u91cd\u5199|\u91cd\u505a|\u53e6\u4e00\u4e2a|\u91cd\u65b0\u9009\u9898|\u91cd\u65b0\u6362\u9898)/i.test(text)
-    && !looksLikeTopicCandidateText(text);
+  return /^(what|why|how|can|could|would|should|is|are|do|does|did|\u4ec0\u4e48|\u4e3a\u4ec0\u4e48|\u600e\u4e48|\u5982\u4f55|\u4e3a\u5565|\u80fd\u4e0d\u80fd|\u53ef\u4e0d\u53ef\u4ee5|\u662f\u5426|\u6709\u6ca1\u6709|\u8bf7\u95ee)/i.test(text.trim());
 }
 
 function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch {
@@ -373,11 +431,7 @@ function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch
     buildFieldPattern(["fixed effects", "fe"])
   ]);
   if (fixedEffectsRaw) {
-    if (/\u53cc\u56fa\u5b9a\u6548\u5e94/.test(fixedEffectsRaw)) {
-      updates.fixedEffects = ["firm", "year"];
-    } else {
-      updates.fixedEffects = splitItems(fixedEffectsRaw);
-    }
+    updates.fixedEffects = normalizeFixedEffects(fixedEffectsRaw);
   }
 
   const clusterVar = firstMatch(text, [
@@ -426,6 +480,32 @@ function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch
       return true;
     })
   ) as WorkflowInputInterpreterProfilePatch;
+}
+
+function looksLikeTopicCandidateText(text: string) {
+  return /(?:\u7814\u7a76\u4e3b\u9898|\u9898\u76ee|\u4e3b\u9898|\u89e3\u91ca\u53d8\u91cf|\u88ab\u89e3\u91ca\u53d8\u91cf|\u63a7\u5236\u53d8\u91cf|\u6837\u672c\u533a\u95f4|\u56fa\u5b9a\u6548\u5e94)[:\uFF1A]/i.test(text)
+    || /\u5bf9.+(?:\u5f71\u54cd|\u4f5c\u7528)|\u5173\u7cfb\u7814\u7a76|\u5f71\u54cd\u7814\u7a76|\u6548\u5e94\u7814\u7a76/.test(text)
+    || (text.trim().length >= 8 && /(\u5f71\u54cd|\u5173\u7cfb|\u6548\u5e94|\u53d8\u91cf|\u6837\u672c|\u56fa\u5b9a\u6548\u5e94|\u56de\u5f52)/.test(text));
+}
+
+function looksLikeWorkflowAdvance(text: string) {
+  const trimmed = text.trim();
+  return /^(\u7ee7\u7eed|\u7ee7\u7eed\u5427|\u4e0b\u4e00\u6b65|\u8fdb\u5165\u4e0b\u4e00\u6b65|\u5f80\u4e0b|\u5f00\u59cb\u751f\u6210|\u751f\u6210\u5427|\u76f4\u63a5\u751f\u6210|\u7ee7\u7eed\u751f\u6210|go on|continue|next|proceed)$/i.test(trimmed)
+    || interpreterConfirmWords.has(normalizeIntentText(trimmed));
+}
+
+function looksLikeTopicReset(text: string) {
+  return /(\u6362\u4e00\u4e2a|\u6362\u4e2a|\u91cd\u65b0\u6765|\u91cd\u6765|\u91cd\u5199|\u91cd\u505a|\u53e6\u4e00\u4e2a|\u91cd\u65b0\u9009\u9898|\u91cd\u65b0\u6362\u9898)/i.test(text)
+    && !looksLikeTopicCandidateText(text);
+}
+
+function looksLikeAmbiguousFeedback(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  return /^(\u597d|\u597d\u7684|\u884c|\u53ef\u4ee5|\u6536\u5230|\u660e\u767d|\u77e5\u9053\u4e86|\u5148\u8fd9\u6837|\u5dee\u4e0d\u591a|\u90fd\u884c|\u6ca1\u95ee\u9898|\u6709\u70b9\u95ee\u9898|\u4e0d\u592a\u5bf9|\u4e0d\u592a\u884c|\u6539\u4e00\u4e0b|\u518d\u60f3\u60f3|\u968f\u4fbf|ok|okay|sure|fine)$/i.test(trimmed);
 }
 
 function buildClarificationForStep(step: WorkflowStep) {

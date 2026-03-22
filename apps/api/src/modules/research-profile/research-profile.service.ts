@@ -1,6 +1,7 @@
 ﻿import { Injectable } from "@nestjs/common";
 import type { ResearchProfile, TermMapping } from "@empirical/shared";
 import { PrismaService } from "../prisma/prisma.service";
+import { normalizeFixedEffects } from "../skills/skill.utils";
 import { buildTermMappings } from "./term-mappings";
 
 type RegressionInput = {
@@ -80,7 +81,7 @@ export class ResearchProfileService {
       researchObject: payload.researchObject ?? existing?.researchObject ?? "",
       relationship: payload.relationship ?? existing?.relationship ?? "",
       controls: payload.controls ?? existing?.controls ?? [],
-      fixedEffects: payload.fixedEffects ?? existing?.fixedEffects ?? [],
+      fixedEffects: normalizeFixedEffects(payload.fixedEffects ?? existing?.fixedEffects ?? []),
       clusterVar: payload.clusterVar ?? existing?.clusterVar ?? null,
       panelId: payload.panelId ?? existing?.panelId ?? null,
       timeVar: payload.timeVar ?? existing?.timeVar ?? null,
@@ -129,8 +130,7 @@ export class ResearchProfileService {
         (stored?.independentVariable || payload.independentVariable || inferred.independentVariable || "x") as string,
       controls:
         ((stored?.controls?.length ? stored.controls : payload.controls || inferred.controls || []) as string[]) ?? [],
-      fixedEffects:
-        ((stored?.fixedEffects?.length ? stored.fixedEffects : payload.fixedEffects || inferred.fixedEffects || []) as string[]) ?? [],
+      fixedEffects: normalizeFixedEffects(((stored?.fixedEffects?.length ? stored.fixedEffects : payload.fixedEffects || inferred.fixedEffects || []) as string[]) ?? []),
       clusterVar: (stored?.clusterVar || payload.clusterVar || inferred.clusterVar || null) as string | null,
       panelId: (stored?.panelId || payload.panelId || inferred.panelId || null) as string | null,
       timeVar: (stored?.timeVar || payload.timeVar || inferred.timeVar || null) as string | null,
@@ -183,7 +183,7 @@ export class ResearchProfileService {
       dependentVariable: firstMatch([/dependent variable[:：]\s*([^\n]+)/i, /因变量[:：]\s*([^\n]+)/]),
       independentVariable: firstMatch([/independent variable[:：]\s*([^\n]+)/i, /自变量[:：]\s*([^\n]+)/]),
       controls: splitList(firstMatch([/controls[:：]\s*([^\n]+)/i, /控制变量[:：]\s*([^\n]+)/])),
-      fixedEffects: splitList(firstMatch([/fixed effects[:：]\s*([^\n]+)/i, /固定效应[:：]\s*([^\n]+)/])),
+      fixedEffects: normalizeFixedEffects(firstMatch([/fixed effects[:：]\s*([^\n]+)/i, /固定效应[:：]\s*([^\n]+)/])),
       clusterVar: firstMatch([/cluster variable[:：]\s*([^\n]+)/i, /聚类变量[:：]\s*([^\n]+)/]) || null,
       panelId: firstMatch([/panel[_\s-]*id[:：]\s*([^\n]+)/i]) || null,
       timeVar: firstMatch([/time[_\s-]*var[:：]\s*([^\n]+)/i]) || null,
@@ -226,3 +226,5 @@ export class ResearchProfileService {
     };
   }
 }
+
+

@@ -11,6 +11,7 @@ import { MessagesService } from "../messages/messages.service";
 import { ProjectsService } from "../projects/projects.service";
 import { ResearchProfileService } from "../research-profile/research-profile.service";
 import { SkillsService } from "../skills/skills.service";
+import { normalizeFixedEffects } from "../skills/skill.utils";
 
 type SetupDraft = {
   normalizedTopic: string;
@@ -433,8 +434,9 @@ export class WorkflowService {
         this.stringValue(payload.normalizedTopic) || stored?.normalizedTopic || ""
       ),
       controls: this.arrayValue(payload.controls).length > 0 ? this.arrayValue(payload.controls) : stored?.controls ?? [],
-      fixedEffects:
-        this.arrayValue(payload.fixedEffects).length > 0 ? this.arrayValue(payload.fixedEffects) : stored?.fixedEffects ?? [],
+      fixedEffects: normalizeFixedEffects(
+        this.arrayValue(payload.fixedEffects).length > 0 ? this.arrayValue(payload.fixedEffects) : stored?.fixedEffects ?? []
+      ),
       sampleScope: this.stringValue(payload.sampleScope) || stored?.sampleScope || "",
       clusterVar: this.stringValue(payload.clusterVar) || stored?.clusterVar || "",
       panelId: this.stringValue(payload.panelId) || stored?.panelId || "",
@@ -446,7 +448,7 @@ export class WorkflowService {
       draft.controls = this.splitItems(String(payload.controls));
     }
     if (draft.fixedEffects.length === 0 && typeof payload.fixedEffects === "string") {
-      draft.fixedEffects = this.splitItems(String(payload.fixedEffects));
+      draft.fixedEffects = normalizeFixedEffects(String(payload.fixedEffects));
     }
 
     if ((draft.normalizedTopic && !draft.independentVariable) || (draft.normalizedTopic && !draft.dependentVariable)) {
