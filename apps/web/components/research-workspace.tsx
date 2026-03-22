@@ -479,7 +479,7 @@ function buildStreamPreview(message: AssistantMessageEnvelope) {
     const readingGuide = listValue(json.interpretationGuide || json.checkItems);
 
     return [
-      textValue(json.purpose) || normalizeAssistantCopy(message.contentText) || "已生成当前模块结果。",
+      textValue(json.purpose) || normalizeAssistantCopy(message.contentText) || "已生成当前内容。",
       textValue(json.meaning),
       variableDesign.length > 0 ? `变量与模型：${variableDesign.join("；")}` : "",
       readingGuide.length > 0 ? `阅读重点：${readingGuide.slice(0, 3).join("；")}` : "",
@@ -1509,6 +1509,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     </>
   );
 }
+
 
 
 

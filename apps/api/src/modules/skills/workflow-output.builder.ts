@@ -31,11 +31,11 @@ const TERM_CATEGORY_LABELS: Record<TermMapping["category"], string> = {
 };
 
 const MODULE_EXPORT_FILES: Record<RegressionModuleVariant, string> = {
-  baseline: "baseline_results.doc",
-  robustness: "robustness_results.doc",
-  iv: "iv_results.doc",
-  mechanism: "mechanism_results.doc",
-  heterogeneity: "heterogeneity_results.doc"
+  baseline: "baseline regression.doc",
+  robustness: "robustness check.doc",
+  iv: "iv analysis.doc",
+  mechanism: "mechanism analysis.doc",
+  heterogeneity: "heterogeneity analysis.doc"
 };
 
 function unique(values: Array<string | null | undefined>) {
@@ -50,6 +50,10 @@ function buildOutregLine(filePath: string, writeMode: ExportWriteMode) {
   return `outreg2 using "${filePath}", ${writeMode} bdec(3) tdec(2) adjr2 tstat`;
 }
 
+function buildExportNoticeLines(fileName: string) {
+  return ["* \u8bf7\u628a D:\\results\\ \u66ff\u6362\u6210\u4f60\u81ea\u5df1\u7684\u5bfc\u51fa\u8def\u5f84", `* \u6587\u4ef6\u540d\u4e5f\u53ef\u4ee5\u6309\u9700\u81ea\u884c\u4fee\u6539\uff1a${fileName}`];
+}
+
 function buildInstallLines(commands: Array<{ command: string; install: string }>) {
   const seen = new Set<string>();
   return commands.flatMap((item) => {
@@ -58,14 +62,20 @@ function buildInstallLines(commands: Array<{ command: string; install: string }>
     }
 
     seen.add(item.command);
-    return [`capture which ${item.command}`, `if _rc ${item.install}`];
+    return [
+      `* \u5982\u679c\u4f60\u4ee5\u524d\u6ca1\u5b89\u88c5\u8fc7 ${item.command}\uff0c\u8bf7\u5148\u8fd0\u884c\u4e0b\u4e00\u884c\uff1b\u5b89\u88c5\u8fc7\u7684\u8bdd\u53ef\u4ee5\u76f4\u63a5\u5ffd\u7565\uff0c\u6216\u8005\u7528 Ctrl+/ \u6ce8\u91ca\u6389`,
+      item.install
+    ];
   });
 }
 
-function buildAliasCommentLines(termMappings: TermMapping[]) {
+function buildRenameTemplateLines(termMappings: TermMapping[]) {
   return [
-    "* \u5efa\u8bae\u5148\u7edf\u4e00\u4f7f\u7528\u4ee5\u4e0b\u82f1\u6587\u7f29\u5199\uff1a",
-    ...termMappings.map((item) => `* ${TERM_CATEGORY_LABELS[item.category]}\uff1a${item.labelCn} -> ${item.alias}`)
+    "* \u4e0b\u9762\u8fd9\u7ec4 rename \u7684\u610f\u601d\u662f\uff1a\u628a\u4f60\u6570\u636e\u91cc\u7684\u539f\u59cb\u53d8\u91cf\u540d\u7edf\u4e00\u6539\u6210\u540e\u7eed\u4ee3\u7801\u4f7f\u7528\u7684\u82f1\u6587\u7f29\u5199",
+    "* \u8bf7\u628a\u5de6\u4fa7 old_* \u5360\u4f4d\u7b26\u66ff\u6362\u6210\u4f60\u81ea\u5df1\u6570\u636e\u91cc\u7684\u771f\u5b9e\u5b57\u6bb5\u540d",
+    ...termMappings.map(
+      (item) => `rename old_${item.alias} ${item.alias} // ${TERM_CATEGORY_LABELS[item.category]}: ${item.labelCn}`
+    )
   ];
 }
 
@@ -141,7 +151,7 @@ export function buildDataCleaningOutputTemplate(input: DataCleaningInput): DataC
   const timeAlias = aliasBundle.timeAlias || aliasBundle.preferredTimeAlias;
 
   const stataLines = [
-    ...buildAliasCommentLines(aliasBundle.termMappings),
+    ...buildRenameTemplateLines(aliasBundle.termMappings),
     "",
     ...buildInstallLines([{ command: "winsor2", install: "ssc install winsor2, replace" }]),
     "",
@@ -158,24 +168,25 @@ export function buildDataCleaningOutputTemplate(input: DataCleaningInput): DataC
   return {
     moduleName: "data_cleaning",
     purpose: "\u5148\u628a\u5173\u952e\u53d8\u91cf\u7edf\u4e00\u547d\u540d\u3001\u6e05\u6d17\u5e76\u6574\u7406\u6210\u53ef\u76f4\u63a5\u8fdb\u5165\u56de\u5f52\u7684\u5206\u6790\u6837\u672c\u3002",
-    meaning: `\u8fd9\u4e00\u90e8\u5206\u56f4\u7ed5 ${input.independentVariable}\u3001${input.dependentVariable} \u4ee5\u53ca\u63a7\u5236\u53d8\u91cf\uff0c\u5b8c\u6210\u7edf\u4e00\u7f29\u5199\u3001\u7f3a\u5931\u503c\u5904\u7406\u548c\u6781\u7aef\u503c\u5904\u7406\u3002`,
+    meaning: `\u8fd9\u4e00\u90e8\u5206\u56f4\u7ed5 ${input.independentVariable}\u3001${input.dependentVariable} \u4ee5\u53ca\u63a7\u5236\u53d8\u91cf\uff0c\u5b8c\u6210\u7edf\u4e00\u82f1\u6587\u7f29\u5199\u3001\u7f3a\u5931\u503c\u5904\u7406\u548c\u6781\u7aef\u503c\u5904\u7406\u3002`,
     variableDesign: [
-      "\u5148\u7edf\u4e00\u53d8\u91cf\u82f1\u6587\u7f29\u5199\uff0c\u4fdd\u8bc1\u540e\u7eed\u6240\u6709\u6a21\u5757\u4f7f\u7528\u540c\u4e00\u5957\u53d8\u91cf\u540d\u3002",
+      "\u5148\u7edf\u4e00\u53d8\u91cf\u547d\u540d\u89c4\u5219\uff0c\u4fdd\u8bc1\u540e\u7eed\u6240\u6709\u6a21\u5757\u90fd\u4f7f\u7528\u540c\u4e00\u5957\u82f1\u6587\u7f29\u5199\u3002",
       ...variables.map((item) => `\u68c0\u67e5 ${item} \u7684\u53d8\u91cf\u7c7b\u578b\u3001\u7f3a\u5931\u503c\u4e0e\u6781\u7aef\u503c\u60c5\u51b5`)
     ],
     termMappings: aliasBundle.termMappings,
     modelSpec: "\u540e\u7eed\u6240\u6709\u6a21\u5757\u90fd\u4f1a\u7edf\u4e00\u6cbf\u7528\u8fd9\u4e00\u7ec4\u82f1\u6587\u7f29\u5199\u6765\u5199 Stata \u4ee3\u7801\u3002",
     stataCode: stataLines.join("\n"),
     codeExplanation: [
-      "\u4ee3\u7801\u5757\u5f00\u5934\u5148\u7ed9\u51fa\u4e00\u5957\u7edf\u4e00\u7684\u82f1\u6587\u7f29\u5199\u5efa\u8bae\uff0c\u540e\u7eed\u4ee3\u7801\u5168\u90e8\u57fa\u4e8e\u8fd9\u4e9b\u7f29\u5199\u4e66\u5199\u3002",
+      "\u5f00\u5934\u7684 rename \u6a21\u677f\u8868\u793a\uff1a\u5148\u628a\u539f\u59cb\u5b57\u6bb5\u540d\u6539\u6210\u540e\u7eed\u4ee3\u7801\u7edf\u4e00\u4f7f\u7528\u7684\u82f1\u6587\u7f29\u5199\uff1b\u8bf7\u628a\u5de6\u4fa7 old_* \u5360\u4f4d\u7b26\u66ff\u6362\u6210\u4f60\u81ea\u5df1\u7684\u771f\u5b9e\u53d8\u91cf\u540d\u3002",
+      "ssc install winsor2, replace \u53ea\u5728\u4f60\u4ee5\u524d\u6ca1\u5b89\u88c5\u8fc7 winsor2 \u65f6\u8fd0\u884c\u5373\u53ef\uff1b\u88c5\u8fc7\u7684\u8bdd\u53ef\u4ee5\u76f4\u63a5\u5ffd\u7565\uff0c\u6216\u8005\u7528 Ctrl+/ \u6ce8\u91ca\u6389\u3002",
       "destring \u7528\u4e8e\u628a\u88ab\u8bef\u5bfc\u5165\u4e3a\u5b57\u7b26\u578b\u7684\u53d8\u91cf\u8f6c\u6210\u6570\u503c\u578b\u3002",
       "drop if missing(...) \u7528\u4e8e\u5220\u9664\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u548c\u88ab\u89e3\u91ca\u53d8\u91cf\u7f3a\u5931\u7684\u6837\u672c\u3002",
       "winsor2 \u7528\u4e8e\u7f29\u5c3e\u5904\u7406\u6781\u7aef\u503c\uff0c\u51cf\u5c11\u6781\u7aef\u6837\u672c\u5bf9\u540e\u7eed\u56de\u5f52\u7684\u5e72\u6270\u3002"
     ],
     interpretationGuide: [
-      "\u5148\u786e\u8ba4\u53d8\u91cf\u7f29\u5199\u548c\u4f60\u7684\u771f\u5b9e\u5b57\u6bb5\u540d\u80fd\u4e00\u4e00\u5bf9\u5e94\u3002",
-      "\u6e05\u6d17\u5b8c\u6210\u540e\u5efa\u8bae\u8fd0\u884c summarize\uff0c\u68c0\u67e5\u53d8\u91cf\u91cf\u7ea7\u4e0e\u53d6\u503c\u8303\u56f4\u662f\u5426\u5408\u7406\u3002",
-      "\u5982\u679c\u540e\u7eed\u56de\u5f52\u7ee7\u7eed\u6cbf\u7528\u8fd9\u5957\u82f1\u6587\u7f29\u5199\uff0c\u4ee3\u7801\u4f1a\u66f4\u5bb9\u6613\u7ef4\u62a4\u3002"
+      "\u5148\u786e\u8ba4 rename \u6a21\u677f\u91cc\u7684\u82f1\u6587\u7f29\u5199\u548c\u4f60\u7684\u771f\u5b9e\u5b57\u6bb5\u540d\u80fd\u4e00\u4e00\u5bf9\u5e94\u3002",
+      "\u6e05\u6d17\u5b8c\u6210\u540e\u5efa\u8bae\u8fd0\u884c summarize\uff0c\u68c0\u67e5\u53d8\u91cf\u91cf\u7ea7\u548c\u53d6\u503c\u8303\u56f4\u662f\u5426\u5408\u7406\u3002",
+      "\u540e\u7eed\u56de\u5f52\u7ee7\u7eed\u6cbf\u7528\u8fd9\u5957\u82f1\u6587\u7f29\u5199\uff0c\u4ee3\u7801\u4f1a\u66f4\u5bb9\u6613\u7ef4\u62a4\u3002"
     ],
     nextSuggestion: "\u6570\u636e\u6e05\u6d17\u5b8c\u6210\u540e\uff0c\u4e0b\u4e00\u6b65\u5efa\u8bae\u8fdb\u5165\u6570\u636e\u68c0\u67e5\u4e0e\u63cf\u8ff0\u7edf\u8ba1\u3002"
   };
@@ -228,16 +239,13 @@ export function buildRegressionModuleOutput(
   });
   const fixedEffectAliases = aliasBundle.fixedEffectAliases;
   const clusterAlias = aliasBundle.clusterAlias || aliasBundle.preferredPanelAlias;
-  const fileName = input.exportState?.fileName || MODULE_EXPORT_FILES[variant];
-  const filePath = input.exportState?.filePath || buildExportPath(fileName);
-  const baselineIntro = [
-    ...buildInstallLines([
-      { command: "reghdfe", install: "ssc install reghdfe, replace" },
-      { command: "outreg2", install: "ssc install outreg2, replace" }
-    ]),
-    "",
-    `* \u6587\u4ef6\u540d\u53ef\u4ee5\u6309\u9700\u81ea\u884c\u4fee\u6539\uff1a${fileName}`
-  ];
+  const timeAlias = aliasBundle.timeAlias || aliasBundle.preferredTimeAlias || "year";
+  const fileName = MODULE_EXPORT_FILES[variant];
+  const filePath = buildExportPath(fileName);
+  const baselineInstallLines = buildInstallLines([
+    { command: "reghdfe", install: "ssc install reghdfe, replace" },
+    { command: "outreg2", install: "ssc install outreg2, replace" }
+  ]);
 
   const baseline: RegressionSkillOutput = {
     moduleName,
@@ -245,19 +253,33 @@ export function buildRegressionModuleOutput(
     meaning: `\u5728\u5f53\u524d\u7814\u7a76\u8bbe\u5b9a\u4e0b\uff0c\u91cd\u70b9\u5173\u6ce8 ${input.independentVariable} \u5bf9 ${input.dependentVariable} \u7684\u65b9\u5411\u3001\u663e\u8457\u6027\u548c\u7ecf\u6d4e\u542b\u4e49\u3002`,
     variableDesign: buildCommonVariableDesign(input),
     termMappings: aliasBundle.termMappings,
+    instrumentSelectionCriteria: [],
+    mechanismPaths: [],
     modelSpec: `\u6a21\u578b 1\uff1a${aliasBundle.dependentAlias} = beta0 + beta1 ${aliasBundle.independentAlias} + error\uff1b\u6a21\u578b 2 \u5728\u6b64\u57fa\u7840\u4e0a\u52a0\u5165\u63a7\u5236\u53d8\u91cf\uff1b\u6a21\u578b 3 \u518d\u52a0\u5165\u56fa\u5b9a\u6548\u5e94\u3002`,
     stataCode: [
-      ...baselineIntro,
+      ...baselineInstallLines,
+      "",
+      ...buildExportNoticeLines(fileName),
+      "",
       buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias], buildSimpleRegressionOptions(clusterAlias)),
       buildOutregLine(filePath, ExportWriteMode.REPLACE),
       "",
-      buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases], buildSimpleRegressionOptions(clusterAlias)),
+      buildReghdfeCommand(
+        aliasBundle.dependentAlias,
+        [aliasBundle.independentAlias, ...aliasBundle.controlAliases],
+        buildSimpleRegressionOptions(clusterAlias)
+      ),
       buildOutregLine(filePath, ExportWriteMode.APPEND),
       "",
-      buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases], buildBaseOptions(fixedEffectAliases, clusterAlias)),
+      buildReghdfeCommand(
+        aliasBundle.dependentAlias,
+        [aliasBundle.independentAlias, ...aliasBundle.controlAliases],
+        buildBaseOptions(fixedEffectAliases, clusterAlias)
+      ),
       buildOutregLine(filePath, ExportWriteMode.APPEND)
     ].join("\n"),
     codeExplanation: [
+      "ssc install reghdfe, replace \u548c ssc install outreg2, replace \u53ea\u5728\u4f60\u4ee5\u524d\u6ca1\u5b89\u88c5\u8fc7\u8fd9\u4e9b\u547d\u4ee4\u65f6\u8fd0\u884c\u5373\u53ef\uff1b\u88c5\u8fc7\u7684\u8bdd\u53ef\u4ee5\u76f4\u63a5\u5ffd\u7565\uff0c\u6216\u8005\u7528 Ctrl+/ \u6ce8\u91ca\u6389\u3002",
       "\u7b2c\u4e00\u6761\u6a21\u578b\u5148\u53ea\u68c0\u9a8c\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u4e0e\u88ab\u89e3\u91ca\u53d8\u91cf\u4e4b\u95f4\u7684\u57fa\u7840\u5173\u7cfb\u3002",
       "\u7b2c\u4e8c\u6761\u6a21\u578b\u5728\u6b64\u57fa\u7840\u4e0a\u52a0\u5165\u63a7\u5236\u53d8\u91cf\uff0c\u89c2\u5bdf\u4e3b\u6548\u5e94\u662f\u5426\u7a33\u5b9a\u3002",
       "\u7b2c\u4e09\u6761\u6a21\u578b\u8fdb\u4e00\u6b65\u52a0\u5165\u56fa\u5b9a\u6548\u5e94\uff0c\u4f5c\u4e3a\u8bba\u6587\u4e2d\u7684\u4e3b\u89c4\u683c\u3002",
@@ -266,7 +288,7 @@ export function buildRegressionModuleOutput(
     interpretationGuide: [
       "\u5148\u770b\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u7684\u7cfb\u6570\u65b9\u5411\u662f\u5426\u7b26\u5408\u7406\u8bba\u9884\u671f\u3002",
       "\u518d\u6bd4\u8f83\u52a0\u5165\u63a7\u5236\u53d8\u91cf\u548c\u56fa\u5b9a\u6548\u5e94\u540e\uff0c\u6838\u5fc3\u7cfb\u6570\u662f\u5426\u7a33\u5b9a\u3002",
-      "\u5bfc\u51fa\u6587\u4ef6\u540d\u53ea\u662f\u9ed8\u8ba4\u793a\u4f8b\uff0c\u53ef\u4ee5\u76f4\u63a5\u6539\u6210\u4f60\u4e60\u60ef\u7684\u540d\u5b57\u3002"
+      "\u4ee3\u7801\u4e2d\u7684 D:\\results\\ \u53ea\u662f\u793a\u4f8b\u8def\u5f84\uff0c\u8fd0\u884c\u524d\u8bf7\u6539\u6210\u4f60\u81ea\u5df1\u7684\u5bfc\u51fa\u8def\u5f84\u3002"
     ],
     nextSuggestion: "\u5b8c\u6210\u57fa\u51c6\u56de\u5f52\u540e\uff0c\u53ef\u4ee5\u7ee7\u7eed\u770b\u7a33\u5065\u6027\u3001\u5185\u751f\u6027\u3001\u673a\u5236\u548c\u5f02\u8d28\u6027\u5206\u6790\u3002"
   };
@@ -278,101 +300,141 @@ export function buildRegressionModuleOutput(
   if (variant === "robustness") {
     return {
       ...baseline,
-      purpose: "\u7a33\u5065\u6027\u68c0\u9a8c\u7528\u4e8e\u786e\u8ba4\u4e3b\u7ed3\u8bba\u4e0d\u4f9d\u8d56\u67d0\u4e00\u79cd\u7279\u5b9a\u6837\u672c\u5904\u7406\u65b9\u5f0f\u6216\u6807\u51c6\u8bef\u8bbe\u5b9a\u3002",
-      meaning: "\u8fd9\u4e00\u90e8\u5206\u901a\u8fc7\u7f29\u5c3e\u5904\u7406\u548c\u66ff\u4ee3\u6807\u51c6\u8bef\u8bbe\u5b9a\uff0c\u9a8c\u8bc1\u4e3b\u7ed3\u8bba\u662f\u5426\u7a33\u5b9a\u3002",
-      modelSpec: "\u5148\u5bf9\u5173\u952e\u8fde\u7eed\u53d8\u91cf\u7f29\u5c3e\u540e\u91cd\u590d\u57fa\u51c6\u6a21\u578b\uff0c\u518d\u6539\u7528\u7a33\u5065\u6807\u51c6\u8bef\u91cd\u590d\u4f30\u8ba1\u3002",
+      purpose: "\u7a33\u5065\u6027\u68c0\u9a8c\u7528\u4e8e\u786e\u8ba4\u4e3b\u7ed3\u8bba\u4e0d\u4f9d\u8d56\u67d0\u4e00\u4e2a\u53d8\u91cf\u53e3\u5f84\u6216\u7279\u5b9a\u6837\u672c\u533a\u95f4\u3002",
+      meaning: "\u8fd9\u4e00\u90e8\u5206\u91cd\u70b9\u5c55\u793a\u4e24\u7c7b\u5e38\u89c1\u7a33\u5065\u6027\u68c0\u9a8c\uff1a\u66ff\u6362\u53d8\u91cf\u53e3\u5f84\uff0c\u4ee5\u53ca\u8c03\u6574\u6837\u672c\u533a\u95f4\u3002",
+      modelSpec: "\u7a33\u5065\u6027\u68c0\u9a8c 1 \u4f7f\u7528\u66ff\u4ee3\u53e3\u5f84\u53d8\u91cf\uff1b\u7a33\u5065\u6027\u68c0\u9a8c 2 \u8c03\u6574\u6837\u672c\u671f\uff0c\u518d\u6bd4\u8f83\u6838\u5fc3\u7cfb\u6570\u65b9\u5411\u548c\u663e\u8457\u6027\u662f\u5426\u7a33\u5b9a\u3002",
       stataCode: [
-        ...buildInstallLines([
-          { command: "winsor2", install: "ssc install winsor2, replace" },
-          { command: "reghdfe", install: "ssc install reghdfe, replace" },
-          { command: "outreg2", install: "ssc install outreg2, replace" }
-        ]),
+        ...baselineInstallLines,
         "",
-        `* \u6587\u4ef6\u540d\u53ef\u4ee5\u6309\u9700\u81ea\u884c\u4fee\u6539\uff1a${fileName}`,
-        `winsor2 ${unique([aliasBundle.dependentAlias, aliasBundle.independentAlias, ...aliasBundle.controlAliases]).join(" ")}, replace cuts(1 99)`,
-        buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases], buildBaseOptions(fixedEffectAliases, clusterAlias)),
+        ...buildExportNoticeLines(fileName),
+        "",
+        "* \u7a33\u5065\u6027\u68c0\u9a8c 1\uff1a\u66ff\u6362\u53d8\u91cf\u53e3\u5f84\uff0c\u8bf7\u628a x_alt \u6216 y_alt \u66ff\u6362\u6210\u4f60\u7684\u66ff\u4ee3\u53e3\u5f84\u53d8\u91cf",
+        `* \u5982\u679c\u4f60\u60f3\u66ff\u6362\u88ab\u89e3\u91ca\u53d8\u91cf\uff0c\u8bf7\u628a ${aliasBundle.dependentAlias} \u6539\u6210 y_alt\uff1b\u5982\u679c\u60f3\u66ff\u6362\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\uff0c\u8bf7\u628a ${aliasBundle.independentAlias} \u6539\u6210 x_alt`,
+        buildReghdfeCommand(
+          aliasBundle.dependentAlias,
+          ["x_alt", ...aliasBundle.controlAliases],
+          buildBaseOptions(fixedEffectAliases, clusterAlias)
+        ),
         buildOutregLine(filePath, ExportWriteMode.REPLACE),
         "",
-        buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases], [...(fixedEffectAliases.length ? [`absorb(${fixedEffectAliases.join(" ")})`] : []), "vce(robust)"]),
+        "* \u7a33\u5065\u6027\u68c0\u9a8c 2\uff1a\u8c03\u6574\u6837\u672c\u533a\u95f4\uff0c\u8bf7\u628a 2012 \u548c 2021 \u66ff\u6362\u6210\u4f60\u81ea\u5df1\u7684\u5907\u9009\u6837\u672c\u671f",
+        buildReghdfeCommand(
+          aliasBundle.dependentAlias,
+          [aliasBundle.independentAlias, ...aliasBundle.controlAliases],
+          buildBaseOptions(fixedEffectAliases, clusterAlias),
+          `if inrange(${timeAlias}, 2012, 2021)`
+        ),
         buildOutregLine(filePath, ExportWriteMode.APPEND)
       ].join("\n"),
       codeExplanation: [
-        "\u7b2c\u4e00\u7ec4\u4ee3\u7801\u901a\u8fc7\u7f29\u5c3e\u5904\u7406\uff0c\u964d\u4f4e\u6781\u7aef\u503c\u5bf9\u7cfb\u6570\u4f30\u8ba1\u7684\u5f71\u54cd\u3002",
-        "\u7b2c\u4e8c\u7ec4\u4ee3\u7801\u628a\u6807\u51c6\u8bef\u6539\u4e3a robust\uff0c\u518d\u770b\u6838\u5fc3\u7cfb\u6570\u662f\u5426\u4f9d\u7136\u7a33\u5b9a\u3002",
-        "\u7a33\u5065\u6027\u68c0\u9a8c\u91cd\u70b9\u770b\u65b9\u5411\u548c\u663e\u8457\u6027\u662f\u5426\u4fdd\u6301\u4e00\u81f4\u3002"
+        "\u7b2c\u4e00\u7ec4\u4ee3\u7801\u901a\u8fc7\u66ff\u6362\u53d8\u91cf\u53e3\u5f84\uff0c\u68c0\u67e5\u4e3b\u7ed3\u8bba\u662f\u5426\u53ea\u4f9d\u8d56\u67d0\u4e00\u4e2a\u7279\u5b9a\u6d4b\u91cf\u65b9\u5f0f\u3002",
+        "\u7b2c\u4e8c\u7ec4\u4ee3\u7801\u901a\u8fc7\u8c03\u6574\u6837\u672c\u533a\u95f4\uff0c\u68c0\u67e5\u7ed3\u679c\u662f\u5426\u53ea\u5728\u67d0\u4e00\u6bb5\u5e74\u4efd\u6210\u7acb\u3002",
+        "\u7a33\u5065\u6027\u68c0\u9a8c\u91cd\u70b9\u770b\u6838\u5fc3\u7cfb\u6570\u7684\u65b9\u5411\u548c\u663e\u8457\u6027\u662f\u5426\u4fdd\u6301\u4e00\u81f4\uff0c\u800c\u4e0d\u662f\u8981\u6c42\u6570\u503c\u5b8c\u5168\u4e00\u6837\u3002"
       ],
       interpretationGuide: [
-        "\u6bd4\u8f83\u7f29\u5c3e\u524d\u540e\u6838\u5fc3\u7cfb\u6570\u7684\u65b9\u5411\u548c\u663e\u8457\u6027\u662f\u5426\u4e00\u81f4\u3002",
-        "\u5982\u679c\u53ea\u5728\u67d0\u4e00\u79cd\u6807\u51c6\u8bef\u8bbe\u5b9a\u4e0b\u663e\u8457\uff0c\u9700\u8981\u5728\u8bba\u6587\u4e2d\u989d\u5916\u89e3\u91ca\u3002",
-        "\u7a33\u5065\u6027\u68c0\u9a8c\u5f3a\u8c03\u7ed3\u8bba\u7a33\u5b9a\uff0c\u4e0d\u8981\u6c42\u6bcf\u4e2a\u7cfb\u6570\u91cf\u7ea7\u5b8c\u5168\u76f8\u540c\u3002"
+        "\u6bd4\u8f83\u66ff\u6362\u53d8\u91cf\u53e3\u5f84\u540e\uff0c\u6838\u5fc3\u7cfb\u6570\u7684\u65b9\u5411\u548c\u663e\u8457\u6027\u662f\u5426\u4e0e\u57fa\u51c6\u56de\u5f52\u4e00\u81f4\u3002",
+        "\u6bd4\u8f83\u8c03\u6574\u6837\u672c\u533a\u95f4\u540e\uff0c\u7ed3\u8bba\u662f\u5426\u4f9d\u7136\u7a33\u5b9a\u3002",
+        "\u5982\u679c\u53ea\u6709\u5728\u67d0\u4e00\u4e2a\u53e3\u5f84\u6216\u6837\u672c\u671f\u4e0b\u663e\u8457\uff0c\u9700\u8981\u5728\u8bba\u6587\u91cc\u989d\u5916\u89e3\u91ca\u3002"
       ],
-      nextSuggestion: "\u7a33\u5065\u6027\u7ed3\u679c\u7a33\u5b9a\u540e\uff0c\u53ef\u4ee5\u7ee7\u7eed\u5904\u7406\u5185\u751f\u6027\u95ee\u9898\u3002"
+      nextSuggestion: "\u7a33\u5065\u6027\u68c0\u9a8c\u7a33\u5b9a\u540e\uff0c\u53ef\u4ee5\u7ee7\u7eed\u5904\u7406\u5185\u751f\u6027\u95ee\u9898\u3002"
     };
   }
 
   if (variant === "iv") {
     return {
       ...baseline,
-      purpose: "\u5185\u751f\u6027\u5206\u6790\u7528\u4e8e\u7f13\u89e3\u53cd\u5411\u56e0\u679c\u3001\u9057\u6f0f\u53d8\u91cf\u6216\u6d4b\u91cf\u8bef\u5dee\u5e26\u6765\u7684\u504f\u8bef\u3002",
-      meaning: "\u8fd9\u4e00\u6b65\u5148\u7ed9\u51fa\u4e00\u7248\u5de5\u5177\u53d8\u91cf\u6a21\u677f\uff0c\u540e\u7eed\u53ea\u9700\u8981\u628a\u5de5\u5177\u53d8\u91cf\u66ff\u6362\u6210\u771f\u6b63\u53ef\u7528\u7684\u5916\u751f\u51b2\u51fb\u5373\u53ef\u3002",
-      modelSpec: `\u7b2c\u4e00\u9636\u6bb5\u7528\u5de5\u5177\u53d8\u91cf z_iv \u89e3\u91ca ${aliasBundle.independentAlias}\uff0c\u7b2c\u4e8c\u9636\u6bb5\u4f30\u8ba1 ${aliasBundle.independentAlias} \u5bf9 ${aliasBundle.dependentAlias} \u7684\u51c0\u6548\u5e94\u3002`,
+      purpose: "\u5185\u751f\u6027\u5206\u6790\u7528\u4e8e\u7f13\u89e3\u53cd\u5411\u56e0\u679c\u3001\u9057\u6f0f\u53d8\u91cf\u6216\u6d4b\u91cf\u8bef\u5dee\u5e26\u6765\u7684\u4f30\u8ba1\u504f\u8bef\u3002",
+      meaning: "\u8fd9\u4e00\u90e8\u5206\u7ed9\u51fa\u5de5\u5177\u53d8\u91cf\u8bc6\u522b\u6a21\u677f\u3002\u5de5\u5177\u53d8\u91cf\u662f\u4e00\u7c7b\u7528\u6765\u8bc6\u522b\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u5916\u751f\u53d8\u52a8\u7684\u4fe1\u606f\u6765\u6e90\uff0c\u4f46\u5b83\u4e0d\u7b49\u4e8e\u201c\u5916\u751f\u51b2\u51fb\u201d\u8fd9\u4e2a\u6982\u5ff5\uff1b\u5916\u751f\u51b2\u51fb\u53ea\u662f\u5de5\u5177\u53d8\u91cf\u53ef\u80fd\u7684\u6765\u6e90\u4e4b\u4e00\u3002",
+      instrumentSelectionCriteria: [
+        "\u76f8\u5173\u6027\uff1a\u5de5\u5177\u53d8\u91cf\u5e94\u4e0e\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u663e\u8457\u76f8\u5173\uff0c\u4e14\u7b2c\u4e00\u9636\u6bb5\u4e0d\u80fd\u592a\u5f31\u3002",
+        "\u5916\u751f\u6027\uff1a\u5de5\u5177\u53d8\u91cf\u4e0d\u80fd\u76f4\u63a5\u5f71\u54cd\u88ab\u89e3\u91ca\u53d8\u91cf\uff0c\u4e5f\u4e0d\u80fd\u548c\u8bef\u5dee\u9879\u76f8\u5173\u3002",
+        "\u6392\u4ed6\u6027\uff1a\u5de5\u5177\u53d8\u91cf\u53ea\u80fd\u901a\u8fc7\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u8fd9\u4e00\u6761\u8def\u5f84\u5f71\u54cd\u7ed3\u679c\u53d8\u91cf\u3002",
+        "\u53ef\u8bba\u8bc1\u6027\uff1a\u6700\u597d\u80fd\u4ece\u5236\u5ea6\u3001\u5730\u7406\u3001\u5386\u53f2\u6216\u653f\u7b56\u80cc\u666f\u4e2d\u7ed9\u51fa\u6e05\u6670\u6765\u6e90\u3002"
+      ],
+      modelSpec: `\u7b2c\u4e00\u9636\u6bb5\u7528\u5de5\u5177\u53d8\u91cf iv_var \u89e3\u91ca ${aliasBundle.independentAlias}\uff0c\u7b2c\u4e8c\u9636\u6bb5\u518d\u4f30\u8ba1 ${aliasBundle.independentAlias} \u5bf9 ${aliasBundle.dependentAlias} \u7684\u51c0\u6548\u5e94\u3002`,
       stataCode: [
         ...buildInstallLines([
           { command: "ivreghdfe", install: "ssc install ivreghdfe, replace" },
           { command: "outreg2", install: "ssc install outreg2, replace" }
         ]),
         "",
-        `* \u6587\u4ef6\u540d\u53ef\u4ee5\u6309\u9700\u81ea\u884c\u4fee\u6539\uff1a${fileName}`,
-        "* \u8bf7\u628a z_iv \u66ff\u6362\u6210\u4f60\u771f\u6b63\u7684\u5de5\u5177\u53d8\u91cf",
-        buildIvreghdfeCommand(aliasBundle.dependentAlias, aliasBundle.independentAlias, "z_iv", aliasBundle.controlAliases, buildBaseOptions(fixedEffectAliases, clusterAlias)),
+        ...buildExportNoticeLines(fileName),
+        "",
+        "* \u8bf7\u628a iv_var \u66ff\u6362\u6210\u4f60\u771f\u6b63\u7684\u5de5\u5177\u53d8\u91cf",
+        "* \u5982\u679c\u4f60\u6709\u591a\u4e2a\u5de5\u5177\u53d8\u91cf\uff0c\u53ef\u4ee5\u628a\u5b83\u4eec\u4e00\u8d77\u653e\u5230\u62ec\u53f7\u91cc\uff0c\u518d\u8865\u5145\u8fc7\u5ea6\u8bc6\u522b\u68c0\u9a8c",
+        buildIvreghdfeCommand(
+          aliasBundle.dependentAlias,
+          aliasBundle.independentAlias,
+          "iv_var",
+          aliasBundle.controlAliases,
+          buildBaseOptions(fixedEffectAliases, clusterAlias)
+        ),
         buildOutregLine(filePath, ExportWriteMode.REPLACE),
         "estat firststage"
       ].join("\n"),
       codeExplanation: [
-        "z_iv \u53ea\u662f\u5360\u4f4d\u7b26\uff0c\u9700\u8981\u66ff\u6362\u6210\u771f\u6b63\u6709\u7406\u8bba\u652f\u6491\u7684\u5de5\u5177\u53d8\u91cf\u3002",
+        "ssc install ivreghdfe, replace \u548c ssc install outreg2, replace \u53ea\u5728\u4f60\u4ee5\u524d\u6ca1\u5b89\u88c5\u8fc7\u8fd9\u4e9b\u547d\u4ee4\u65f6\u8fd0\u884c\u5373\u53ef\uff1b\u88c5\u8fc7\u7684\u8bdd\u53ef\u4ee5\u76f4\u63a5\u5ffd\u7565\uff0c\u6216\u8005\u7528 Ctrl+/ \u6ce8\u91ca\u6389\u3002",
+        "iv_var \u53ea\u662f\u5360\u4f4d\u7b26\uff0c\u9700\u8981\u66ff\u6362\u6210\u771f\u6b63\u6709\u7406\u8bba\u652f\u6491\u7684\u5de5\u5177\u53d8\u91cf\u3002",
         "ivreghdfe \u9002\u5408\u5728\u56fa\u5b9a\u6548\u5e94\u6846\u67b6\u4e0b\u505a\u4e24\u9636\u6bb5\u4f30\u8ba1\u3002",
-        "estat firststage \u7528\u4e8e\u68c0\u67e5\u5de5\u5177\u53d8\u91cf\u662f\u5426\u8db3\u591f\u5f3a\u3002"
+        "estat firststage \u7528\u4e8e\u68c0\u67e5\u7b2c\u4e00\u9636\u6bb5\u662f\u5426\u8db3\u591f\u5f3a\u3002"
       ],
       interpretationGuide: [
-        "\u5148\u770b\u7b2c\u4e00\u9636\u6bb5\u5de5\u5177\u53d8\u91cf\u662f\u5426\u663e\u8457\u3002",
+        "\u5148\u770b\u7b2c\u4e00\u9636\u6bb5\u5de5\u5177\u53d8\u91cf\u662f\u5426\u663e\u8457\uff0c\u662f\u5426\u5b58\u5728\u5f31\u5de5\u5177\u53d8\u91cf\u95ee\u9898\u3002",
         "\u518d\u770b\u7b2c\u4e8c\u9636\u6bb5\u6838\u5fc3\u7cfb\u6570\u65b9\u5411\u662f\u5426\u4e0e\u57fa\u51c6\u56de\u5f52\u4e00\u81f4\u3002",
-        "\u5982\u679c\u5de5\u5177\u53d8\u91cf\u7f3a\u4e4f\u6e05\u6670\u5916\u751f\u6027\u8bba\u8bc1\uff0c\u7ed3\u8bba\u4ecd\u7136\u4e0d\u7a33\u3002"
+        "\u5982\u679c\u5de5\u5177\u53d8\u91cf\u7684\u5916\u751f\u6027\u8bba\u8bc1\u4e0d\u5145\u5206\uff0cIV \u7ed3\u8bba\u4ecd\u7136\u4e0d\u7a33\u3002"
       ],
-      nextSuggestion: "\u5982\u679c\u4f60\u5df2\u7ecf\u6709\u660e\u786e\u7684\u5de5\u5177\u53d8\u91cf\u6765\u6e90\uff0c\u53ef\u4ee5\u7ee7\u7eed\u8865\u5145\u5f31\u5de5\u5177\u53d8\u91cf\u4e0e\u8fc7\u5ea6\u8bc6\u522b\u68c0\u9a8c\u3002"
+      nextSuggestion: "\u5982\u679c\u4f60\u5df2\u7ecf\u6709\u660e\u786e\u7684\u5de5\u5177\u53d8\u91cf\u5019\u9009\uff0c\u53ef\u4ee5\u7ee7\u7eed\u8865\u5145\u5f31\u5de5\u5177\u53d8\u91cf\u548c\u8fc7\u5ea6\u8bc6\u522b\u68c0\u9a8c\u3002"
     };
   }
 
   if (variant === "mechanism") {
     return {
       ...baseline,
-      purpose: "\u673a\u5236\u5206\u6790\u7528\u4e8e\u56de\u7b54\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u4e3a\u4ec0\u4e48\u4f1a\u5f71\u54cd\u7ed3\u679c\u53d8\u91cf\u3002",
-      meaning: "\u5e38\u89c1\u505a\u6cd5\u662f\u5148\u68c0\u9a8c\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u5bf9\u673a\u5236\u53d8\u91cf\u7684\u5f71\u54cd\uff0c\u518d\u68c0\u9a8c\u52a0\u5165\u673a\u5236\u53d8\u91cf\u540e\u7684\u4e3b\u56de\u5f52\u3002",
-      modelSpec: "\u5148\u56de\u5f52\u673a\u5236\u53d8\u91cf\uff0c\u518d\u628a\u673a\u5236\u53d8\u91cf\u653e\u56de\u4e3b\u56de\u5f52\uff0c\u89c2\u5bdf\u6838\u5fc3\u7cfb\u6570\u662f\u5426\u6536\u7f29\u3002",
+      purpose: "\u673a\u5236\u5206\u6790\u7528\u4e8e\u89e3\u91ca\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u4e3a\u4ec0\u4e48\u4f1a\u5f71\u54cd\u7ed3\u679c\u53d8\u91cf\u3002",
+      meaning: "\u8fd9\u4e00\u90e8\u5206\u540c\u65f6\u7ed9\u51fa\u4e2d\u4ecb\u673a\u5236\u548c\u8c03\u8282\u673a\u5236\u4e24\u79cd\u5e38\u89c1\u505a\u6cd5\uff1a\u4e2d\u4ecb\u673a\u5236\u7528\u6765\u8bc6\u522b\u4f20\u5bfc\u6e20\u9053\uff0c\u8c03\u8282\u673a\u5236\u7528\u6765\u8bc6\u522b\u5f71\u54cd\u5f3a\u5ea6\u5728\u4ec0\u4e48\u6761\u4ef6\u4e0b\u4f1a\u53d8\u5316\u3002",
+      mechanismPaths: [
+        "\u4e2d\u4ecb\u673a\u5236\uff1a\u5148\u68c0\u9a8c\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u662f\u5426\u663e\u8457\u5f71\u54cd\u4e2d\u4ecb\u53d8\u91cf\uff0c\u518d\u628a\u4e2d\u4ecb\u53d8\u91cf\u653e\u56de\u4e3b\u56de\u5f52\uff0c\u89c2\u5bdf\u6838\u5fc3\u7cfb\u6570\u662f\u5426\u6536\u7f29\u3002",
+        "\u8c03\u8282\u673a\u5236\uff1a\u6784\u9020 \u6838\u5fc3\u89e3\u91ca\u53d8\u91cf \u00d7 \u8c03\u8282\u53d8\u91cf \u7684\u4ea4\u4e92\u9879\uff0c\u68c0\u9a8c\u4e0d\u540c\u6761\u4ef6\u4e0b\u7684\u8fb9\u9645\u6548\u5e94\u662f\u5426\u53d8\u5316\u3002"
+      ],
+      modelSpec: "\u5148\u505a\u4e2d\u4ecb\u673a\u5236\u4e24\u6b65\u56de\u5f52\uff0c\u518d\u8865\u4e00\u4e2a\u4ea4\u4e92\u9879\u6a21\u578b\u68c0\u9a8c\u8c03\u8282\u6548\u5e94\u3002",
       stataCode: [
-        ...buildInstallLines([
-          { command: "reghdfe", install: "ssc install reghdfe, replace" },
-          { command: "outreg2", install: "ssc install outreg2, replace" }
-        ]),
+        ...baselineInstallLines,
         "",
-        `* \u6587\u4ef6\u540d\u53ef\u4ee5\u6309\u9700\u81ea\u884c\u4fee\u6539\uff1a${fileName}`,
-        "* \u8bf7\u628a mediator_var \u66ff\u6362\u6210\u4f60\u60f3\u68c0\u9a8c\u7684\u673a\u5236\u53d8\u91cf",
-        buildReghdfeCommand("mediator_var", [aliasBundle.independentAlias, ...aliasBundle.controlAliases], buildBaseOptions(fixedEffectAliases, clusterAlias)),
+        ...buildExportNoticeLines(fileName),
+        "",
+        "* \u8bf7\u628a mediator_var \u66ff\u6362\u6210\u4e2d\u4ecb\u53d8\u91cf\uff0c\u628a moderator_var \u66ff\u6362\u6210\u8c03\u8282\u53d8\u91cf",
+        buildReghdfeCommand(
+          "mediator_var",
+          [aliasBundle.independentAlias, ...aliasBundle.controlAliases],
+          buildBaseOptions(fixedEffectAliases, clusterAlias)
+        ),
         buildOutregLine(filePath, ExportWriteMode.REPLACE),
         "",
-        buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, "mediator_var", ...aliasBundle.controlAliases], buildBaseOptions(fixedEffectAliases, clusterAlias)),
+        buildReghdfeCommand(
+          aliasBundle.dependentAlias,
+          [aliasBundle.independentAlias, "mediator_var", ...aliasBundle.controlAliases],
+          buildBaseOptions(fixedEffectAliases, clusterAlias)
+        ),
+        buildOutregLine(filePath, ExportWriteMode.APPEND),
+        "",
+        buildReghdfeCommand(
+          aliasBundle.dependentAlias,
+          [`c.${aliasBundle.independentAlias}##c.moderator_var`, ...aliasBundle.controlAliases],
+          buildBaseOptions(fixedEffectAliases, clusterAlias)
+        ),
         buildOutregLine(filePath, ExportWriteMode.APPEND)
       ].join("\n"),
       codeExplanation: [
-        "\u7b2c\u4e00\u6761\u56de\u5f52\u7528\u4e8e\u68c0\u9a8c\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u662f\u5426\u4f1a\u663e\u8457\u5f71\u54cd\u673a\u5236\u53d8\u91cf\u3002",
-        "\u7b2c\u4e8c\u6761\u56de\u5f52\u7528\u4e8e\u68c0\u9a8c\u52a0\u5165\u673a\u5236\u53d8\u91cf\u540e\uff0c\u4e3b\u6548\u5e94\u662f\u5426\u51fa\u73b0\u6536\u7f29\u3002",
-        "\u673a\u5236\u5206\u6790\u7684\u91cd\u70b9\u662f\u89e3\u91ca\u4f5c\u7528\u8def\u5f84\uff0c\u4e0d\u662f\u7b80\u5355\u591a\u52a0\u4e00\u4e2a\u53d8\u91cf\u3002"
+        "\u7b2c\u4e00\u6761\u56de\u5f52\u68c0\u9a8c\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u662f\u5426\u4f1a\u663e\u8457\u5f71\u54cd\u4e2d\u4ecb\u53d8\u91cf\u3002",
+        "\u7b2c\u4e8c\u6761\u56de\u5f52\u68c0\u9a8c\u628a\u4e2d\u4ecb\u53d8\u91cf\u653e\u56de\u4e3b\u56de\u5f52\u540e\uff0c\u6838\u5fc3\u7cfb\u6570\u662f\u5426\u51fa\u73b0\u6536\u7f29\u3002",
+        "\u7b2c\u4e09\u6761\u56de\u5f52\u7528\u4ea4\u4e92\u9879\u6a21\u578b\u68c0\u9a8c\u8c03\u8282\u6548\u5e94\uff1b\u5982\u679c\u4f60\u7684\u8c03\u8282\u53d8\u91cf\u662f\u7c7b\u522b\u53d8\u91cf\uff0c\u53ef\u4ee5\u628a c. \u6539\u6210 i.\u3002"
       ],
       interpretationGuide: [
-        "\u5148\u786e\u8ba4\u673a\u5236\u53d8\u91cf\u662f\u5426\u771f\u7684\u80fd\u4ee3\u8868\u7406\u8bba\u6e20\u9053\u3002",
-        "\u518d\u770b\u52a0\u5165\u673a\u5236\u53d8\u91cf\u540e\uff0c\u6838\u5fc3\u7cfb\u6570\u662f\u5426\u7f29\u5c0f\u6216\u663e\u8457\u6027\u53d8\u5316\u3002",
-        "\u5982\u679c\u673a\u5236\u53d8\u91cf\u5b9a\u4e49\u672c\u8eab\u4e0d\u7a33\uff0c\u673a\u5236\u7ed3\u8bba\u4e5f\u4f1a\u5f88\u5f31\u3002"
+        "\u4e2d\u4ecb\u673a\u5236\u91cd\u70b9\u770b\u4e2d\u4ecb\u53d8\u91cf\u662f\u5426\u663e\u8457\uff0c\u4ee5\u53ca\u52a0\u5165\u540e\u6838\u5fc3\u7cfb\u6570\u662f\u5426\u7f29\u5c0f\u3002",
+        "\u8c03\u8282\u673a\u5236\u91cd\u70b9\u770b\u4ea4\u4e92\u9879\u662f\u5426\u663e\u8457\uff0c\u4ee5\u53ca\u8fb9\u9645\u6548\u5e94\u5728\u4e0d\u540c\u6761\u4ef6\u4e0b\u662f\u5426\u53d8\u5316\u3002",
+        "\u673a\u5236\u5206\u6790\u8981\u56de\u5230\u7406\u8bba\u6e20\u9053\u672c\u8eab\uff0c\u4e0d\u8981\u53ea\u505c\u7559\u5728\u6280\u672f\u6027\u52a0\u53d8\u91cf\u3002"
       ],
-      nextSuggestion: "\u660e\u786e\u7406\u8bba\u6e20\u9053\u540e\uff0c\u53ef\u4ee5\u7ee7\u7eed\u8865\u5145\u673a\u5236\u53d8\u91cf\u5b9a\u4e49\u3001\u6d4b\u91cf\u65b9\u5f0f\u548c\u7ecf\u6d4e\u89e3\u91ca\u3002"
+      nextSuggestion: "\u660e\u786e\u4f5c\u7528\u6e20\u9053\u540e\uff0c\u53ef\u4ee5\u8fdb\u4e00\u6b65\u628a\u4e2d\u4ecb\u53d8\u91cf\u548c\u8c03\u8282\u53d8\u91cf\u7684\u5b9a\u4e49\u5199\u5f97\u66f4\u7ec6\u3002"
     };
   }
 
@@ -382,20 +444,32 @@ export function buildRegressionModuleOutput(
     meaning: "\u5e38\u89c1\u505a\u6cd5\u662f\u505a\u5206\u7ec4\u56de\u5f52\uff0c\u6216\u8005\u76f4\u63a5\u6784\u9020\u4ea4\u4e92\u9879\u6bd4\u8f83\u4e0d\u540c\u7ec4\u522b\u7684\u7cfb\u6570\u5dee\u5f02\u3002",
     modelSpec: "\u5148\u5206\u522b\u8dd1\u4e24\u7ec4\u6837\u672c\uff0c\u518d\u7528\u4ea4\u4e92\u9879\u6a21\u578b\u76f4\u63a5\u68c0\u9a8c\u7ec4\u95f4\u7cfb\u6570\u5dee\u5f02\u3002",
     stataCode: [
-      ...buildInstallLines([
-        { command: "reghdfe", install: "ssc install reghdfe, replace" },
-        { command: "outreg2", install: "ssc install outreg2, replace" }
-      ]),
+      ...baselineInstallLines,
       "",
-      `* \u6587\u4ef6\u540d\u53ef\u4ee5\u6309\u9700\u81ea\u884c\u4fee\u6539\uff1a${fileName}`,
+      ...buildExportNoticeLines(fileName),
+      "",
       "* \u8bf7\u628a group_var \u66ff\u6362\u6210\u771f\u5b9e\u5206\u7ec4\u53d8\u91cf\uff0c\u4f8b\u5982\u56fd\u6709/\u975e\u56fd\u6709\u3001\u5927\u4f01\u4e1a/\u5c0f\u4f01\u4e1a\u7b49",
-      buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases], buildBaseOptions(fixedEffectAliases, clusterAlias), "if group_var == 1"),
+      buildReghdfeCommand(
+        aliasBundle.dependentAlias,
+        [aliasBundle.independentAlias, ...aliasBundle.controlAliases],
+        buildBaseOptions(fixedEffectAliases, clusterAlias),
+        "if group_var == 1"
+      ),
       buildOutregLine(filePath, ExportWriteMode.REPLACE),
       "",
-      buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases], buildBaseOptions(fixedEffectAliases, clusterAlias), "if group_var == 0"),
+      buildReghdfeCommand(
+        aliasBundle.dependentAlias,
+        [aliasBundle.independentAlias, ...aliasBundle.controlAliases],
+        buildBaseOptions(fixedEffectAliases, clusterAlias),
+        "if group_var == 0"
+      ),
       buildOutregLine(filePath, ExportWriteMode.APPEND),
       "",
-      buildReghdfeCommand(aliasBundle.dependentAlias, [`c.${aliasBundle.independentAlias}##i.group_var`, ...aliasBundle.controlAliases], buildBaseOptions(fixedEffectAliases, clusterAlias)),
+      buildReghdfeCommand(
+        aliasBundle.dependentAlias,
+        [`c.${aliasBundle.independentAlias}##i.group_var`, ...aliasBundle.controlAliases],
+        buildBaseOptions(fixedEffectAliases, clusterAlias)
+      ),
       buildOutregLine(filePath, ExportWriteMode.APPEND)
     ].join("\n"),
     codeExplanation: [
@@ -513,13 +587,11 @@ export function buildStataErrorFallback(input: StataErrorDebugInput): StataError
       errorType: "command_not_found",
       explanation: "\u8fd9\u4e2a\u62a5\u9519\u901a\u5e38\u8bf4\u660e\u5bf9\u5e94\u547d\u4ee4\u8fd8\u6ca1\u6709\u5b89\u88c5\uff0c\u6216\u8005\u5f53\u524d\u73af\u5883\u6ca1\u6709\u6b63\u786e\u8bc6\u522b\u7528\u6237\u81ea\u88c5\u547d\u4ee4\u3002",
       fixCode: [
-        "capture which reghdfe",
-        "if _rc ssc install reghdfe, replace",
-        "capture which ftools",
-        "if _rc ssc install ftools, replace",
-        "capture which outreg2",
-        "if _rc ssc install outreg2, replace"
-      ].join("\\n"),
+        "* 如果你以前没安装过 reghdfe、ftools 和 outreg2，请先运行下面三行；安装过的话可以直接忽略，或者用 Ctrl+/ 注释掉",
+        "ssc install reghdfe, replace",
+        "ssc install ftools, replace",
+        "ssc install outreg2, replace"
+      ].join("\n"),
       retryMessage: "\u5b89\u88c5\u5b8c\u6210\u540e\uff0c\u518d\u91cd\u65b0\u8fd0\u884c\u539f\u6765\u7684\u56de\u5f52\u547d\u4ee4\u5373\u53ef\u3002"
     };
   }

@@ -113,6 +113,21 @@ export function MessageCard({
   const stepLabel = message.step ? workflowStepMeta[message.step]?.short ?? message.step : null;
   const moduleLabel = typeof json.moduleName === "string" ? moduleLabelMap[json.moduleName] ?? json.moduleName : null;
   const termMappings = isTermMappingArray(json.termMappings) ? json.termMappings : [];
+  const instrumentSelectionCriteria = Array.isArray(json.instrumentSelectionCriteria)
+    ? json.instrumentSelectionCriteria
+    : [];
+  const mechanismPaths = Array.isArray(json.mechanismPaths) ? json.mechanismPaths : [];
+  const chipLabels = Array.from(
+    new Set(
+      [
+        !isSystemNotice && message.messageType !== "skill_output" ? meta?.label ?? message.messageType : null,
+        moduleLabel,
+        stepLabel
+      ]
+        .map((value) => (typeof value === "string" ? normalizeDisplayText(value) : ""))
+        .filter(Boolean)
+    )
+  );
 
   if (isUser) {
     return (
@@ -289,23 +304,18 @@ export function MessageCard({
         </div>
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            {!isSystemNotice ? (
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-600">
-                {normalizeDisplayText(meta?.label ?? message.messageType)}
-              </span>
-            ) : null}
-            {moduleLabel ? (
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-500">
-                {normalizeDisplayText(moduleLabel)}
-              </span>
-            ) : null}
-            {stepLabel ? (
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-500">
-                {normalizeDisplayText(stepLabel)}
-              </span>
-            ) : null}
-          </div>
+          {chipLabels.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              {chipLabels.map((label, index) => (
+                <span
+                  key={`${label}-${index}`}
+                  className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-600"
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+          ) : null}
 
           {contentText && !isResearchChat && message.messageType !== "skill_output" && !isSystemNotice ? (
             <p className="mt-4 whitespace-pre-wrap text-sm font-normal leading-7 text-slate-800">{contentText}</p>
@@ -359,6 +369,23 @@ export function MessageCard({
               </div>
 
               {termMappings.length > 0 ? <TermMappingSection mappings={termMappings} /> : null}
+
+              {instrumentSelectionCriteria.length > 0 || mechanismPaths.length > 0 ? (
+                <div className="grid gap-4 lg:grid-cols-2">
+                  {instrumentSelectionCriteria.length > 0 ? (
+                    <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
+                      <p className="text-sm font-medium text-slate-800">{"工具变量选取标准"}</p>
+                      {renderJsonList(instrumentSelectionCriteria)}
+                    </div>
+                  ) : null}
+                  {mechanismPaths.length > 0 ? (
+                    <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
+                      <p className="text-sm font-medium text-slate-800">{"机制分析路径"}</p>
+                      {renderJsonList(mechanismPaths)}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
               {json.stataCode ? (
                 <StataCodeBlock code={normalizeDisplayText(json.stataCode)} />

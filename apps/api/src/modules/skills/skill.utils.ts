@@ -822,6 +822,8 @@ export function buildRegressionOutput(
       "同时记录样本量、固定效应与标准误设定。"
     ],
     termMappings: input.termMappings ?? [],
+    instrumentSelectionCriteria: [],
+    mechanismPaths: [],
     export: {
       fileName: exportState.fileName,
       filePath: exportState.filePath,

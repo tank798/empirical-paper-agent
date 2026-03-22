@@ -48,6 +48,7 @@ const DIRECT_ALIAS_BY_LABEL: Record<string, string> = {
   股权集中度: "top1",
   企业年龄: "age",
   研发投入: "rd",
+  市值: "mv",
   托宾q: "tobinq",
   成长性: "growth",
   独立董事比例: "indepdir",

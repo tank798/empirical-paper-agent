@@ -128,7 +128,7 @@ export const messageTypeMeta: Record<
     tone: "text-emerald-700"
   },
   skill_output: {
-    label: "模块结果",
+    label: "",
     tone: "text-slate-700"
   },
   research_chat: {
@@ -245,3 +245,4 @@ export function getStepProgress(steps: ProjectDetail["steps"] | undefined) {
 export function getFutureSteps(steps: ProjectDetail["steps"] | undefined) {
   return (steps ?? []).filter((step) => workflowStepMeta[step.step].phase === "future");
 }
+

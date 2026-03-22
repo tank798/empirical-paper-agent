@@ -237,6 +237,8 @@ export const regressionSkillOutputSchema = z.object({
   meaning: z.string(),
   variableDesign: z.array(z.string()),
   termMappings: z.array(termMappingSchema).optional().default([]),
+  instrumentSelectionCriteria: z.array(z.string()).optional().default([]),
+  mechanismPaths: z.array(z.string()).optional().default([]),
   modelSpec: z.string(),
   stataCode: z.string(),
   codeExplanation: z.array(z.string()),
