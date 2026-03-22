@@ -834,7 +834,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     const requestedStep = REQUESTED_STEP_BY_STAGE[selectedStageId] ?? detail?.project.currentStep ?? WorkflowStep.TOPIC_NORMALIZE;
     const localUserMessage = createLocalUserMessage(submission.userMessage, requestedStep ?? null);
     const liveTurnId = Date.now() + "-" + Math.random().toString(16).slice(2);
-    let receivedMessage = false;
 
     finalizedTurnIdRef.current = null;
     setLiveTurn({
@@ -883,8 +882,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
           }
 
           if (event.type === "message") {
-            receivedMessage = true;
-
             setLiveTurn((current) => {
               if (!current || current.id !== liveTurnId) {
                 return current;
@@ -907,23 +904,22 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         }
       });
 
-      if (!receivedMessage) {
-        const [nextDetail, nextMessages] = await Promise.all([
-          apiRequest<ProjectDetail>(`/projects/${projectId}`, { token: stored.token }),
-          apiRequest<AssistantMessageEnvelope[]>(`/projects/${projectId}/messages`, { token: stored.token })
-        ]);
+      const [nextDetail, nextMessages] = await Promise.all([
+        apiRequest<ProjectDetail>(`/projects/${projectId}`, { token: stored.token }),
+        apiRequest<AssistantMessageEnvelope[]>(`/projects/${projectId}/messages`, { token: stored.token })
+      ]);
 
-        setDetail(nextDetail);
-        setMessages(nextMessages);
-        setLiveTurn(null);
-        setSending(false);
-        setInitializingProject(false);
-        setOptimisticStageId(null);
-        setConfirmProcessing(false);
-        setWorkflowProgress(null);
-        setInput("");
-        setAttachment(null);
-      }
+      setDetail(nextDetail);
+      setMessages(nextMessages);
+      setError("");
+      setLiveTurn(null);
+      setSending(false);
+      setInitializingProject(false);
+      setOptimisticStageId(null);
+      setConfirmProcessing(false);
+      setWorkflowProgress(null);
+      setInput("");
+      setAttachment(null);
     } catch (requestError) {
       const messageText = requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。";
 
