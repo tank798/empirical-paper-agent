@@ -602,20 +602,6 @@ function WorkspaceStageLoadingCard({
   );
 }
 
-function StepCheckIcon() {
-  return (
-    <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 16 16">
-      <path
-        d="M3.5 8.25 6.375 11 12.5 4.875"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.6"
-      />
-    </svg>
-  );
-}
-
 export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const router = useRouter();
   const [stored, setStored] = useState<ReturnType<typeof getStoredProject> | undefined>(undefined);
@@ -1350,9 +1336,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
                   "interactive-chip relative z-10 inline-flex h-[38px] items-center rounded-full border px-3 text-[13px] font-medium whitespace-nowrap transition-[color,border-color,background-color,transform,box-shadow] duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-slate-200",
                   isHighlighted
                     ? "border-transparent bg-transparent text-white shadow-none"
-                    : stage.isCompleted
-                      ? "border-slate-200 bg-white text-sky-700 hover:border-slate-300 hover:bg-slate-50"
-                      : "border-slate-200 bg-slate-50 text-slate-500 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700",
+                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900",
                   confirmProcessing ? "cursor-default" : ""
                 )}
                 disabled={confirmProcessing}
@@ -1363,14 +1347,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
                 }}
                 type="button"
               >
-                <span className="flex items-center gap-1.5">
-                  <span>{`0${index + 1} ${stage.label}`}</span>
-                  {stage.isCompleted && !isHighlighted ? (
-                    <span className="text-sky-600">
-                      <StepCheckIcon />
-                    </span>
-                  ) : null}
-                </span>
+                <span>{`0${index + 1} ${stage.label}`}</span>
               </button>
             );
           })}

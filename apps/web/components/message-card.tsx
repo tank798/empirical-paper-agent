@@ -51,20 +51,6 @@ function renderJsonList(items: unknown, emptyLabel = "\u6682\u65e0\u8865\u5145\u
   );
 }
 
-function CheckIcon() {
-  return (
-    <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
-      <path
-        d="M3.333 8.333 6.4 11.4l6.267-6.8"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
-      />
-    </svg>
-  );
-}
-
 function isTermMappingArray(value: unknown): value is TermMapping[] {
   return Array.isArray(value) && value.every((item) => item && typeof item === "object");
 }
@@ -183,8 +169,9 @@ export function MessageCard({
   const card = (
     <article
       className={clsx(
-        "surface-hover-lift rounded-[20px] border border-[#e5e7eb] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)]",
-        isTopicConfirm ? "p-7" : "p-5",
+        isTopicConfirm
+          ? "rounded-[20px] border border-[#e5e7eb] bg-white p-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)]"
+          : "surface-hover-lift rounded-[20px] border border-[#e5e7eb] bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]",
         isSystemNotice ? "border-amber-100 bg-amber-50/70" : "",
         isTopicConfirm && topicConfirmAction?.locked ? "pointer-events-none opacity-60 saturate-[0.82]" : ""
       )}
@@ -252,16 +239,13 @@ export function MessageCard({
               ) : null}
 
               {!topicConfirmAction.locked ? (
-                <div className="topic-confirm-appear topic-confirm-floating">
+                <div className="topic-confirm-appear flex justify-center">
                   <button
-                    className="topic-confirm-surface inline-flex h-[64px] w-full items-center justify-center gap-2.5 rounded-[18px] px-6 text-base font-semibold tracking-[0.08em] text-white transition duration-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                    className="topic-confirm-surface topic-confirm-floating inline-flex h-[54px] w-full max-w-[320px] items-center justify-center rounded-[16px] px-5 text-[15px] font-semibold tracking-[0.08em] text-slate-900 transition duration-300 disabled:cursor-not-allowed disabled:opacity-60"
                     disabled={topicConfirmAction.disabled}
                     onClick={topicConfirmAction.onConfirm}
                     type="button"
                   >
-                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/14 bg-white/8 text-white">
-                      <CheckIcon />
-                    </span>
                     <span>{topicConfirmAction.label}</span>
                   </button>
                 </div>
