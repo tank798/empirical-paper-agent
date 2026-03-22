@@ -152,33 +152,15 @@ export function MessageCard({
           </div>
 
           {topicConfirmAction ? (
-            <div className="mt-8 flex flex-col items-center">
-              {!topicConfirmAction.locked ? (
-                <div className="topic-confirm-appear topic-confirm-floating flex w-full justify-center">
-                  <button
-                    className="group relative inline-flex w-[72%] min-w-[18rem] max-w-[35rem] items-center justify-center rounded-full bg-[linear-gradient(135deg,#6366F1,#A855F7)] p-[2px] text-white transition duration-300 hover:shadow-[0_24px_60px_rgba(99,102,241,0.2)] disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={topicConfirmAction.disabled}
-                    onClick={topicConfirmAction.onConfirm}
-                    type="button"
-                  >
-                    <span className="topic-confirm-glass inline-flex h-[58px] w-full items-center justify-center gap-2.5 rounded-full px-7 text-base font-semibold tracking-[0.08em] text-white">
-                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/18 bg-white/8 text-white">
-                        <CheckIcon />
-                      </span>
-                      <span>{topicConfirmAction.label}</span>
-                    </span>
-                  </button>
-                </div>
-              ) : null}
-
+            <div className="mt-8 rounded-[20px] border border-white/12 bg-[rgba(15,23,42,0.8)] px-5 py-5 shadow-[0_18px_42px_rgba(15,23,42,0.16)] backdrop-blur-[10px]">
               {topicConfirmAction.onRefineSubmit && !topicConfirmAction.locked ? (
-                <div className="mt-4 w-full max-w-[720px] text-center">
+                <div className="mb-4 text-center">
                   <button
-                    className="text-sm font-normal text-slate-400 transition hover:text-slate-600"
+                    className="text-xs font-normal tracking-[0.02em] text-slate-400 transition hover:text-slate-200"
                     onClick={() => setRefineOpen((current) => !current)}
                     type="button"
                   >
-                    {"内容不准确？点击此处微调"}
+                    {"内容不准确？点击此处进行微调"}
                   </button>
 
                   <div
@@ -187,9 +169,9 @@ export function MessageCard({
                       refineOpen ? "mt-3 max-h-24 opacity-100" : "max-h-0 opacity-0"
                     )}
                   >
-                    <div className="flex items-center gap-2 rounded-[18px] border border-slate-200 bg-white/86 px-3 py-3 shadow-[0_12px_32px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                    <div className="flex items-center gap-2 rounded-[16px] border border-white/10 bg-white/6 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-[10px]">
                       <input
-                        className="h-11 flex-1 bg-transparent px-2 text-sm font-normal text-slate-900 outline-none placeholder:text-slate-400"
+                        className="h-10 flex-1 bg-transparent px-2 text-sm font-normal text-white outline-none placeholder:text-slate-400"
                         disabled={topicConfirmAction.disabled}
                         onChange={(event) => setRefineValue(event.target.value)}
                         onKeyDown={handleRefineKeyDown}
@@ -197,7 +179,7 @@ export function MessageCard({
                         value={refineValue}
                       />
                       <button
-                        className="inline-flex h-10 items-center justify-center rounded-full bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="inline-flex h-9 items-center justify-center rounded-full border border-white/14 bg-white/8 px-4 text-sm font-medium text-white transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-60"
                         disabled={topicConfirmAction.disabled || !refineValue.trim()}
                         onClick={() => void submitInlineRefine()}
                         type="button"
@@ -210,7 +192,19 @@ export function MessageCard({
               ) : null}
 
               {!topicConfirmAction.locked ? (
-                <p className="mt-4 text-xs font-normal tracking-[0.02em] text-slate-400">{topicConfirmAction.hint}</p>
+                <div className="topic-confirm-appear topic-confirm-floating">
+                  <button
+                    className="topic-confirm-surface inline-flex h-[64px] w-full items-center justify-center gap-2.5 rounded-[18px] px-6 text-base font-semibold tracking-[0.08em] text-white transition duration-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={topicConfirmAction.disabled}
+                    onClick={topicConfirmAction.onConfirm}
+                    type="button"
+                  >
+                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/14 bg-white/8 text-white">
+                      <CheckIcon />
+                    </span>
+                    <span>{topicConfirmAction.label}</span>
+                  </button>
+                </div>
               ) : null}
             </div>
           ) : null}
@@ -218,9 +212,11 @@ export function MessageCard({
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-600">
-              {normalizeDisplayText(meta?.label ?? message.messageType)}
-            </span>
+            {!isSystemNotice ? (
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-600">
+                {normalizeDisplayText(meta?.label ?? message.messageType)}
+              </span>
+            ) : null}
             {moduleLabel ? (
               <span className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-500">
                 {normalizeDisplayText(moduleLabel)}
