@@ -3,6 +3,14 @@ import { ExportWriteMode, SkillName } from "@empirical/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { buildDefaultExportFileName } from "../../common/token";
 
+const MODULE_EXPORT_FILE_NAMES: Partial<Record<string, string>> = {
+  [SkillName.BASELINE_REGRESSION]: "baseline_results.doc",
+  [SkillName.ROBUSTNESS]: "robustness_results.doc",
+  [SkillName.IV]: "iv_results.doc",
+  [SkillName.MECHANISM]: "mechanism_results.doc",
+  [SkillName.HETEROGENEITY]: "heterogeneity_results.doc"
+};
+
 @Injectable()
 export class ExportStateService {
   constructor(private readonly prisma: PrismaService) {}

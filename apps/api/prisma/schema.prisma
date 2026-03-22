@@ -73,6 +73,7 @@ model ResearchProfile {
   timeVar             String?  @map("time_var")
   sampleScope         String?  @map("sample_scope")
   notes               String?
+  termMappingsJson    Json     @default("[]") @map("term_mappings_json")
   project             Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@map("research_profiles")

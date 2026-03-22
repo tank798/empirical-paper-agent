@@ -1,6 +1,20 @@
 ﻿import { Injectable } from "@nestjs/common";
-import type { ResearchProfile } from "@empirical/shared";
+import type { ResearchProfile, TermMapping } from "@empirical/shared";
 import { PrismaService } from "../prisma/prisma.service";
+import { buildTermMappings } from "./term-mappings";
+
+type RegressionInput = {
+  dependentVariable: string;
+  independentVariable: string;
+  controls: string[];
+  fixedEffects: string[];
+  clusterVar: string | null;
+  panelId: string | null;
+  timeVar: string | null;
+  sampleScope: string | null;
+  normalizedTopic: string;
+  termMappings: TermMapping[];
+};
 
 @Injectable()
 export class ResearchProfileService {
@@ -21,6 +35,16 @@ export class ResearchProfileService {
       relationship: string;
     }
   ) {
+    const termMappings = buildTermMappings({
+      independentVariable: payload.independentVariable,
+      dependentVariable: payload.dependentVariable,
+      controls: [],
+      fixedEffects: [],
+      clusterVar: null,
+      panelId: null,
+      timeVar: null
+    });
+
     const profile = await this.prisma.researchProfile.upsert({
       where: { projectId },
       create: {
@@ -31,14 +55,16 @@ export class ResearchProfileService {
         researchObject: payload.researchObject,
         relationship: payload.relationship,
         controls: [],
-        fixedEffects: []
+        fixedEffects: [],
+        termMappingsJson: termMappings as never
       },
       update: {
         normalizedTopic: payload.normalizedTopic,
         independentVariable: payload.independentVariable,
         dependentVariable: payload.dependentVariable,
         researchObject: payload.researchObject,
-        relationship: payload.relationship
+        relationship: payload.relationship,
+        termMappingsJson: termMappings as never
       }
     });
 
@@ -47,7 +73,7 @@ export class ResearchProfileService {
 
   async mergeExplicitUpdates(projectId: string, payload: Partial<ResearchProfile>) {
     const existing = await this.prisma.researchProfile.findUnique({ where: { projectId } });
-    const merged = {
+    const mergedCore = {
       normalizedTopic: payload.normalizedTopic ?? existing?.normalizedTopic ?? "",
       independentVariable: payload.independentVariable ?? existing?.independentVariable ?? "",
       dependentVariable: payload.dependentVariable ?? existing?.dependentVariable ?? "",
@@ -62,10 +88,29 @@ export class ResearchProfileService {
       notes: payload.notes ?? existing?.notes ?? null
     };
 
+    const termMappings = Array.isArray(payload.termMappings) && payload.termMappings.length > 0
+      ? payload.termMappings
+      : buildTermMappings({
+          independentVariable: mergedCore.independentVariable,
+          dependentVariable: mergedCore.dependentVariable,
+          controls: mergedCore.controls,
+          fixedEffects: mergedCore.fixedEffects,
+          clusterVar: mergedCore.clusterVar,
+          panelId: mergedCore.panelId,
+          timeVar: mergedCore.timeVar
+        });
+
     const profile = await this.prisma.researchProfile.upsert({
       where: { projectId },
-      create: { projectId, ...merged },
-      update: merged
+      create: {
+        projectId,
+        ...mergedCore,
+        termMappingsJson: termMappings as never
+      },
+      update: {
+        ...mergedCore,
+        termMappingsJson: termMappings as never
+      }
     });
 
     return this.mapProfile(profile);
@@ -75,15 +120,15 @@ export class ResearchProfileService {
     stored: ResearchProfile | null,
     payload: Record<string, unknown>,
     recentMessages: Array<{ contentText?: string | null; contentJson?: Record<string, unknown> }>
-  ) {
+  ): RegressionInput {
     const inferred = this.inferFromMessages(recentMessages);
-
-    return {
+    const resolved = {
       dependentVariable:
         (stored?.dependentVariable || payload.dependentVariable || inferred.dependentVariable || "y") as string,
       independentVariable:
         (stored?.independentVariable || payload.independentVariable || inferred.independentVariable || "x") as string,
-      controls: ((stored?.controls?.length ? stored.controls : payload.controls || inferred.controls || []) as string[]) ?? [],
+      controls:
+        ((stored?.controls?.length ? stored.controls : payload.controls || inferred.controls || []) as string[]) ?? [],
       fixedEffects:
         ((stored?.fixedEffects?.length ? stored.fixedEffects : payload.fixedEffects || inferred.fixedEffects || []) as string[]) ?? [],
       clusterVar: (stored?.clusterVar || payload.clusterVar || inferred.clusterVar || null) as string | null,
@@ -91,6 +136,23 @@ export class ResearchProfileService {
       timeVar: (stored?.timeVar || payload.timeVar || inferred.timeVar || null) as string | null,
       sampleScope: (stored?.sampleScope || payload.sampleScope || inferred.sampleScope || null) as string | null,
       normalizedTopic: (stored?.normalizedTopic || payload.normalizedTopic || inferred.normalizedTopic || "") as string
+    };
+
+    const termMappings = stored?.termMappings?.length
+      ? stored.termMappings
+      : buildTermMappings({
+          independentVariable: resolved.independentVariable,
+          dependentVariable: resolved.dependentVariable,
+          controls: resolved.controls,
+          fixedEffects: resolved.fixedEffects,
+          clusterVar: resolved.clusterVar,
+          panelId: resolved.panelId,
+          timeVar: resolved.timeVar
+        });
+
+    return {
+      ...resolved,
+      termMappings
     };
   }
 
@@ -118,15 +180,15 @@ export class ResearchProfileService {
         .filter(Boolean);
 
     return {
-      dependentVariable: firstMatch([/dependent variable[:：]\s*([^\n]+)/i, /\u56e0\u53d8\u91cf[:：]\s*([^\n]+)/]),
-      independentVariable: firstMatch([/independent variable[:：]\s*([^\n]+)/i, /\u81ea\u53d8\u91cf[:：]\s*([^\n]+)/]),
-      controls: splitList(firstMatch([/controls[:：]\s*([^\n]+)/i, /\u63a7\u5236\u53d8\u91cf[:：]\s*([^\n]+)/])),
-      fixedEffects: splitList(firstMatch([/fixed effects[:：]\s*([^\n]+)/i, /\u56fa\u5b9a\u6548\u5e94[:：]\s*([^\n]+)/])),
-      clusterVar: firstMatch([/cluster variable[:：]\s*([^\n]+)/i, /\u805a\u7c7b\u53d8\u91cf[:：]\s*([^\n]+)/]) || null,
+      dependentVariable: firstMatch([/dependent variable[:：]\s*([^\n]+)/i, /因变量[:：]\s*([^\n]+)/]),
+      independentVariable: firstMatch([/independent variable[:：]\s*([^\n]+)/i, /自变量[:：]\s*([^\n]+)/]),
+      controls: splitList(firstMatch([/controls[:：]\s*([^\n]+)/i, /控制变量[:：]\s*([^\n]+)/])),
+      fixedEffects: splitList(firstMatch([/fixed effects[:：]\s*([^\n]+)/i, /固定效应[:：]\s*([^\n]+)/])),
+      clusterVar: firstMatch([/cluster variable[:：]\s*([^\n]+)/i, /聚类变量[:：]\s*([^\n]+)/]) || null,
       panelId: firstMatch([/panel[_\s-]*id[:：]\s*([^\n]+)/i]) || null,
       timeVar: firstMatch([/time[_\s-]*var[:：]\s*([^\n]+)/i]) || null,
-      sampleScope: firstMatch([/sample scope[:：]\s*([^\n]+)/i, /\u6837\u672c\u8303\u56f4[:：]\s*([^\n]+)/]) || null,
-      normalizedTopic: firstMatch([/topic[:：]\s*([^\n]+)/i, /\u9898\u76ee[:：]\s*([^\n]+)/])
+      sampleScope: firstMatch([/sample scope[:：]\s*([^\n]+)/i, /样本范围[:：]\s*([^\n]+)/]) || null,
+      normalizedTopic: firstMatch([/topic[:：]\s*([^\n]+)/i, /题目[:：]\s*([^\n]+)/])
     };
   }
 
@@ -144,6 +206,7 @@ export class ResearchProfileService {
     timeVar: string | null;
     sampleScope: string | null;
     notes: string | null;
+    termMappingsJson: unknown;
   }): ResearchProfile {
     return {
       projectId: profile.projectId,
@@ -158,7 +221,8 @@ export class ResearchProfileService {
       panelId: profile.panelId,
       timeVar: profile.timeVar,
       sampleScope: profile.sampleScope,
-      notes: profile.notes
+      notes: profile.notes,
+      termMappings: Array.isArray(profile.termMappingsJson) ? (profile.termMappingsJson as TermMapping[]) : []
     };
   }
 }

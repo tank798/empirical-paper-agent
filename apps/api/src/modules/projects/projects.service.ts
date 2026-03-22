@@ -120,7 +120,14 @@ export class ProjectsService {
             panelId: project.researchProfile.panelId,
             timeVar: project.researchProfile.timeVar,
             sampleScope: project.researchProfile.sampleScope,
-            notes: project.researchProfile.notes
+            notes: project.researchProfile.notes,
+            termMappings: Array.isArray(project.researchProfile.termMappingsJson)
+              ? (project.researchProfile.termMappingsJson as Array<{
+                  category: string;
+                  labelCn: string;
+                  alias: string;
+                }> as never)
+              : []
           }
         : null,
       exportState: project.exportState

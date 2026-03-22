@@ -106,6 +106,18 @@ const STAGE_ID_BY_STEP: Record<WorkflowStep, StageId> = {
   [WorkflowStep.EXPORT_TABLE]: "baseline"
 };
 
+const STAGE_ID_BY_PROGRESS_LABEL: Partial<Record<string, StageId>> = {
+  "\u7814\u7a76\u8bbe\u5b9a": "topic",
+  "\u7814\u7a76\u8def\u5f84": "data",
+  "\u6570\u636e\u5904\u7406": "data",
+  "\u6570\u636e\u68c0\u67e5": "data",
+  "\u57fa\u51c6\u56de\u5f52": "baseline",
+  "\u7a33\u5065\u6027\u68c0\u9a8c": "robustness",
+  "\u5185\u751f\u6027\u5206\u6790": "iv",
+  "\u673a\u5236\u5206\u6790": "mechanism",
+  "\u5f02\u8d28\u6027\u5206\u6790": "heterogeneity"
+};
+
 const REQUESTED_STEP_BY_STAGE: Record<StageId, WorkflowStep> = {
   topic: WorkflowStep.TOPIC_NORMALIZE,
   data: WorkflowStep.DATA_CLEANING,
@@ -590,6 +602,20 @@ function WorkspaceStageLoadingCard({
   );
 }
 
+function StepCheckIcon() {
+  return (
+    <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 16 16">
+      <path
+        d="M3.5 8.25 6.375 11 12.5 4.875"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+    </svg>
+  );
+}
+
 export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const router = useRouter();
   const [stored, setStored] = useState<ReturnType<typeof getStoredProject> | undefined>(undefined);
@@ -621,6 +647,24 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const speechCommittedTextRef = useRef("");
   const speechInterimTextRef = useRef("");
   const keepListeningRef = useRef(false);
+  const autoStageRef = useRef<StageId>("topic");
+  const stageRailRef = useRef<HTMLDivElement | null>(null);
+  const stageButtonRefs = useRef<Record<StageId, HTMLButtonElement | null>>({
+    topic: null,
+    data: null,
+    baseline: null,
+    robustness: null,
+    iv: null,
+    mechanism: null,
+    heterogeneity: null
+  });
+  const [stageIndicator, setStageIndicator] = useState({
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+    ready: false
+  });
 
   useIsomorphicLayoutEffect(() => {
     const pendingBootstrap = getPendingProjectBootstrap(projectId);
@@ -741,23 +785,35 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     };
   }, [projectId, stored]);
 
-  const currentStep = detail?.project.currentStep ?? WorkflowStep.TOPIC_DETECT;
+    const currentStep = detail?.project.currentStep ?? WorkflowStep.TOPIC_DETECT;
   const activeStageId = STAGE_ID_BY_STEP[currentStep] ?? "topic";
-  const displayedStageId = optimisticStageId ?? activeStageId;
+  const progressStageId = workflowProgress?.stageLabel
+    ? STAGE_ID_BY_PROGRESS_LABEL[workflowProgress.stageLabel] ?? null
+    : null;
+  const currentProcessStageId = confirmProcessing
+    ? progressStageId ?? optimisticStageId ?? activeStageId
+    : optimisticStageId ?? activeStageId;
+  const highlightedStageId = confirmProcessing ? currentProcessStageId : selectedStageId;
 
   useEffect(() => {
-    setSelectedStageId(displayedStageId);
-  }, [displayedStageId]);
+    const nextAutoStageId = confirmProcessing ? currentProcessStageId : activeStageId;
+    if (autoStageRef.current === nextAutoStageId) {
+      return;
+    }
+
+    autoStageRef.current = nextAutoStageId;
+    setSelectedStageId(nextAutoStageId);
+  }, [activeStageId, confirmProcessing, currentProcessStageId]);
 
   const selectedStage = useMemo(
     () => WORKFLOW_STAGES.find((stage) => stage.id === selectedStageId) ?? WORKFLOW_STAGES[0],
     [selectedStageId]
   );
-  const stageMeta = useMemo(() => getStageMeta(detail, displayedStageId), [detail, displayedStageId]);
+  const stageMeta = useMemo(() => getStageMeta(detail, currentProcessStageId), [detail, currentProcessStageId]);
   const selectedStageMessages = useMemo(() => getStageMessages(messages, selectedStage), [messages, selectedStage]);
-  const selectedStageIsActive = selectedStage.id === displayedStageId;
+  const selectedStageIsActive = selectedStage.id === currentProcessStageId;
   const showInitialProjectLoading = Boolean(pendingBootstrapTopic) && (stored === undefined || loading || messages.length === 0);
-  const showStageLoadingState = Boolean(optimisticStageId === selectedStage.id && sending && selectedStageMessages.length === 0);
+  const showStageLoadingState = Boolean(confirmProcessing && selectedStage.id === currentProcessStageId && selectedStageMessages.length === 0);
   const hasDownstreamMessages = messages.some(
     (message) =>
       message.role !== "user" &&
@@ -774,10 +830,67 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const workflowLockProgress = workflowProgress ?? {
     currentCount: 1,
     totalCount: 7,
-    stageLabel: "研究设定",
+    stageLabel: "\u7814\u7a76\u8bbe\u5b9a",
     remainingMinutes: 5
   };
 
+  useIsomorphicLayoutEffect(() => {
+    const rail = stageRailRef.current;
+    const button = stageButtonRefs.current[highlightedStageId];
+    if (!rail || !button) {
+      return;
+    }
+
+    const nextIndicator = {
+      left: button.offsetLeft,
+      top: button.offsetTop,
+      width: button.offsetWidth,
+      height: button.offsetHeight,
+      ready: true
+    };
+
+    setStageIndicator((current) => {
+      if (
+        current.left === nextIndicator.left &&
+        current.top === nextIndicator.top &&
+        current.width === nextIndicator.width &&
+        current.height === nextIndicator.height &&
+        current.ready === nextIndicator.ready
+      ) {
+        return current;
+      }
+
+      return nextIndicator;
+    });
+  }, [highlightedStageId, pageEntered, stageMeta]);
+
+  useEffect(() => {
+    if (!bootstrapResolved) {
+      return;
+    }
+
+    const syncIndicator = () => {
+      const rail = stageRailRef.current;
+      const button = stageButtonRefs.current[highlightedStageId];
+      if (!rail || !button) {
+        return;
+      }
+
+      setStageIndicator({
+        left: button.offsetLeft,
+        top: button.offsetTop,
+        width: button.offsetWidth,
+        height: button.offsetHeight,
+        ready: true
+      });
+    };
+
+    syncIndicator();
+    window.addEventListener("resize", syncIndicator);
+    return () => {
+      window.removeEventListener("resize", syncIndicator);
+    };
+  }, [bootstrapResolved, highlightedStageId]);
 
   useEffect(() => {
     if (!liveTurn || !liveTurn.assistantMessage || !stored || finalizedTurnIdRef.current === liveTurn.id) {
@@ -1212,24 +1325,52 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         pageEntered ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
       )}>
       <div className="border-b border-slate-200 pb-4">
-        <div className="flex flex-wrap gap-[10px] sm:gap-3">
+        <div ref={stageRailRef} className="relative flex flex-wrap gap-[10px] sm:gap-3">
+          {stageIndicator.ready ? (
+            <div
+              className="pointer-events-none absolute rounded-full bg-slate-950 shadow-[0_14px_30px_rgba(15,23,42,0.16)] transition-[transform,width,height] duration-300 ease-in-out"
+              style={{
+                width: stageIndicator.width,
+                height: stageIndicator.height,
+                transform: `translate(${stageIndicator.left}px, ${stageIndicator.top}px)`
+              }}
+            />
+          ) : null}
+
           {stageMeta.map((stage, index) => {
-            const isSelected = selectedStage.id === stage.id;
+            const isHighlighted = highlightedStageId === stage.id;
 
             return (
               <button
                 key={stage.id}
+                ref={(node) => {
+                  stageButtonRefs.current[stage.id] = node;
+                }}
                 className={clsx(
-                  "interactive-chip inline-flex h-[38px] items-center rounded-full border px-3 text-[13px] font-medium whitespace-nowrap transition focus:outline-none focus:ring-2 focus:ring-slate-200",
-                  stage.isActive
-                    ? "border-slate-950 bg-slate-950 text-white"
-                    : "border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100",
-                  isSelected && !stage.isActive ? "border-slate-300 bg-white text-slate-700" : ""
+                  "interactive-chip relative z-10 inline-flex h-[38px] items-center rounded-full border px-3 text-[13px] font-medium whitespace-nowrap transition-[color,border-color,background-color,transform,box-shadow] duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-slate-200",
+                  isHighlighted
+                    ? "border-transparent bg-transparent text-white shadow-none"
+                    : stage.isCompleted
+                      ? "border-slate-200 bg-white text-sky-700 hover:border-slate-300 hover:bg-slate-50"
+                      : "border-slate-200 bg-slate-50 text-slate-500 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700",
+                  confirmProcessing ? "cursor-default" : ""
                 )}
-                onClick={() => setSelectedStageId(stage.id)}
+                disabled={confirmProcessing}
+                onClick={() => {
+                  if (!confirmProcessing) {
+                    setSelectedStageId(stage.id);
+                  }
+                }}
                 type="button"
               >
-                <span>{`0${index + 1} ${stage.label}`}</span>
+                <span className="flex items-center gap-1.5">
+                  <span>{`0${index + 1} ${stage.label}`}</span>
+                  {stage.isCompleted && !isHighlighted ? (
+                    <span className="text-sky-600">
+                      <StepCheckIcon />
+                    </span>
+                  ) : null}
+                </span>
               </button>
             );
           })}
@@ -1391,6 +1532,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     </>
   );
 }
+
 
 
 

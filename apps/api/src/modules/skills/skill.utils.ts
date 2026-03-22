@@ -821,6 +821,7 @@ export function buildRegressionOutput(
       "再看核心解释变量的符号与显著性。",
       "同时记录样本量、固定效应与标准误设定。"
     ],
+    termMappings: input.termMappings ?? [],
     export: {
       fileName: exportState.fileName,
       filePath: exportState.filePath,

@@ -1,4 +1,4 @@
-﻿import {
+import {
   ExportWriteMode,
   SkillName,
   type DataCheckInput,
@@ -13,79 +13,171 @@
   type ResultInterpretOutput,
   type StataErrorDebugInput,
   type StataErrorDebugOutput,
+  type TermMapping,
   type TopicNormalizeOutput
 } from "@empirical/shared";
+import { buildTermAliasBundle } from "../research-profile/term-mappings";
 
 type RegressionModuleVariant = "baseline" | "robustness" | "iv" | "mechanism" | "heterogeneity";
 
-function unique(values: string[]) {
-  return Array.from(new Set(values.map((item) => item.trim()).filter(Boolean)));
+const TERM_CATEGORY_LABELS: Record<TermMapping["category"], string> = {
+  independent: "\u89e3\u91ca\u53d8\u91cf",
+  dependent: "\u88ab\u89e3\u91ca\u53d8\u91cf",
+  control: "\u63a7\u5236\u53d8\u91cf",
+  fixed_effect: "\u56fa\u5b9a\u6548\u5e94",
+  cluster: "\u805a\u7c7b\u53d8\u91cf",
+  panel: "\u9762\u677f\u4e2a\u4f53\u53d8\u91cf",
+  time: "\u65f6\u95f4\u53d8\u91cf"
+};
+
+const MODULE_EXPORT_FILES: Record<RegressionModuleVariant, string> = {
+  baseline: "baseline_results.doc",
+  robustness: "robustness_results.doc",
+  iv: "iv_results.doc",
+  mechanism: "mechanism_results.doc",
+  heterogeneity: "heterogeneity_results.doc"
+};
+
+function unique(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.map((item) => String(item ?? "").trim()).filter(Boolean)));
 }
 
-function buildExportBlock(moduleName: string, input: RegressionSkillInput) {
-  const exportState = input.exportState ?? {
-    fileName: `${moduleName}.doc`,
-    filePath: `D:\\results\\${moduleName}.doc`,
-    writeMode: ExportWriteMode.REPLACE
-  };
+function buildExportPath(fileName: string) {
+  return `D:\\results\\${fileName}`;
+}
 
-  return {
-    fileName: exportState.fileName,
-    filePath: exportState.filePath,
-    writeMode: exportState.writeMode,
-    exportCode: `outreg2 using "${exportState.filePath}", ${exportState.writeMode} bdec(3) tdec(2) adjr2 tstat`
-  };
+function buildOutregLine(filePath: string, writeMode: ExportWriteMode) {
+  return `outreg2 using "${filePath}", ${writeMode} bdec(3) tdec(2) adjr2 tstat`;
+}
+
+function buildInstallLines(commands: Array<{ command: string; install: string }>) {
+  const seen = new Set<string>();
+  return commands.flatMap((item) => {
+    if (seen.has(item.command)) {
+      return [];
+    }
+
+    seen.add(item.command);
+    return [`capture which ${item.command}`, `if _rc ${item.install}`];
+  });
+}
+
+function buildAliasCommentLines(termMappings: TermMapping[]) {
+  return [
+    "* \u5efa\u8bae\u5148\u7edf\u4e00\u4f7f\u7528\u4ee5\u4e0b\u82f1\u6587\u7f29\u5199\uff1a",
+    ...termMappings.map((item) => `* ${TERM_CATEGORY_LABELS[item.category]}\uff1a${item.labelCn} -> ${item.alias}`)
+  ];
+}
+
+function buildReghdfeCommand(
+  dependentAlias: string,
+  explanatoryAliases: string[],
+  options: string[] = [],
+  whereClause = ""
+) {
+  const regressors = unique(explanatoryAliases);
+  const optionCopy = options.filter(Boolean);
+  return `reghdfe ${dependentAlias} ${regressors.join(" ")}${whereClause ? ` ${whereClause}` : ""}${optionCopy.length ? `, ${optionCopy.join(" ")}` : ""}`;
+}
+
+function buildIvreghdfeCommand(
+  dependentAlias: string,
+  independentAlias: string,
+  instrumentAlias: string,
+  controls: string[],
+  options: string[] = []
+) {
+  const regressors = unique([`(${independentAlias} = ${instrumentAlias})`, ...controls]);
+  const optionCopy = options.filter(Boolean);
+  return `ivreghdfe ${dependentAlias} ${regressors.join(" ")}${optionCopy.length ? `, ${optionCopy.join(" ")}` : ""}`;
 }
 
 function buildCommonVariableDesign(input: RegressionSkillInput) {
   return [
-    `被解释变量：${input.dependentVariable}`,
-    `核心解释变量：${input.independentVariable}`,
-    `控制变量：${input.controls?.length ? input.controls.join("、") : "请按文献口径补充"}`,
-    `固定效应：${input.fixedEffects?.length ? input.fixedEffects.join("、") : "企业固定效应、年份固定效应"}`,
-    `样本区间：${input.sampleScope || "请补充样本区间"}`
+    `\u88ab\u89e3\u91ca\u53d8\u91cf\uff1a${input.dependentVariable}`,
+    `\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\uff1a${input.independentVariable}`,
+    `\u63a7\u5236\u53d8\u91cf\uff1a${input.controls?.length ? input.controls.join("\u3001") : "\u8bf7\u6309\u6587\u732e\u53e3\u5f84\u8865\u5145"}`,
+    `\u56fa\u5b9a\u6548\u5e94\uff1a${input.fixedEffects?.length ? input.fixedEffects.join("\u3001") : "\u8bf7\u81f3\u5c11\u8865\u5145\u4f01\u4e1a\u548c\u5e74\u4efd\u56fa\u5b9a\u6548\u5e94"}`,
+    `\u6837\u672c\u533a\u95f4\uff1a${input.sampleScope || "\u8bf7\u8865\u5145\u6837\u672c\u533a\u95f4"}`
   ];
 }
 
+function buildBaseOptions(fixedEffectAliases: string[], clusterAlias: string) {
+  const options: string[] = [];
+  if (fixedEffectAliases.length > 0) {
+    options.push(`absorb(${fixedEffectAliases.join(" ")})`);
+  }
+  if (clusterAlias) {
+    options.push(`vce(cluster ${clusterAlias})`);
+  }
+  return options;
+}
+
+function buildSimpleRegressionOptions(clusterAlias: string) {
+  return clusterAlias ? [`vce(cluster ${clusterAlias})`] : [];
+}
+
 export function buildDataCleaningOutputTemplate(input: DataCleaningInput): DataCleaningOutput {
+  const aliasBundle = buildTermAliasBundle({
+    dependentVariable: input.dependentVariable,
+    independentVariable: input.independentVariable,
+    controls: input.controls,
+    fixedEffects: input.fixedEffects,
+    clusterVar: input.clusterVar,
+    panelId: input.panelId,
+    timeVar: input.timeVar,
+    termMappings: input.termMappings
+  });
   const variables = unique([
-    input.dependentVariable,
-    input.independentVariable,
-    ...(input.controls ?? [])
+    aliasBundle.dependentAlias,
+    aliasBundle.independentAlias,
+    ...aliasBundle.controlAliases
   ]);
-  const missingTargets = unique([
-    input.dependentVariable,
-    input.independentVariable,
-    ...(input.controls ?? []).slice(0, 4)
-  ]);
+  const missingTargets = unique([aliasBundle.dependentAlias, aliasBundle.independentAlias]);
   const logCode = (input.needLogVars ?? []).length
     ? input.needLogVars.map((item) => `gen ln_${item} = ln(${item})`).join("\n")
-    : "* 如需对规模类变量取对数，可在这里补充 ln 处理";
+    : "* \u5982\u9700\u5bf9\u89c4\u6a21\u7c7b\u53d8\u91cf\u53d6\u5bf9\u6570\uff0c\u53ef\u5728\u8fd9\u91cc\u8865\u5145 ln_ \u53d8\u91cf\u751f\u6210\u4ee3\u7801";
+  const panelAlias = aliasBundle.panelAlias || aliasBundle.preferredPanelAlias;
+  const timeAlias = aliasBundle.timeAlias || aliasBundle.preferredTimeAlias;
+
+  const stataLines = [
+    ...buildAliasCommentLines(aliasBundle.termMappings),
+    "",
+    ...buildInstallLines([{ command: "winsor2", install: "ssc install winsor2, replace" }]),
+    "",
+    `destring ${variables.join(" ")}, replace force`,
+    `drop if missing(${missingTargets.join(", ")})`,
+    logCode,
+    `winsor2 ${variables.join(" ")}, replace cuts(1 99)`
+  ];
+
+  if (panelAlias && timeAlias) {
+    stataLines.push(`xtset ${panelAlias} ${timeAlias}`);
+  }
 
   return {
     moduleName: "data_cleaning",
-    purpose: "先把关键变量整理成可直接进入回归的干净数据。",
-    meaning: `这一部分围绕 ${input.independentVariable}、${input.dependentVariable} 以及控制变量完成缺失值、异常值和变量类型处理。`,
-    variableDesign: variables.map((item) => `检查 ${item} 的变量类型、缺失值与极端值情况`),
-    modelSpec: "本环节不直接回归，重点是把原始数据整理成规范的分析样本。",
-    stataCode: [
-      `destring ${variables.join(" ")}, replace force`,
-      `drop if missing(${missingTargets.join(", ")})`,
-      logCode,
-      `winsor2 ${variables.join(" ")}, replace cuts(1 99)`
-    ].join("\n"),
+    purpose: "\u5148\u628a\u5173\u952e\u53d8\u91cf\u7edf\u4e00\u547d\u540d\u3001\u6e05\u6d17\u5e76\u6574\u7406\u6210\u53ef\u76f4\u63a5\u8fdb\u5165\u56de\u5f52\u7684\u5206\u6790\u6837\u672c\u3002",
+    meaning: `\u8fd9\u4e00\u90e8\u5206\u56f4\u7ed5 ${input.independentVariable}\u3001${input.dependentVariable} \u4ee5\u53ca\u63a7\u5236\u53d8\u91cf\uff0c\u5b8c\u6210\u7edf\u4e00\u7f29\u5199\u3001\u7f3a\u5931\u503c\u5904\u7406\u548c\u6781\u7aef\u503c\u5904\u7406\u3002`,
+    variableDesign: [
+      "\u5148\u7edf\u4e00\u53d8\u91cf\u82f1\u6587\u7f29\u5199\uff0c\u4fdd\u8bc1\u540e\u7eed\u6240\u6709\u6a21\u5757\u4f7f\u7528\u540c\u4e00\u5957\u53d8\u91cf\u540d\u3002",
+      ...variables.map((item) => `\u68c0\u67e5 ${item} \u7684\u53d8\u91cf\u7c7b\u578b\u3001\u7f3a\u5931\u503c\u4e0e\u6781\u7aef\u503c\u60c5\u51b5`)
+    ],
+    termMappings: aliasBundle.termMappings,
+    modelSpec: "\u540e\u7eed\u6240\u6709\u6a21\u5757\u90fd\u4f1a\u7edf\u4e00\u6cbf\u7528\u8fd9\u4e00\u7ec4\u82f1\u6587\u7f29\u5199\u6765\u5199 Stata \u4ee3\u7801\u3002",
+    stataCode: stataLines.join("\n"),
     codeExplanation: [
-      "destring 用于把被错误导入为字符型的变量转成数值型。",
-      "drop if missing(...) 用于删除核心变量缺失的样本。",
-      "winsor2 用于缩尾处理极端值，减少少量异常观测对回归结果的影响。",
-      "如果你的数据没有安装 winsor2，可以先执行 ssc install winsor2, replace。"
+      "\u4ee3\u7801\u5757\u5f00\u5934\u5148\u7ed9\u51fa\u4e00\u5957\u7edf\u4e00\u7684\u82f1\u6587\u7f29\u5199\u5efa\u8bae\uff0c\u540e\u7eed\u4ee3\u7801\u5168\u90e8\u57fa\u4e8e\u8fd9\u4e9b\u7f29\u5199\u4e66\u5199\u3002",
+      "destring \u7528\u4e8e\u628a\u88ab\u8bef\u5bfc\u5165\u4e3a\u5b57\u7b26\u578b\u7684\u53d8\u91cf\u8f6c\u6210\u6570\u503c\u578b\u3002",
+      "drop if missing(...) \u7528\u4e8e\u5220\u9664\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u548c\u88ab\u89e3\u91ca\u53d8\u91cf\u7f3a\u5931\u7684\u6837\u672c\u3002",
+      "winsor2 \u7528\u4e8e\u7f29\u5c3e\u5904\u7406\u6781\u7aef\u503c\uff0c\u51cf\u5c11\u6781\u7aef\u6837\u672c\u5bf9\u540e\u7eed\u56de\u5f52\u7684\u5e72\u6270\u3002"
     ],
     interpretationGuide: [
-      "清洗完成后先运行 summarize，确认变量量级与分布是否合理。",
-      "如果某个变量缺失过多，需要回头检查数据源或口径。",
-      "正式回归前，确保解释变量、被解释变量和控制变量的样本一致。"
+      "\u5148\u786e\u8ba4\u53d8\u91cf\u7f29\u5199\u548c\u4f60\u7684\u771f\u5b9e\u5b57\u6bb5\u540d\u80fd\u4e00\u4e00\u5bf9\u5e94\u3002",
+      "\u6e05\u6d17\u5b8c\u6210\u540e\u5efa\u8bae\u8fd0\u884c summarize\uff0c\u68c0\u67e5\u53d8\u91cf\u91cf\u7ea7\u4e0e\u53d6\u503c\u8303\u56f4\u662f\u5426\u5408\u7406\u3002",
+      "\u5982\u679c\u540e\u7eed\u56de\u5f52\u7ee7\u7eed\u6cbf\u7528\u8fd9\u5957\u82f1\u6587\u7f29\u5199\uff0c\u4ee3\u7801\u4f1a\u66f4\u5bb9\u6613\u7ef4\u62a4\u3002"
     ],
-    nextSuggestion: "数据清洗完成后，下一步建议进入数据检查与描述统计。"
+    nextSuggestion: "\u6570\u636e\u6e05\u6d17\u5b8c\u6210\u540e\uff0c\u4e0b\u4e00\u6b65\u5efa\u8bae\u8fdb\u5165\u6570\u636e\u68c0\u67e5\u4e0e\u63cf\u8ff0\u7edf\u8ba1\u3002"
   };
 }
 
@@ -102,21 +194,19 @@ export function buildDataCheckOutputTemplate(input: DataCheckInput): DataCheckOu
 
   return {
     moduleName: "data_check",
-    purpose: "确认样本结构、描述统计和面板设定是否可用。",
-    meaning: "这一部分主要检查变量分布、年份覆盖、样本量和面板数据结构，避免正式回归时才暴露数据问题。",
-    variableDesign: keyVariables.map((item) => `查看 ${item} 的描述统计和分布情况`),
-    modelSpec: "本环节仍然以数据核查为主，不直接形成正式回归结论。",
+    purpose: "\u786e\u8ba4\u6837\u672c\u7ed3\u6784\u3001\u63cf\u8ff0\u7edf\u8ba1\u548c\u9762\u677f\u8bbe\u5b9a\u662f\u5426\u53ef\u7528\u3002",
+    meaning: "\u8fd9\u4e00\u90e8\u5206\u4e3b\u8981\u68c0\u67e5\u53d8\u91cf\u5206\u5e03\u3001\u5e74\u4efd\u8986\u76d6\u3001\u6837\u672c\u91cf\u548c\u9762\u677f\u7ed3\u6784\uff0c\u907f\u514d\u6b63\u5f0f\u56de\u5f52\u65f6\u624d\u66b4\u9732\u6570\u636e\u95ee\u9898\u3002",
+    variableDesign: keyVariables.map((item) => `\u67e5\u770b ${item} \u7684\u63cf\u8ff0\u7edf\u8ba1\u548c\u5206\u5e03\u60c5\u51b5`),
+    modelSpec: "\u672c\u73af\u8282\u4ecd\u7136\u4ee5\u6570\u636e\u6838\u67e5\u4e3a\u4e3b\uff0c\u4e0d\u76f4\u63a5\u5f62\u6210\u6b63\u5f0f\u56de\u5f52\u7ed3\u8bba\u3002",
     stataCode: lines.join("\n"),
     codeExplanation: [
-      "describe 用于快速查看变量类型、标签和存储格式。",
-      "summarize 用于检查关键变量的均值、标准差与极值。",
-      input.timeVar ? `tab ${input.timeVar} 用于检查时间维度是否连续。` : "当前没有提供时间变量，因此跳过年份分布检查。",
-      input.panelId && input.timeVar
-        ? "xtset 用于验证面板设定是否成立。"
-        : "若后续要做面板回归，请补充个体维度和时间维度变量。"
+      "describe \u7528\u4e8e\u5feb\u901f\u67e5\u770b\u53d8\u91cf\u7c7b\u578b\u3001\u6807\u7b7e\u548c\u5b58\u50a8\u683c\u5f0f\u3002",
+      "summarize \u7528\u4e8e\u68c0\u67e5\u5173\u952e\u53d8\u91cf\u7684\u5747\u503c\u3001\u6807\u51c6\u5dee\u4e0e\u6781\u503c\u3002",
+      input.timeVar ? `tab ${input.timeVar} \u7528\u4e8e\u68c0\u67e5\u65f6\u95f4\u7ef4\u5ea6\u662f\u5426\u8fde\u7eed\u3002` : "\u5f53\u524d\u6ca1\u6709\u63d0\u4f9b\u65f6\u95f4\u53d8\u91cf\uff0c\u56e0\u6b64\u8df3\u8fc7\u5e74\u4efd\u5206\u5e03\u68c0\u67e5\u3002",
+      input.panelId && input.timeVar ? "xtset \u7528\u4e8e\u9a8c\u8bc1\u9762\u677f\u8bbe\u5b9a\u662f\u5426\u6210\u7acb\u3002" : "\u82e5\u540e\u7eed\u8981\u505a\u9762\u677f\u56de\u5f52\uff0c\u8bf7\u8865\u5145\u4e2a\u4f53\u7ef4\u5ea6\u548c\u65f6\u95f4\u7ef4\u5ea6\u53d8\u91cf\u3002"
     ],
-    checkItems: ["变量类型是否正确", "样本量是否合理", "年份覆盖是否完整", "面板结构是否可用"],
-    nextSuggestion: "数据检查无误后，就可以进入基准回归。"
+    checkItems: ["\u53d8\u91cf\u7c7b\u578b\u662f\u5426\u6b63\u786e", "\u6837\u672c\u91cf\u662f\u5426\u5408\u7406", "\u5e74\u4efd\u8986\u76d6\u662f\u5426\u5b8c\u6574", "\u9762\u677f\u7ed3\u6784\u662f\u5426\u53ef\u7528"],
+    nextSuggestion: "\u6570\u636e\u68c0\u67e5\u65e0\u8bef\u540e\uff0c\u5c31\u53ef\u4ee5\u8fdb\u5165\u57fa\u51c6\u56de\u5f52\u3002"
   };
 }
 
@@ -126,31 +216,59 @@ export function buildRegressionModuleOutput(
   moduleLabel: string,
   variant: RegressionModuleVariant
 ): RegressionSkillOutput {
-  const controls = input.controls?.length ? ` ${input.controls.join(" ")}` : "";
-  const absorb = input.fixedEffects?.length ? `, absorb(${input.fixedEffects.join(" ")})` : "";
-  const cluster = input.clusterVar ? ` vce(cluster ${input.clusterVar})` : "";
-  const baseRegression = `reghdfe ${input.dependentVariable} ${input.independentVariable}${controls}${absorb}${cluster}`;
-  const exportBlock = buildExportBlock(moduleName, input);
+  const aliasBundle = buildTermAliasBundle({
+    dependentVariable: input.dependentVariable,
+    independentVariable: input.independentVariable,
+    controls: input.controls,
+    fixedEffects: input.fixedEffects,
+    clusterVar: input.clusterVar,
+    panelId: input.panelId,
+    timeVar: input.timeVar,
+    termMappings: input.termMappings
+  });
+  const fixedEffectAliases = aliasBundle.fixedEffectAliases;
+  const clusterAlias = aliasBundle.clusterAlias || aliasBundle.preferredPanelAlias;
+  const fileName = input.exportState?.fileName || MODULE_EXPORT_FILES[variant];
+  const filePath = input.exportState?.filePath || buildExportPath(fileName);
+  const baselineIntro = [
+    ...buildInstallLines([
+      { command: "reghdfe", install: "ssc install reghdfe, replace" },
+      { command: "outreg2", install: "ssc install outreg2, replace" }
+    ]),
+    "",
+    `* \u6587\u4ef6\u540d\u53ef\u4ee5\u6309\u9700\u81ea\u884c\u4fee\u6539\uff1a${fileName}`
+  ];
 
   const baseline: RegressionSkillOutput = {
     moduleName,
-    purpose: `${moduleLabel}用于检验核心研究假设是否成立。`,
-    meaning: `在当前研究设定下，重点关注 ${input.independentVariable} 对 ${input.dependentVariable} 的方向、显著性和经济含义。`,
+    purpose: `${moduleLabel}\u7528\u4e8e\u68c0\u9a8c\u6838\u5fc3\u7814\u7a76\u5047\u8bbe\u662f\u5426\u6210\u7acb\u3002`,
+    meaning: `\u5728\u5f53\u524d\u7814\u7a76\u8bbe\u5b9a\u4e0b\uff0c\u91cd\u70b9\u5173\u6ce8 ${input.independentVariable} \u5bf9 ${input.dependentVariable} \u7684\u65b9\u5411\u3001\u663e\u8457\u6027\u548c\u7ecf\u6d4e\u542b\u4e49\u3002`,
     variableDesign: buildCommonVariableDesign(input),
-    modelSpec: `${input.dependentVariable} = beta0 + beta1 * ${input.independentVariable} + controls + fixed effects + error`,
-    stataCode: baseRegression,
+    termMappings: aliasBundle.termMappings,
+    modelSpec: `\u6a21\u578b 1\uff1a${aliasBundle.dependentAlias} = beta0 + beta1 ${aliasBundle.independentAlias} + error\uff1b\u6a21\u578b 2 \u5728\u6b64\u57fa\u7840\u4e0a\u52a0\u5165\u63a7\u5236\u53d8\u91cf\uff1b\u6a21\u578b 3 \u518d\u52a0\u5165\u56fa\u5b9a\u6548\u5e94\u3002`,
+    stataCode: [
+      ...baselineIntro,
+      buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias], buildSimpleRegressionOptions(clusterAlias)),
+      buildOutregLine(filePath, ExportWriteMode.REPLACE),
+      "",
+      buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases], buildSimpleRegressionOptions(clusterAlias)),
+      buildOutregLine(filePath, ExportWriteMode.APPEND),
+      "",
+      buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases], buildBaseOptions(fixedEffectAliases, clusterAlias)),
+      buildOutregLine(filePath, ExportWriteMode.APPEND)
+    ].join("\n"),
     codeExplanation: [
-      "默认使用 reghdfe 估计固定效应模型。",
-      input.fixedEffects?.length ? "absorb(...) 用于加入你设定的固定效应。" : "如果尚未明确固定效应，建议至少从企业固定效应和年份固定效应起步。",
-      input.clusterVar ? `vce(cluster ${input.clusterVar}) 用于加入聚类稳健标准误。` : "如果样本是企业-年份面板，通常建议按企业层面聚类标准误。"
+      "\u7b2c\u4e00\u6761\u6a21\u578b\u5148\u53ea\u68c0\u9a8c\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u4e0e\u88ab\u89e3\u91ca\u53d8\u91cf\u4e4b\u95f4\u7684\u57fa\u7840\u5173\u7cfb\u3002",
+      "\u7b2c\u4e8c\u6761\u6a21\u578b\u5728\u6b64\u57fa\u7840\u4e0a\u52a0\u5165\u63a7\u5236\u53d8\u91cf\uff0c\u89c2\u5bdf\u4e3b\u6548\u5e94\u662f\u5426\u7a33\u5b9a\u3002",
+      "\u7b2c\u4e09\u6761\u6a21\u578b\u8fdb\u4e00\u6b65\u52a0\u5165\u56fa\u5b9a\u6548\u5e94\uff0c\u4f5c\u4e3a\u8bba\u6587\u4e2d\u7684\u4e3b\u89c4\u683c\u3002",
+      "\u6bcf\u6761\u56de\u5f52\u540e\u90fd\u76f4\u63a5\u8ddf outreg2\uff0c\u7b2c\u4e00\u6761\u7528 replace\uff0c\u540e\u4e24\u6761\u7528 append\u3002"
     ],
     interpretationGuide: [
-      "先看核心解释变量的系数方向是否符合理论预期。",
-      "再看显著性、样本量和固定效应设定是否稳妥。",
-      "最后记录回归表导出路径，方便写论文时直接引用。"
+      "\u5148\u770b\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u7684\u7cfb\u6570\u65b9\u5411\u662f\u5426\u7b26\u5408\u7406\u8bba\u9884\u671f\u3002",
+      "\u518d\u6bd4\u8f83\u52a0\u5165\u63a7\u5236\u53d8\u91cf\u548c\u56fa\u5b9a\u6548\u5e94\u540e\uff0c\u6838\u5fc3\u7cfb\u6570\u662f\u5426\u7a33\u5b9a\u3002",
+      "\u5bfc\u51fa\u6587\u4ef6\u540d\u53ea\u662f\u9ed8\u8ba4\u793a\u4f8b\uff0c\u53ef\u4ee5\u76f4\u63a5\u6539\u6210\u4f60\u4e60\u60ef\u7684\u540d\u5b57\u3002"
     ],
-    export: exportBlock,
-    nextSuggestion: "完成基准回归后，可以继续做稳健性、内生性、机制和异质性分析。"
+    nextSuggestion: "\u5b8c\u6210\u57fa\u51c6\u56de\u5f52\u540e\uff0c\u53ef\u4ee5\u7ee7\u7eed\u770b\u7a33\u5065\u6027\u3001\u5185\u751f\u6027\u3001\u673a\u5236\u548c\u5f02\u8d28\u6027\u5206\u6790\u3002"
   };
 
   if (variant === "baseline") {
@@ -160,190 +278,209 @@ export function buildRegressionModuleOutput(
   if (variant === "robustness") {
     return {
       ...baseline,
-      purpose: "稳健性检验用于确认主结论不依赖某一种特定口径或样本处理方式。",
-      meaning: "这一部分通常通过替换变量、缩尾样本、改变固定效应或替换估计方式来验证主结论是否稳定。",
-      variableDesign: [
-        ...buildCommonVariableDesign(input),
-        "可替换核心解释变量口径或缩尾处理样本",
-        "可加入或替换固定效应设定进行比较"
-      ],
-      modelSpec: "围绕基准模型做替代变量、替代样本或替代设定的稳健性检验。",
+      purpose: "\u7a33\u5065\u6027\u68c0\u9a8c\u7528\u4e8e\u786e\u8ba4\u4e3b\u7ed3\u8bba\u4e0d\u4f9d\u8d56\u67d0\u4e00\u79cd\u7279\u5b9a\u6837\u672c\u5904\u7406\u65b9\u5f0f\u6216\u6807\u51c6\u8bef\u8bbe\u5b9a\u3002",
+      meaning: "\u8fd9\u4e00\u90e8\u5206\u901a\u8fc7\u7f29\u5c3e\u5904\u7406\u548c\u66ff\u4ee3\u6807\u51c6\u8bef\u8bbe\u5b9a\uff0c\u9a8c\u8bc1\u4e3b\u7ed3\u8bba\u662f\u5426\u7a33\u5b9a\u3002",
+      modelSpec: "\u5148\u5bf9\u5173\u952e\u8fde\u7eed\u53d8\u91cf\u7f29\u5c3e\u540e\u91cd\u590d\u57fa\u51c6\u6a21\u578b\uff0c\u518d\u6539\u7528\u7a33\u5065\u6807\u51c6\u8bef\u91cd\u590d\u4f30\u8ba1\u3002",
       stataCode: [
-        "* 稳健性检验示例 1：缩尾后重复基准回归",
-        `winsor2 ${unique([input.dependentVariable, input.independentVariable, ...(input.controls ?? [])]).join(" ")}, replace cuts(1 99)`,
-        baseRegression,
+        ...buildInstallLines([
+          { command: "winsor2", install: "ssc install winsor2, replace" },
+          { command: "reghdfe", install: "ssc install reghdfe, replace" },
+          { command: "outreg2", install: "ssc install outreg2, replace" }
+        ]),
         "",
-        "* 稳健性检验示例 2：更换聚类层级或固定效应后再次回归",
-        baseRegression
+        `* \u6587\u4ef6\u540d\u53ef\u4ee5\u6309\u9700\u81ea\u884c\u4fee\u6539\uff1a${fileName}`,
+        `winsor2 ${unique([aliasBundle.dependentAlias, aliasBundle.independentAlias, ...aliasBundle.controlAliases]).join(" ")}, replace cuts(1 99)`,
+        buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases], buildBaseOptions(fixedEffectAliases, clusterAlias)),
+        buildOutregLine(filePath, ExportWriteMode.REPLACE),
+        "",
+        buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases], [...(fixedEffectAliases.length ? [`absorb(${fixedEffectAliases.join(" ")})`] : []), "vce(robust)"]),
+        buildOutregLine(filePath, ExportWriteMode.APPEND)
       ].join("\n"),
       codeExplanation: [
-        "第一组代码用于确认结果是否被极端值驱动。",
-        "第二组代码用于比较不同固定效应和标准误设定下的稳健性。",
-        "如果你有替代指标，可以把核心解释变量或被解释变量替换后重复运行。"
+        "\u7b2c\u4e00\u7ec4\u4ee3\u7801\u901a\u8fc7\u7f29\u5c3e\u5904\u7406\uff0c\u964d\u4f4e\u6781\u7aef\u503c\u5bf9\u7cfb\u6570\u4f30\u8ba1\u7684\u5f71\u54cd\u3002",
+        "\u7b2c\u4e8c\u7ec4\u4ee3\u7801\u628a\u6807\u51c6\u8bef\u6539\u4e3a robust\uff0c\u518d\u770b\u6838\u5fc3\u7cfb\u6570\u662f\u5426\u4f9d\u7136\u7a33\u5b9a\u3002",
+        "\u7a33\u5065\u6027\u68c0\u9a8c\u91cd\u70b9\u770b\u65b9\u5411\u548c\u663e\u8457\u6027\u662f\u5426\u4fdd\u6301\u4e00\u81f4\u3002"
       ],
       interpretationGuide: [
-        "重点比较核心系数方向是否一致、显著性是否稳定。",
-        "如果结果对某个口径非常敏感，需要在论文中单独解释。",
-        "稳健性检验不要求系数量级完全一致，但结论方向应尽量稳定。"
+        "\u6bd4\u8f83\u7f29\u5c3e\u524d\u540e\u6838\u5fc3\u7cfb\u6570\u7684\u65b9\u5411\u548c\u663e\u8457\u6027\u662f\u5426\u4e00\u81f4\u3002",
+        "\u5982\u679c\u53ea\u5728\u67d0\u4e00\u79cd\u6807\u51c6\u8bef\u8bbe\u5b9a\u4e0b\u663e\u8457\uff0c\u9700\u8981\u5728\u8bba\u6587\u4e2d\u989d\u5916\u89e3\u91ca\u3002",
+        "\u7a33\u5065\u6027\u68c0\u9a8c\u5f3a\u8c03\u7ed3\u8bba\u7a33\u5b9a\uff0c\u4e0d\u8981\u6c42\u6bcf\u4e2a\u7cfb\u6570\u91cf\u7ea7\u5b8c\u5168\u76f8\u540c\u3002"
       ],
-      nextSuggestion: "稳健性结果稳定后，可以继续处理内生性问题。"
+      nextSuggestion: "\u7a33\u5065\u6027\u7ed3\u679c\u7a33\u5b9a\u540e\uff0c\u53ef\u4ee5\u7ee7\u7eed\u5904\u7406\u5185\u751f\u6027\u95ee\u9898\u3002"
     };
   }
 
   if (variant === "iv") {
     return {
       ...baseline,
-      purpose: "内生性分析用于缓解反向因果、遗漏变量或测量误差带来的偏误。",
-      meaning: "如果你担心核心解释变量并非完全外生，可以先给出一版工具变量模板，再根据研究场景替换成真正可行的外生冲击。",
-      variableDesign: [
-        ...buildCommonVariableDesign(input),
-        "需要补充一个与核心解释变量相关、但不直接影响结果变量的工具变量"
-      ],
-      modelSpec: "第一阶段用工具变量解释核心解释变量，第二阶段估计核心解释变量对结果变量的净效应。",
+      purpose: "\u5185\u751f\u6027\u5206\u6790\u7528\u4e8e\u7f13\u89e3\u53cd\u5411\u56e0\u679c\u3001\u9057\u6f0f\u53d8\u91cf\u6216\u6d4b\u91cf\u8bef\u5dee\u5e26\u6765\u7684\u504f\u8bef\u3002",
+      meaning: "\u8fd9\u4e00\u6b65\u5148\u7ed9\u51fa\u4e00\u7248\u5de5\u5177\u53d8\u91cf\u6a21\u677f\uff0c\u540e\u7eed\u53ea\u9700\u8981\u628a\u5de5\u5177\u53d8\u91cf\u66ff\u6362\u6210\u771f\u6b63\u53ef\u7528\u7684\u5916\u751f\u51b2\u51fb\u5373\u53ef\u3002",
+      modelSpec: `\u7b2c\u4e00\u9636\u6bb5\u7528\u5de5\u5177\u53d8\u91cf z_iv \u89e3\u91ca ${aliasBundle.independentAlias}\uff0c\u7b2c\u4e8c\u9636\u6bb5\u4f30\u8ba1 ${aliasBundle.independentAlias} \u5bf9 ${aliasBundle.dependentAlias} \u7684\u51c0\u6548\u5e94\u3002`,
       stataCode: [
-        "* 请先把 z_iv 替换成你真正的工具变量",
-        `ivreghdfe ${input.dependentVariable} (${input.independentVariable} = z_iv)${controls}${absorb}${cluster}`,
+        ...buildInstallLines([
+          { command: "ivreghdfe", install: "ssc install ivreghdfe, replace" },
+          { command: "outreg2", install: "ssc install outreg2, replace" }
+        ]),
+        "",
+        `* \u6587\u4ef6\u540d\u53ef\u4ee5\u6309\u9700\u81ea\u884c\u4fee\u6539\uff1a${fileName}`,
+        "* \u8bf7\u628a z_iv \u66ff\u6362\u6210\u4f60\u771f\u6b63\u7684\u5de5\u5177\u53d8\u91cf",
+        buildIvreghdfeCommand(aliasBundle.dependentAlias, aliasBundle.independentAlias, "z_iv", aliasBundle.controlAliases, buildBaseOptions(fixedEffectAliases, clusterAlias)),
+        buildOutregLine(filePath, ExportWriteMode.REPLACE),
         "estat firststage"
       ].join("\n"),
       codeExplanation: [
-        "z_iv 只是占位符，需要替换成真正有理论支撑的工具变量。",
-        "ivreghdfe 适合在固定效应框架下做两阶段回归。",
-        "estat firststage 用于查看工具变量与核心解释变量的相关性是否足够强。"
+        "z_iv \u53ea\u662f\u5360\u4f4d\u7b26\uff0c\u9700\u8981\u66ff\u6362\u6210\u771f\u6b63\u6709\u7406\u8bba\u652f\u6491\u7684\u5de5\u5177\u53d8\u91cf\u3002",
+        "ivreghdfe \u9002\u5408\u5728\u56fa\u5b9a\u6548\u5e94\u6846\u67b6\u4e0b\u505a\u4e24\u9636\u6bb5\u4f30\u8ba1\u3002",
+        "estat firststage \u7528\u4e8e\u68c0\u67e5\u5de5\u5177\u53d8\u91cf\u662f\u5426\u8db3\u591f\u5f3a\u3002"
       ],
       interpretationGuide: [
-        "先看第一阶段工具变量是否显著。",
-        "再看第二阶段核心系数方向是否与基准回归一致。",
-        "如果工具变量识别不稳，需要重新论证识别策略。"
+        "\u5148\u770b\u7b2c\u4e00\u9636\u6bb5\u5de5\u5177\u53d8\u91cf\u662f\u5426\u663e\u8457\u3002",
+        "\u518d\u770b\u7b2c\u4e8c\u9636\u6bb5\u6838\u5fc3\u7cfb\u6570\u65b9\u5411\u662f\u5426\u4e0e\u57fa\u51c6\u56de\u5f52\u4e00\u81f4\u3002",
+        "\u5982\u679c\u5de5\u5177\u53d8\u91cf\u7f3a\u4e4f\u6e05\u6670\u5916\u751f\u6027\u8bba\u8bc1\uff0c\u7ed3\u8bba\u4ecd\u7136\u4e0d\u7a33\u3002"
       ],
-      nextSuggestion: "如果工具变量有理论基础，可以继续补充第一阶段和过度识别检验。"
+      nextSuggestion: "\u5982\u679c\u4f60\u5df2\u7ecf\u6709\u660e\u786e\u7684\u5de5\u5177\u53d8\u91cf\u6765\u6e90\uff0c\u53ef\u4ee5\u7ee7\u7eed\u8865\u5145\u5f31\u5de5\u5177\u53d8\u91cf\u4e0e\u8fc7\u5ea6\u8bc6\u522b\u68c0\u9a8c\u3002"
     };
   }
 
   if (variant === "mechanism") {
     return {
       ...baseline,
-      purpose: "机制分析用于回答核心解释变量为什么会影响结果变量。",
-      meaning: "这一步需要提出一个理论渠道变量，再验证核心解释变量是否先影响该渠道变量，进而影响结果变量。",
-      variableDesign: [
-        ...buildCommonVariableDesign(input),
-        "请额外补充一个机制变量或中介变量，例如融资约束、信息透明度、治理质量等"
-      ],
-      modelSpec: "常见做法是先检验核心解释变量对机制变量的影响，再检验引入机制变量后的主回归结果。",
+      purpose: "\u673a\u5236\u5206\u6790\u7528\u4e8e\u56de\u7b54\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u4e3a\u4ec0\u4e48\u4f1a\u5f71\u54cd\u7ed3\u679c\u53d8\u91cf\u3002",
+      meaning: "\u5e38\u89c1\u505a\u6cd5\u662f\u5148\u68c0\u9a8c\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u5bf9\u673a\u5236\u53d8\u91cf\u7684\u5f71\u54cd\uff0c\u518d\u68c0\u9a8c\u52a0\u5165\u673a\u5236\u53d8\u91cf\u540e\u7684\u4e3b\u56de\u5f52\u3002",
+      modelSpec: "\u5148\u56de\u5f52\u673a\u5236\u53d8\u91cf\uff0c\u518d\u628a\u673a\u5236\u53d8\u91cf\u653e\u56de\u4e3b\u56de\u5f52\uff0c\u89c2\u5bdf\u6838\u5fc3\u7cfb\u6570\u662f\u5426\u6536\u7f29\u3002",
       stataCode: [
-        "* 请先把 mediator_var 替换成你的机制变量",
-        `reghdfe mediator_var ${input.independentVariable}${controls}${absorb}${cluster}`,
-        `reghdfe ${input.dependentVariable} ${input.independentVariable} mediator_var${controls}${absorb}${cluster}`
+        ...buildInstallLines([
+          { command: "reghdfe", install: "ssc install reghdfe, replace" },
+          { command: "outreg2", install: "ssc install outreg2, replace" }
+        ]),
+        "",
+        `* \u6587\u4ef6\u540d\u53ef\u4ee5\u6309\u9700\u81ea\u884c\u4fee\u6539\uff1a${fileName}`,
+        "* \u8bf7\u628a mediator_var \u66ff\u6362\u6210\u4f60\u60f3\u68c0\u9a8c\u7684\u673a\u5236\u53d8\u91cf",
+        buildReghdfeCommand("mediator_var", [aliasBundle.independentAlias, ...aliasBundle.controlAliases], buildBaseOptions(fixedEffectAliases, clusterAlias)),
+        buildOutregLine(filePath, ExportWriteMode.REPLACE),
+        "",
+        buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, "mediator_var", ...aliasBundle.controlAliases], buildBaseOptions(fixedEffectAliases, clusterAlias)),
+        buildOutregLine(filePath, ExportWriteMode.APPEND)
       ].join("\n"),
       codeExplanation: [
-        "第一条回归用于检验核心解释变量是否会显著影响机制变量。",
-        "第二条回归用于检验加入机制变量后，主效应是否发生变化。",
-        "如果你不做中介链条，也可以改成机制变量分组或渠道识别。"
+        "\u7b2c\u4e00\u6761\u56de\u5f52\u7528\u4e8e\u68c0\u9a8c\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u662f\u5426\u4f1a\u663e\u8457\u5f71\u54cd\u673a\u5236\u53d8\u91cf\u3002",
+        "\u7b2c\u4e8c\u6761\u56de\u5f52\u7528\u4e8e\u68c0\u9a8c\u52a0\u5165\u673a\u5236\u53d8\u91cf\u540e\uff0c\u4e3b\u6548\u5e94\u662f\u5426\u51fa\u73b0\u6536\u7f29\u3002",
+        "\u673a\u5236\u5206\u6790\u7684\u91cd\u70b9\u662f\u89e3\u91ca\u4f5c\u7528\u8def\u5f84\uff0c\u4e0d\u662f\u7b80\u5355\u591a\u52a0\u4e00\u4e2a\u53d8\u91cf\u3002"
       ],
       interpretationGuide: [
-        "先确认机制变量是否真能代表理论渠道。",
-        "再看加入机制变量后，核心系数是否缩小或显著性变化。",
-        "机制分析的重点是解释路径，不只是再跑一条回归。"
+        "\u5148\u786e\u8ba4\u673a\u5236\u53d8\u91cf\u662f\u5426\u771f\u7684\u80fd\u4ee3\u8868\u7406\u8bba\u6e20\u9053\u3002",
+        "\u518d\u770b\u52a0\u5165\u673a\u5236\u53d8\u91cf\u540e\uff0c\u6838\u5fc3\u7cfb\u6570\u662f\u5426\u7f29\u5c0f\u6216\u663e\u8457\u6027\u53d8\u5316\u3002",
+        "\u5982\u679c\u673a\u5236\u53d8\u91cf\u5b9a\u4e49\u672c\u8eab\u4e0d\u7a33\uff0c\u673a\u5236\u7ed3\u8bba\u4e5f\u4f1a\u5f88\u5f31\u3002"
       ],
-      nextSuggestion: "明确理论渠道后，可以继续补充更细的中介变量定义与测量口径。"
+      nextSuggestion: "\u660e\u786e\u7406\u8bba\u6e20\u9053\u540e\uff0c\u53ef\u4ee5\u7ee7\u7eed\u8865\u5145\u673a\u5236\u53d8\u91cf\u5b9a\u4e49\u3001\u6d4b\u91cf\u65b9\u5f0f\u548c\u7ecf\u6d4e\u89e3\u91ca\u3002"
     };
   }
 
   return {
     ...baseline,
-    purpose: "异质性分析用于识别不同样本组中效应是否存在系统差异。",
-    meaning: "常见做法是按企业规模、地区、产权性质或治理水平分组，或者直接构造交互项。",
-    variableDesign: [
-      ...buildCommonVariableDesign(input),
-      "请额外补充一个分组变量，例如国有/非国有、高污染/非高污染、大企业/小企业"
-    ],
-    modelSpec: "可以采用分组回归，也可以采用交互项回归比较不同组别的效应差异。",
+    purpose: "\u5f02\u8d28\u6027\u5206\u6790\u7528\u4e8e\u8bc6\u522b\u4e0d\u540c\u6837\u672c\u7ec4\u4e2d\u6548\u5e94\u662f\u5426\u5b58\u5728\u7cfb\u7edf\u5dee\u5f02\u3002",
+    meaning: "\u5e38\u89c1\u505a\u6cd5\u662f\u505a\u5206\u7ec4\u56de\u5f52\uff0c\u6216\u8005\u76f4\u63a5\u6784\u9020\u4ea4\u4e92\u9879\u6bd4\u8f83\u4e0d\u540c\u7ec4\u522b\u7684\u7cfb\u6570\u5dee\u5f02\u3002",
+    modelSpec: "\u5148\u5206\u522b\u8dd1\u4e24\u7ec4\u6837\u672c\uff0c\u518d\u7528\u4ea4\u4e92\u9879\u6a21\u578b\u76f4\u63a5\u68c0\u9a8c\u7ec4\u95f4\u7cfb\u6570\u5dee\u5f02\u3002",
     stataCode: [
-      "* 请先把 group_var 替换成真实分组变量",
-      `reghdfe ${input.dependentVariable} ${input.independentVariable}${controls} if group_var == 1${absorb}${cluster}`,
-      `reghdfe ${input.dependentVariable} ${input.independentVariable}${controls} if group_var == 0${absorb}${cluster}`,
-      `reghdfe ${input.dependentVariable} c.${input.independentVariable}##i.group_var${controls}${absorb}${cluster}`
+      ...buildInstallLines([
+        { command: "reghdfe", install: "ssc install reghdfe, replace" },
+        { command: "outreg2", install: "ssc install outreg2, replace" }
+      ]),
+      "",
+      `* \u6587\u4ef6\u540d\u53ef\u4ee5\u6309\u9700\u81ea\u884c\u4fee\u6539\uff1a${fileName}`,
+      "* \u8bf7\u628a group_var \u66ff\u6362\u6210\u771f\u5b9e\u5206\u7ec4\u53d8\u91cf\uff0c\u4f8b\u5982\u56fd\u6709/\u975e\u56fd\u6709\u3001\u5927\u4f01\u4e1a/\u5c0f\u4f01\u4e1a\u7b49",
+      buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases], buildBaseOptions(fixedEffectAliases, clusterAlias), "if group_var == 1"),
+      buildOutregLine(filePath, ExportWriteMode.REPLACE),
+      "",
+      buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases], buildBaseOptions(fixedEffectAliases, clusterAlias), "if group_var == 0"),
+      buildOutregLine(filePath, ExportWriteMode.APPEND),
+      "",
+      buildReghdfeCommand(aliasBundle.dependentAlias, [`c.${aliasBundle.independentAlias}##i.group_var`, ...aliasBundle.controlAliases], buildBaseOptions(fixedEffectAliases, clusterAlias)),
+      buildOutregLine(filePath, ExportWriteMode.APPEND)
     ].join("\n"),
     codeExplanation: [
-      "前两条回归用于分别查看不同组别的回归结果。",
-      "交互项模型用于直接检验两组之间的系数差异。",
-      "如果分组变量本身是连续变量，也可以改成分位数组或分组虚拟变量。"
+      "\u524d\u4e24\u6761\u56de\u5f52\u7528\u4e8e\u5206\u522b\u67e5\u770b\u4e0d\u540c\u7ec4\u522b\u4e2d\u7684\u4e3b\u6548\u5e94\u3002",
+      "\u7b2c\u4e09\u6761\u4ea4\u4e92\u9879\u6a21\u578b\u7528\u4e8e\u76f4\u63a5\u68c0\u9a8c\u7ec4\u95f4\u5dee\u5f02\u662f\u5426\u663e\u8457\u3002",
+      "\u5f02\u8d28\u6027\u5206\u7ec4\u8981\u6709\u660e\u786e\u7406\u8bba\u4f9d\u636e\uff0c\u907f\u514d\u65e0\u5dee\u522b\u5806\u5206\u7ec4\u3002"
     ],
     interpretationGuide: [
-      "重点比较不同组别中核心系数的方向、显著性和量级。",
-      "如果交互项显著，可以进一步强调异质性存在。",
-      "异质性分析应紧扣理论机制，不建议无差别地堆很多分组。"
+      "\u91cd\u70b9\u6bd4\u8f83\u4e0d\u540c\u7ec4\u522b\u4e2d\u6838\u5fc3\u7cfb\u6570\u7684\u65b9\u5411\u3001\u663e\u8457\u6027\u548c\u91cf\u7ea7\u3002",
+      "\u5982\u679c\u4ea4\u4e92\u9879\u663e\u8457\uff0c\u53ef\u4ee5\u8fdb\u4e00\u6b65\u5f3a\u8c03\u5f02\u8d28\u6027\u5b58\u5728\u3002",
+      "\u5206\u7ec4\u53e3\u5f84\u6700\u597d\u548c\u8bba\u6587\u7406\u8bba\u673a\u5236\u4fdd\u6301\u4e00\u81f4\u3002"
     ],
-    nextSuggestion: "异质性分析完成后，可以回到论文结构中整合主结论与扩展检验。"
+    nextSuggestion: "\u5f02\u8d28\u6027\u5206\u6790\u5b8c\u6210\u540e\uff0c\u53ef\u4ee5\u56de\u5230\u8bba\u6587\u7ed3\u6784\u91cc\u6574\u5408\u4e3b\u7ed3\u8bba\u4e0e\u6269\u5c55\u68c0\u9a8c\u3002"
   };
 }
 
 export function buildTopicNormalizeOutputTemplate(rawTopic: string): TopicNormalizeOutput {
   const trimmed = rawTopic.trim();
-  const match = trimmed.match(/^(.+?)(?:对|与|和)(.+?)(?:的)?(?:影响|效应|关系)(?:研究)?$/);
-  const independentVariable = match?.[1]?.trim() || trimmed || "核心解释变量";
-  const dependentVariable = match?.[2]?.trim() || "被解释变量";
-  const normalizedTopic = match
-    ? `${independentVariable}对${dependentVariable}的影响研究`
-    : trimmed || "待确认的研究主题";
+  const cleaned = trimmed.replace(/[\uFF0C\u3002\uFF1B;]+/g, "").trim();
+  const match = cleaned.match(/^(.+?)(?:\u5bf9|\u4e0e|\u548c)(.+?)(?:\u7684)?(?:\u5f71\u54cd|\u6548\u5e94|\u5173\u7cfb)(?:\u7814\u7a76)?$/);
+  const independentVariable = match?.[1]?.trim() || "";
+  const dependentVariable = match?.[2]?.trim() || "";
+  const normalizedTopic =
+    independentVariable && dependentVariable
+      ? `${independentVariable}\u5bf9${dependentVariable}\u7684\u5f71\u54cd\u7814\u7a76`
+      : trimmed || "\u7814\u7a76\u4e3b\u9898\u5f85\u8865\u5145";
 
   return {
     normalizedTopic,
     independentVariable,
     dependentVariable,
     researchObject: "",
-    relationship: "正向、负向和不显著",
-    confirmationMessage: "我已经先整理出一版研究设定。",
-    candidateTopics: [normalizedTopic]
+    relationship: "\u6b63\u5411\u3001\u8d1f\u5411\u548c\u4e0d\u663e\u8457",
+    confirmationMessage: "\u6211\u5df2\u7ecf\u6574\u7406\u51fa\u4e00\u7248\u7814\u7a76\u8bbe\u5b9a\u3002\u5982\u65e0\u95ee\u9898\uff0c\u8bf7\u786e\u8ba4\u5e76\u76f4\u63a5\u751f\u6210\u6574\u5957 Stata \u5de5\u4f5c\u6d41\u3002",
+    candidateTopics: normalizedTopic ? [normalizedTopic] : []
   };
 }
 
 export function buildGeneralResearchChatFallback(input: GeneralResearchChatInput): GeneralResearchChatOutput {
-  const prefix = input.topic ? `结合当前研究“${input.topic}”，` : "";
+  const prefix = input.topic ? `\u56f4\u7ed5\u201c${input.topic}\u201d\u8fd9\u9879\u7814\u7a76\uff0c` : "";
 
-  if (/固定效应/.test(input.userQuestion)) {
+  if (/\u56fa\u5b9a\u6548\u5e94/.test(input.userQuestion)) {
     return {
-      answer: `${prefix}固定效应的作用，是控制那些不随时间变化但会持续影响结果变量的个体差异，以及同一时期的共同冲击。企业固定效应和年份固定效应，是经管面板回归里最常见的起点。`,
+      answer: `${prefix}\u56fa\u5b9a\u6548\u5e94\u7684\u4f5c\u7528\uff0c\u662f\u63a7\u5236\u90a3\u4e9b\u4e0d\u968f\u65f6\u95f4\u53d8\u5316\u3001\u4f46\u4f1a\u7cfb\u7edf\u6027\u5f71\u54cd\u7ed3\u679c\u7684\u9057\u6f0f\u56e0\u7d20\u3002\u5e38\u89c1\u5199\u6cd5\u662f\u52a0\u5165\u4f01\u4e1a\u56fa\u5b9a\u6548\u5e94\u548c\u5e74\u4efd\u56fa\u5b9a\u6548\u5e94\u3002`,
       keyPoints: [
-        "企业固定效应控制企业层面不随时间变化的遗漏因素。",
-        "年份固定效应控制宏观周期和共同政策冲击。",
-        "如果你的核心变量主要在企业和年份两个维度变化，双固定效应通常是比较稳妥的起点。"
+        "\u4f01\u4e1a\u56fa\u5b9a\u6548\u5e94\u7528\u4e8e\u63a7\u5236\u4f01\u4e1a\u5c42\u9762\u4e0d\u968f\u65f6\u95f4\u53d8\u5316\u7684\u7279\u5f81\u3002",
+        "\u5e74\u4efd\u56fa\u5b9a\u6548\u5e94\u7528\u4e8e\u63a7\u5236\u5b8f\u89c2\u73af\u5883\u6216\u653f\u7b56\u5e74\u5ea6\u51b2\u51fb\u3002",
+        "\u5982\u679c\u7814\u7a76\u5bf9\u8c61\u8de8\u884c\u4e1a\u5dee\u5f02\u660e\u663e\uff0c\u4e5f\u53ef\u4ee5\u8fdb\u4e00\u6b65\u8003\u8651\u884c\u4e1a\u56fa\u5b9a\u6548\u5e94\u3002"
       ],
-      suggestedNextActions: ["明确个体维度和时间维度变量分别是什么。", "再确认是否需要行业或地区固定效应。"]
+      suggestedNextActions: ["\u5982\u9700\u6211\u7ee7\u7eed\uff0c\u53ef\u4ee5\u76f4\u63a5\u8ba9\u6211\u8865\u4e00\u7248\u5e26\u56fa\u5b9a\u6548\u5e94\u7684 Stata \u4ee3\u7801\u3002"]
     };
   }
 
-  if (/控制变量/.test(input.userQuestion)) {
+  if (/\u63a7\u5236\u53d8\u91cf/.test(input.userQuestion)) {
     return {
-      answer: `${prefix}控制变量的目标，是缓解遗漏变量偏误。通常优先纳入文献中常见、并且理论上会同时影响解释变量和结果变量的企业特征与财务特征。`,
+      answer: `${prefix}\u63a7\u5236\u53d8\u91cf\u7684\u6838\u5fc3\u4f5c\u7528\uff0c\u662f\u628a\u90a3\u4e9b\u540c\u65f6\u5f71\u54cd\u89e3\u91ca\u53d8\u91cf\u548c\u88ab\u89e3\u91ca\u53d8\u91cf\u7684\u56e0\u7d20\u7eb3\u5165\u6a21\u578b\uff0c\u51cf\u5c11\u9057\u6f0f\u53d8\u91cf\u504f\u8bef\u3002`,
       keyPoints: [
-        "优先选择文献中常见且理论相关的控制变量。",
-        "每个控制变量都要有清晰口径，避免和核心解释变量高度重合。",
-        "变量数量要和样本量、共线性风险一起考虑。"
+        "\u63a7\u5236\u53d8\u91cf\u4e00\u822c\u6765\u81ea\u65e2\u6709\u6587\u732e\u7684\u5e38\u89c1\u53e3\u5f84\u3002",
+        "\u4f18\u5148\u4fdd\u7559\u6709\u7406\u8bba\u4f9d\u636e\u3001\u4e14\u6570\u636e\u80fd\u7a33\u5b9a\u83b7\u53d6\u7684\u53d8\u91cf\u3002",
+        "\u63a7\u5236\u53d8\u91cf\u8fc7\u591a\u4f1a\u589e\u52a0\u5171\u7ebf\u6027\u98ce\u9669\uff0c\u9700\u8981\u7ed3\u5408\u7814\u7a76\u4e3b\u9898\u7b5b\u9009\u3002"
       ],
-      suggestedNextActions: ["先列出 5 到 8 个最常见控制变量。", "逐个确认变量定义、计算方式和数据来源。"]
+      suggestedNextActions: ["\u5982\u679c\u4f60\u613f\u610f\uff0c\u6211\u53ef\u4ee5\u6309\u7167\u4f60\u7684\u9898\u76ee\u7ed9\u51fa\u4e00\u7248\u66f4\u5408\u9002\u7684\u63a7\u5236\u53d8\u91cf\u6e05\u5355\u3002"]
     };
   }
 
-  if (/内生性/.test(input.userQuestion)) {
+  if (/\u6837\u672c\u533a\u95f4|\u65f6\u95f4\u8303\u56f4/.test(input.userQuestion)) {
     return {
-      answer: `${prefix}内生性通常来自反向因果、遗漏变量或测量误差。通常先把基准回归、固定效应和稳健性检验做好，再决定是否需要工具变量、双重差分或其他更强的识别策略。`,
+      answer: `${prefix}\u6837\u672c\u533a\u95f4\u901a\u5e38\u8981\u540c\u65f6\u8003\u8651\u653f\u7b56\u80cc\u666f\u3001\u6570\u636e\u53ef\u5f97\u6027\u548c\u53d8\u91cf\u53e3\u5f84\u4e00\u81f4\u6027\u3002\u65f6\u95f4\u592a\u77ed\u4f1a\u5f71\u54cd\u8bc6\u522b\uff0c\u65f6\u95f4\u592a\u957f\u53c8\u53ef\u80fd\u9047\u5230\u53e3\u5f84\u53d8\u5316\u3002`,
       keyPoints: [
-        "先判断内生性的来源，再选处理方法。",
-        "工具变量、DID、自然实验都需要额外的识别逻辑。",
-        "如果识别策略解释不清，再复杂的方法也站不住。"
+        "\u5148\u786e\u8ba4\u6838\u5fc3\u6570\u636e\u6e90\u4ece\u54ea\u4e00\u5e74\u5f00\u59cb\u7a33\u5b9a\u53ef\u5f97\u3002",
+        "\u6837\u672c\u671f\u6700\u597d\u8986\u76d6\u653f\u7b56\u524d\u540e\u6216\u5173\u952e\u5236\u5ea6\u53d8\u5316\u9636\u6bb5\u3002",
+        "\u5982\u679c\u4e2d\u9014\u53d8\u91cf\u53e3\u5f84\u53d1\u751f\u53d8\u5316\uff0c\u9700\u8981\u5355\u72ec\u8bf4\u660e\u5904\u7406\u65b9\u5f0f\u3002"
       ],
-      suggestedNextActions: ["先说明你最担心的是哪一种内生性。", "再看当前题目有没有合适的外生冲击或工具变量。"]
+      suggestedNextActions: ["\u5982\u679c\u4f60\u628a\u6570\u636e\u6765\u6e90\u544a\u8bc9\u6211\uff0c\u6211\u53ef\u4ee5\u5e2e\u4f60\u5224\u65ad\u6837\u672c\u533a\u95f4\u662f\u5426\u5408\u9002\u3002"]
     };
   }
 
   return {
-    answer: `${prefix}这个问题可以从研究设定、变量构建和识别策略三个层面来理解。你可以继续把问题说得更具体一点，我会结合当前模块帮你拆解。`,
+    answer: `${prefix}\u6211\u53ef\u4ee5\u7ee7\u7eed\u5e2e\u4f60\u89e3\u91ca\u5f53\u524d\u6a21\u5757\u7684\u903b\u8f91\u3001\u8865\u5168\u53d8\u91cf\u8bbe\u5b9a\uff0c\u6216\u8005\u628a\u67d0\u4e00\u6bb5 Stata \u4ee3\u7801\u6539\u5f97\u66f4\u7ec6\u3002`,
     keyPoints: [
-      "先判断这属于概念问题、变量问题，还是识别策略问题。",
-      "尽量把提问和当前题目、样本、变量设定挂钩。",
-      "如果问题和当前模块直接相关，优先补足能推进下一步的信息。"
+      "\u4f60\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee\u5f53\u524d\u6a21\u5757\u7684\u7406\u8bba\u542b\u4e49\u3002",
+      "\u4e5f\u53ef\u4ee5\u8ba9\u6211\u76f4\u63a5\u8865\u4e00\u7248\u66f4\u8be6\u7ec6\u7684\u4ee3\u7801\u6a21\u677f\u3002",
+      "\u5982\u679c\u7814\u7a76\u8bbe\u5b9a\u6709\u53d8\u5316\uff0c\u6211\u4e5f\u53ef\u4ee5\u5148\u5e2e\u4f60\u91cd\u6574\u6458\u8981\u518d\u91cd\u65b0\u751f\u6210\u3002"
     ],
-    suggestedNextActions: ["可以继续追问某个变量、某条代码或某种识别策略。"]
+    suggestedNextActions: ["\u76f4\u63a5\u544a\u8bc9\u6211\u4f60\u60f3\u7ee7\u7eed\u8ffd\u95ee\u54ea\u4e00\u90e8\u5206\u3002"]
   };
 }
 
@@ -351,14 +488,20 @@ export function buildResultInterpretFallback(input: ResultInterpretInput): Resul
   const significant = /\*\*\*|\*\*|\*|p\s*</i.test(input.resultText);
   return {
     plainExplanation: significant
-      ? "从当前结果看，核心解释变量已经呈现出统计上显著的影响，初步支持研究假设。"
-      : "从当前结果看，核心解释变量暂时没有表现出稳定的统计显著性，还不能直接支持研究假设。",
+      ? "\u4ece\u5f53\u524d\u7ed3\u679c\u770b\uff0c\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u4e0e\u88ab\u89e3\u91ca\u53d8\u91cf\u4e4b\u95f4\u5b58\u5728\u7edf\u8ba1\u4e0a\u663e\u8457\u7684\u5173\u7cfb\uff0c\u53ef\u4ee5\u5148\u4ece\u65b9\u5411\u3001\u663e\u8457\u6027\u548c\u7ecf\u6d4e\u610f\u4e49\u4e09\u65b9\u9762\u5c55\u5f00\u89e3\u91ca\u3002"
+      : "\u4ece\u5f53\u524d\u7ed3\u679c\u770b\uff0c\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u4e0e\u88ab\u89e3\u91ca\u53d8\u91cf\u4e4b\u95f4\u6682\u65f6\u6ca1\u6709\u5f62\u6210\u7a33\u5b9a\u663e\u8457\u7684\u7edf\u8ba1\u5173\u7cfb\uff0c\u9700\u8981\u8fdb\u4e00\u6b65\u68c0\u67e5\u6a21\u578b\u8bbe\u5b9a\u4e0e\u53d8\u91cf\u53e3\u5f84\u3002",
     paperStyleExplanation: significant
-      ? "回归结果表明，核心解释变量与被解释变量之间存在显著关联，为研究假设提供了初步经验支持。"
-      : "当前回归结果尚未识别出稳定且显著的核心效应，因此在进一步检验之前，不宜作出过强结论。",
-    analysisPoints: ["核心系数方向", "显著性水平", "样本量", "固定效应设定", "标准误设定"],
+      ? "\u56de\u5f52\u7ed3\u679c\u8868\u660e\uff0c\u5728\u63a7\u5236\u76f8\u5173\u53d8\u91cf\u548c\u56fa\u5b9a\u6548\u5e94\u540e\uff0c\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u7684\u4f30\u8ba1\u7cfb\u6570\u4ecd\u7136\u663e\u8457\uff0c\u8bf4\u660e\u8be5\u53d8\u91cf\u5bf9\u88ab\u89e3\u91ca\u53d8\u91cf\u5177\u6709\u7a33\u5b9a\u5f71\u54cd\u3002"
+      : "\u56de\u5f52\u7ed3\u679c\u663e\u793a\uff0c\u5728\u5f53\u524d\u6a21\u578b\u8bbe\u5b9a\u4e0b\uff0c\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u7684\u4f30\u8ba1\u7cfb\u6570\u672a\u8fbe\u5230\u5e38\u89c4\u663e\u8457\u6027\u6c34\u5e73\uff0c\u8bf4\u660e\u5176\u5f71\u54cd\u5c1a\u7f3a\u4e4f\u7a33\u5b9a\u7edf\u8ba1\u8bc1\u636e\u3002",
+    analysisPoints: [
+      "\u5148\u770b\u7cfb\u6570\u65b9\u5411",
+      "\u518d\u770b\u663e\u8457\u6027\u6c34\u5e73",
+      "\u7ed3\u5408\u7ecf\u6d4e\u542b\u4e49\u89e3\u91ca",
+      "\u6bd4\u8f83\u4e0d\u540c\u6a21\u578b\u89c4\u683c",
+      "\u68c0\u67e5\u7a33\u5065\u6027\u4e0e\u5185\u751f\u6027"
+    ],
     missingInfo: [],
-    nextSuggestion: "如果你愿意，可以把完整回归表贴给我，我再按论文写法帮你展开解释。"
+    nextSuggestion: "\u5982\u679c\u4f60\u628a\u5b8c\u6574\u56de\u5f52\u8868\u8d34\u7ed9\u6211\uff0c\u6211\u53ef\u4ee5\u7ee7\u7eed\u5e2e\u4f60\u5199\u6210\u8bba\u6587\u5f0f\u7ed3\u679c\u89e3\u8bfb\u3002"
   };
 }
 
@@ -368,26 +511,32 @@ export function buildStataErrorFallback(input: StataErrorDebugInput): StataError
   if (errorText.includes("not found") || errorText.includes("command")) {
     return {
       errorType: "command_not_found",
-      explanation: "这个报错通常意味着当前 Stata 环境里没有安装对应命令，或者命令名写错了。",
-      fixCode: "ssc install reghdfe, replace\nssc install ftools, replace\nssc install outreg2, replace",
-      retryMessage: "先安装缺失命令，再重新运行原始代码。"
+      explanation: "\u8fd9\u4e2a\u62a5\u9519\u901a\u5e38\u8bf4\u660e\u5bf9\u5e94\u547d\u4ee4\u8fd8\u6ca1\u6709\u5b89\u88c5\uff0c\u6216\u8005\u5f53\u524d\u73af\u5883\u6ca1\u6709\u6b63\u786e\u8bc6\u522b\u7528\u6237\u81ea\u88c5\u547d\u4ee4\u3002",
+      fixCode: [
+        "capture which reghdfe",
+        "if _rc ssc install reghdfe, replace",
+        "capture which ftools",
+        "if _rc ssc install ftools, replace",
+        "capture which outreg2",
+        "if _rc ssc install outreg2, replace"
+      ].join("\\n"),
+      retryMessage: "\u5b89\u88c5\u5b8c\u6210\u540e\uff0c\u518d\u91cd\u65b0\u8fd0\u884c\u539f\u6765\u7684\u56de\u5f52\u547d\u4ee4\u5373\u53ef\u3002"
     };
   }
 
-  if (errorText.includes("variable") || errorText.includes("not found")) {
+  if (errorText.includes("variable") || errorText.includes("ambiguous abbreviation")) {
     return {
       errorType: "variable_not_found",
-      explanation: "这个报错更像是变量名不存在、拼写错误，或者当前数据集没有加载该变量。",
-      fixCode: "describe\nlookfor variable_name",
-      retryMessage: "请先确认变量真实名称，再重新运行代码。"
+      explanation: "\u8fd9\u4e2a\u62a5\u9519\u901a\u5e38\u8bf4\u660e\u53d8\u91cf\u540d\u5199\u9519\u4e86\uff0c\u6216\u8005\u5f53\u524d\u6570\u636e\u96c6\u4e2d\u6839\u672c\u6ca1\u6709\u8be5\u53d8\u91cf\u3002",
+      fixCode: ["describe", "lookfor variable_name"].join("\\n"),
+      retryMessage: "\u5148\u786e\u8ba4\u53d8\u91cf\u7684\u771f\u5b9e\u5b57\u6bb5\u540d\uff0c\u518d\u628a\u4ee3\u7801\u91cc\u7684\u53d8\u91cf\u540d\u66ff\u6362\u6210\u6b63\u786e\u5199\u6cd5\u3002"
     };
   }
 
   return {
     errorType: "stata_error",
-    explanation: "我已经识别到这是一条 Stata 报错。建议先检查命令语法、变量名和导出路径。",
-    fixCode: input.relatedCode || "请把完整命令和完整报错一起贴给我，我再逐行帮你排查。",
-    retryMessage: "如果修正后仍然报错，请把完整报错原文继续发给我。"
+    explanation: "\u6211\u5df2\u7ecf\u5148\u6839\u636e\u8fd9\u6bb5\u62a5\u9519\u7ed9\u51fa\u4e00\u7248\u901a\u7528\u6392\u67e5\u601d\u8def\uff0c\u5efa\u8bae\u4f60\u4f18\u5148\u68c0\u67e5\u53d8\u91cf\u540d\u3001\u547d\u4ee4\u5b89\u88c5\u548c\u62ec\u53f7\u5199\u6cd5\u3002",
+    fixCode: input.relatedCode || "\u8bf7\u628a\u89e6\u53d1\u62a5\u9519\u7684\u5b8c\u6574 Stata \u4ee3\u7801\u4e00\u8d77\u8d34\u7ed9\u6211\uff0c\u6211\u4f1a\u7ee7\u7eed\u9010\u884c\u6392\u67e5\u3002",
+    retryMessage: "\u5982\u679c\u8fd8\u6709\u62a5\u9519\uff0c\u628a\u5b8c\u6574\u62a5\u9519\u4fe1\u606f\u548c\u4e0a\u4e0b\u6587\u4ee3\u7801\u53d1\u7ed9\u6211\uff0c\u6211\u4f1a\u7ee7\u7eed\u5e2e\u4f60\u5b9a\u4f4d\u3002"
   };
 }
-

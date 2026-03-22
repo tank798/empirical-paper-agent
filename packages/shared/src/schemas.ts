@@ -50,6 +50,22 @@ export const skillNameSchema = z.enum([
   SkillName.EXPORT_TABLE
 ]);
 
+export const termMappingCategorySchema = z.enum([
+  "independent",
+  "dependent",
+  "control",
+  "fixed_effect",
+  "cluster",
+  "panel",
+  "time"
+]);
+
+export const termMappingSchema = z.object({
+  category: termMappingCategorySchema,
+  labelCn: z.string(),
+  alias: z.string()
+});
+
 export const researchProfileSchema = z.object({
   projectId: z.string().uuid().optional(),
   normalizedTopic: z.string().optional().default(""),
@@ -63,7 +79,8 @@ export const researchProfileSchema = z.object({
   panelId: z.string().optional().nullable(),
   timeVar: z.string().optional().nullable(),
   sampleScope: z.string().optional().nullable(),
-  notes: z.string().optional().nullable()
+  notes: z.string().optional().nullable(),
+  termMappings: z.array(termMappingSchema).optional().default([])
 });
 
 export const projectSchema = z.object({
@@ -155,7 +172,13 @@ export const dataCleaningInputSchema = z.object({
   dependentVariable: z.string().optional().default("y"),
   independentVariable: z.string().optional().default("x"),
   controls: z.array(z.string()).optional().default([]),
-  needLogVars: z.array(z.string()).optional().default([])
+  needLogVars: z.array(z.string()).optional().default([]),
+  fixedEffects: z.array(z.string()).optional().default([]),
+  clusterVar: z.string().optional().nullable(),
+  panelId: z.string().optional().nullable(),
+  timeVar: z.string().optional().nullable(),
+  sampleScope: z.string().optional().nullable(),
+  termMappings: z.array(termMappingSchema).optional().default([])
 });
 
 export const dataCleaningOutputSchema = z.object({
@@ -163,6 +186,7 @@ export const dataCleaningOutputSchema = z.object({
   purpose: z.string(),
   meaning: z.string(),
   variableDesign: z.array(z.string()),
+  termMappings: z.array(termMappingSchema).optional().default([]),
   modelSpec: z.string(),
   stataCode: z.string(),
   codeExplanation: z.array(z.string()),
@@ -194,6 +218,8 @@ export const regressionSkillInputSchema = z.object({
   controls: z.array(z.string()).optional().default([]),
   fixedEffects: z.array(z.string()).optional().default([]),
   clusterVar: z.string().optional().nullable(),
+  panelId: z.string().optional().nullable(),
+  timeVar: z.string().optional().nullable(),
   exportState: regressionExportSchema
     .pick({
       fileName: true,
@@ -201,7 +227,8 @@ export const regressionSkillInputSchema = z.object({
       writeMode: true
     })
     .optional(),
-  sampleScope: z.string().optional().nullable()
+  sampleScope: z.string().optional().nullable(),
+  termMappings: z.array(termMappingSchema).optional().default([])
 });
 
 export const regressionSkillOutputSchema = z.object({
@@ -209,11 +236,12 @@ export const regressionSkillOutputSchema = z.object({
   purpose: z.string(),
   meaning: z.string(),
   variableDesign: z.array(z.string()),
+  termMappings: z.array(termMappingSchema).optional().default([]),
   modelSpec: z.string(),
   stataCode: z.string(),
   codeExplanation: z.array(z.string()),
   interpretationGuide: z.array(z.string()),
-  export: regressionExportSchema,
+  export: regressionExportSchema.optional(),
   nextSuggestion: z.string()
 });
 
@@ -350,6 +378,8 @@ export type StataErrorDebugInput = z.infer<typeof stataErrorDebugInputSchema>;
 export type StataErrorDebugOutput = z.infer<
   typeof stataErrorDebugOutputSchema
 >;
+export type TermMappingCategory = z.infer<typeof termMappingCategorySchema>;
+export type TermMapping = z.infer<typeof termMappingSchema>;
 export type PlaceholderSkillOutput = z.infer<
   typeof placeholderSkillOutputSchema
 >;

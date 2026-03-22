@@ -210,16 +210,28 @@ export class SkillsService {
         dependentVariable: profile?.dependentVariable || payload.dependentVariable || "y",
         independentVariable: profile?.independentVariable || payload.independentVariable || "x",
         controls: profile?.controls?.length ? profile.controls : (payload.controls as string[] | undefined) ?? [],
+        fixedEffects: profile?.fixedEffects?.length ? profile.fixedEffects : (payload.fixedEffects as string[] | undefined) ?? [],
+        clusterVar: profile?.clusterVar || (payload.clusterVar as string | undefined) || null,
+        panelId: profile?.panelId || (payload.panelId as string | undefined) || null,
+        timeVar: profile?.timeVar || (payload.timeVar as string | undefined) || null,
+        sampleScope: profile?.sampleScope || (payload.sampleScope as string | undefined) || null,
+        termMappings: profile?.termMappings ?? [],
         needLogVars: (payload.needLogVars as string[] | undefined) ?? []
       };
     }
 
     if (skillName === SkillName.DATA_CHECK) {
       const resolved = this.researchProfileService.resolveRegressionInput(profile, payload, recentMessages);
+      const keyVariables = [
+        resolved.termMappings.find((item) => item.category === "dependent")?.alias || resolved.dependentVariable,
+        resolved.termMappings.find((item) => item.category === "independent")?.alias || resolved.independentVariable,
+        ...resolved.termMappings.filter((item) => item.category === "control").map((item) => item.alias)
+      ].filter(Boolean);
+
       return {
         panelId: resolved.panelId,
         timeVar: resolved.timeVar,
-        keyVariables: [resolved.dependentVariable, resolved.independentVariable, ...(resolved.controls ?? [])].filter(Boolean)
+        keyVariables
       };
     }
 
@@ -236,7 +248,10 @@ export class SkillsService {
         controls: resolved.controls,
         fixedEffects: resolved.fixedEffects,
         clusterVar: resolved.clusterVar,
+        panelId: resolved.panelId,
+        timeVar: resolved.timeVar,
         sampleScope: resolved.sampleScope,
+        termMappings: resolved.termMappings,
         exportState: {
           fileName: exportState.fileName,
           filePath: exportState.filePath,
@@ -321,7 +336,8 @@ export class SkillsService {
         clusterVar: researchProfile.clusterVar,
         panelId: researchProfile.panelId,
         timeVar: researchProfile.timeVar,
-        sampleScope: researchProfile.sampleScope
+        sampleScope: researchProfile.sampleScope,
+        termMappings: researchProfile.termMappings
       }).filter(([, value]) => {
         if (Array.isArray(value)) {
           return value.length > 0;
