@@ -27,10 +27,12 @@ RUN pnpm --filter @empirical/shared build \
  && pnpm --filter api prisma:generate \
  && pnpm --filter api build
 
+RUN chmod +x /app/apps/api/scripts/start-production.sh
+
 ENV NODE_ENV=production
 ENV PORT=4000
 ENV PROMPTS_DIR=/app/packages/prompts
 
 EXPOSE 4000
 
-CMD ["sh", "-c", "pnpm --filter api exec prisma migrate deploy && node apps/api/dist/apps/api/src/main.js"]
+CMD ["sh", "/app/apps/api/scripts/start-production.sh"]
