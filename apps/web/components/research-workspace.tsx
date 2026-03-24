@@ -4,6 +4,7 @@ import clsx from "clsx";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  type ClipboardEvent,
   type ChangeEvent,
   type KeyboardEvent,
   type ReactNode,
@@ -22,6 +23,7 @@ import {
   type WorkflowStreamPhase as WorkflowStreamPhaseValue
 } from "@empirical/shared";
 import { apiRequest, streamApiRequest } from "../lib/api";
+import { ensureNamedImageFile, extractImageText } from "../lib/image-ocr";
 import { appendCommittedSpeech, buildSpeechText, finalizeSpeechText } from "../lib/speech";
 import { normalizeAssistantCopy, normalizeDisplayText, normalizeResearchObjectText } from "../lib/message-display";
 import { clearPendingProjectBootstrap, getPendingProjectBootstrap, getStoredProject, getStoredProjects } from "../lib/storage";
@@ -52,6 +54,7 @@ type ComposerAttachment = {
   size: number;
   content: string;
   truncated: boolean;
+  source: "file" | "image";
 };
 
 type SpeechRecognitionAlternativeLike = {
@@ -157,6 +160,7 @@ const SUPPORTED_ATTACHMENT_EXTENSIONS = new Set([
 const MAX_ATTACHMENT_CHARACTERS = 20000;
 const MAX_SPREADSHEET_ROWS = 80;
 const MAX_SPREADSHEET_SHEETS = 4;
+const SUPPORTED_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "bmp", "gif"]);
 
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
@@ -201,7 +205,7 @@ function buildAttachment(file: File, mimeType: string, rawContent: string, trunc
   const normalized = normalizeAttachmentText(rawContent);
 
   if (!normalized) {
-    throw new Error("文件中没有可读取的内容，请换一个文件再试。");
+    throw new Error("\u6587\u4ef6\u4e2d\u6ca1\u6709\u53ef\u8bfb\u53d6\u7684\u5185\u5bb9\uff0c\u8bf7\u6362\u4e00\u4e2a\u6587\u4ef6\u518d\u8bd5\u3002");
   }
 
   return {
@@ -209,13 +213,19 @@ function buildAttachment(file: File, mimeType: string, rawContent: string, trunc
     mimeType,
     size: file.size,
     content: normalized.slice(0, MAX_ATTACHMENT_CHARACTERS),
-    truncated: truncated || normalized.length > MAX_ATTACHMENT_CHARACTERS
+    truncated: truncated || normalized.length > MAX_ATTACHMENT_CHARACTERS,
+    source: mimeType.startsWith("image/") ? "image" : "file"
   };
 }
 
 function canReadAttachment(file: File) {
   const extension = getFileExtension(file.name);
-  return file.type.startsWith("text/") || SUPPORTED_ATTACHMENT_EXTENSIONS.has(extension);
+  return (
+    file.type.startsWith("text/") ||
+    file.type.startsWith("image/") ||
+    SUPPORTED_ATTACHMENT_EXTENSIONS.has(extension) ||
+    SUPPORTED_IMAGE_EXTENSIONS.has(extension)
+  );
 }
 
 async function readPlainTextAttachment(file: File): Promise<ComposerAttachment> {
@@ -334,12 +344,27 @@ async function readSpreadsheetAttachment(file: File): Promise<ComposerAttachment
   );
 }
 
-async function readComposerAttachment(file: File): Promise<ComposerAttachment> {
+async function readImageAttachment(
+  file: File,
+  onStatus?: (statusText: string) => void
+): Promise<ComposerAttachment> {
+  const rawContent = await extractImageText(file, (status) => onStatus?.(status.text));
+  return buildAttachment(file, file.type || "image/png", rawContent);
+}
+
+async function readComposerAttachment(
+  file: File,
+  options: { onStatus?: (statusText: string) => void } = {}
+): Promise<ComposerAttachment> {
   if (!canReadAttachment(file)) {
-    throw new Error("目前支持 txt、md、csv、json、pdf、docx、xls、xlsx 等可解析文件。");
+    throw new Error("\u76ee\u524d\u652f\u6301\u6587\u672c\u6587\u4ef6\u3001\u8868\u683c\u3001PDF\u3001Word\uff0c\u4ee5\u53ca\u76f4\u63a5\u7c98\u8d34\u6216\u4e0a\u4f20\u622a\u56fe\u56fe\u7247\u3002");
   }
 
   const extension = getFileExtension(file.name);
+
+  if (file.type.startsWith("image/") || SUPPORTED_IMAGE_EXTENSIONS.has(extension)) {
+    return readImageAttachment(file, options.onStatus);
+  }
 
   if (extension === "pdf") {
     return readPdfAttachment(file);
@@ -369,7 +394,13 @@ function formatAttachmentSize(size: number) {
 }
 
 function buildComposerSubmission(rawMessage: string, attachment: ComposerAttachment | null) {
-  const baseMessage = rawMessage.trim() || (attachment ? "请结合附件内容继续处理。" : "");
+  const baseMessage =
+    rawMessage.trim() ||
+    (attachment
+      ? attachment.source === "image"
+        ? "请结合截图识别内容继续处理。"
+        : "请结合附件内容继续处理。"
+      : "");
 
   if (!attachment) {
     return {
@@ -382,6 +413,7 @@ function buildComposerSubmission(rawMessage: string, attachment: ComposerAttachm
     "文件名：" + attachment.name,
     "类型：" + attachment.mimeType,
     "大小：" + formatAttachmentSize(attachment.size),
+    attachment.source === "image" ? "来源：截图 / 图片 OCR" : "来源：文件解析",
     attachment.truncated ? "内容较长，已截断展示" : "内容已完整解析",
     attachment.content
   ];
@@ -614,6 +646,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const [error, setError] = useState("");
   const [composerError, setComposerError] = useState("");
   const [attachment, setAttachment] = useState<ComposerAttachment | null>(null);
+  const [attachmentProcessing, setAttachmentProcessing] = useState(false);
+  const [attachmentStatusText, setAttachmentStatusText] = useState("");
   const [listening, setListening] = useState(false);
   const [selectedStageId, setSelectedStageId] = useState<StageId>("topic");
   const [liveTurn, setLiveTurn] = useState<LiveTurnState | null>(null);
@@ -666,6 +700,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setComposerError("");
     setInput("");
     setAttachment(null);
+    setAttachmentProcessing(false);
+    setAttachmentStatusText("");
     setListening(false);
     setSelectedStageId("topic");
     setPendingBootstrapTopic(hasHydratedBootstrap ? null : pendingBootstrap?.topic ?? null);
@@ -1082,6 +1118,30 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     await streamMessage("\u786e\u8ba4\u5e76\u751f\u6210");
   };
 
+  const processAttachment = async (file: File) => {
+    const normalizedFile = ensureNamedImageFile(file);
+
+    try {
+      setComposerError("");
+      setAttachmentProcessing(true);
+      setAttachmentStatusText(
+        normalizedFile.type.startsWith("image/") ? "正在识别截图文字..." : "正在解析附件..."
+      );
+      const nextAttachment = await readComposerAttachment(normalizedFile, {
+        onStatus: (statusText) => setAttachmentStatusText(statusText)
+      });
+      setAttachment(nextAttachment);
+    } catch (attachmentError) {
+      setAttachment(null);
+      setComposerError(
+        attachmentError instanceof Error ? attachmentError.message : "文件读取失败，请稍后重试。"
+      );
+    } finally {
+      setAttachmentProcessing(false);
+      setAttachmentStatusText("");
+    }
+  };
+
   const handleAttachmentPick = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -1090,20 +1150,27 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       return;
     }
 
-    try {
-      setComposerError("");
-      const nextAttachment = await readComposerAttachment(file);
-      setAttachment(nextAttachment);
-    } catch (attachmentError) {
-      setAttachment(null);
-      setComposerError(
-        attachmentError instanceof Error ? attachmentError.message : "文件读取失败，请稍后重试。"
-      );
+    await processAttachment(file);
+  };
+
+  const handleComposerPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const imageItem = Array.from(event.clipboardData.items).find((item) => item.type.startsWith("image/"));
+
+    if (!imageItem) {
+      return;
     }
+
+    const file = imageItem.getAsFile();
+    if (!file) {
+      return;
+    }
+
+    event.preventDefault();
+    void processAttachment(file);
   };
 
   const handleMicClick = () => {
-    if (sending) {
+    if (sending || attachmentProcessing) {
       return;
     }
 
@@ -1422,7 +1489,11 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
                 <p className="truncate text-sm font-medium text-slate-900">{attachment.name}</p>
                 <p className="mt-1 text-xs font-normal text-slate-500">
                   {formatAttachmentSize(attachment.size)}
-                  {attachment.truncated ? " · 内容已截断" : " · 内容已完成解析"}
+                  {attachment.source === "image"
+                    ? " \u00b7 \u56fe\u7247\u6587\u5b57\u5df2\u8bc6\u522b"
+                    : attachment.truncated
+                      ? " \u00b7 \u5185\u5bb9\u5df2\u622a\u65ad"
+                      : " \u00b7 \u5185\u5bb9\u5df2\u5b8c\u6210\u89e3\u6790"}
                 </p>
               </div>
             </div>
@@ -1438,9 +1509,10 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
 
         <textarea
           className="min-h-[120px] w-full resize-y rounded-[14px] border border-slate-200 bg-white px-4 py-3.5 text-sm font-normal leading-[1.7] text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-300 focus:ring-4 focus:ring-slate-200/60 disabled:cursor-not-allowed disabled:bg-slate-50"
-          disabled={sending || confirmProcessing}
+          disabled={sending || confirmProcessing || attachmentProcessing}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={handleComposerKeyDown}
+          onPaste={handleComposerPaste}
           placeholder={placeholderText}
           value={input}
         />
@@ -1448,7 +1520,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         <div className="mt-3 flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <input
-              accept=".txt,.md,.csv,.json,.log,.yml,.yaml,.xml,.html,.htm,.js,.ts,.tsx,.jsx,.py,.r,.sql,.tex,.do,.pdf,.docx,.xls,.xlsx,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              accept=".txt,.md,.csv,.json,.log,.yml,.yaml,.xml,.html,.htm,.js,.ts,.tsx,.jsx,.py,.r,.sql,.tex,.do,.pdf,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.bmp,.gif,text/*,image/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               className="hidden"
               onChange={handleAttachmentPick}
               ref={fileInputRef}
@@ -1456,7 +1528,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
             />
             <button
               className="interactive-round inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={sending || confirmProcessing}
+              disabled={sending || confirmProcessing || attachmentProcessing}
               onClick={() => fileInputRef.current?.click()}
               type="button"
             >
@@ -1466,12 +1538,16 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
               <p className="text-xs font-normal text-slate-400">{"Enter发送，Ctrl+Enter换行"}</p>
               {composerError ? (
                 <p className="mt-1 text-xs font-normal text-rose-500">{composerError}</p>
+              ) : attachmentProcessing ? (
+                <p className="mt-1 text-xs font-normal text-slate-500">{attachmentStatusText || "正在解析附件..."}</p>
               ) : attachment ? (
                 <p className="mt-1 truncate text-xs font-normal text-slate-500">
-                  已附加 {attachment.name}，发送后 Tank 会一起读取。
+                  {attachment.source === "image"
+                    ? `已附加截图 ${attachment.name}，文字识别完成后会和消息一起发送。`
+                    : `已附加 ${attachment.name}，发送后 Tank 会一起读取。`}
                 </p>
               ) : listening ? (
-                <p className="mt-1 text-xs font-normal text-slate-500">正在监听语音输入...</p>
+                <p className="mt-1 text-xs font-normal text-slate-500">{"\u6b63\u5728\u76d1\u542c\u8bed\u97f3\u8f93\u5165..."}</p>
               ) : null}
             </div>
           </div>
@@ -1484,7 +1560,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
                   ? "border-slate-900 bg-slate-900 text-white shadow-[0_8px_18px_rgba(15,23,42,0.18)]"
                   : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
               )}
-              disabled={sending || confirmProcessing}
+              disabled={sending || confirmProcessing || attachmentProcessing}
               onClick={handleMicClick}
               type="button"
             >
@@ -1495,7 +1571,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
                 "interactive-chip inline-flex h-10 items-center justify-center rounded-[10px] px-[18px] text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-60",
                 sending ? "bg-slate-950 hover:bg-slate-950" : "bg-slate-950 hover:bg-[#111827]"
               )}
-              disabled={sending || confirmProcessing || (!input.trim() && !attachment)}
+              disabled={sending || confirmProcessing || attachmentProcessing || (!input.trim() && !attachment)}
               onClick={() => void streamMessage(input, { attachment })}
               type="button"
             >

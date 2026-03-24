@@ -1,9 +1,10 @@
 "use client";
 
-import { startTransition, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { startTransition, type ClipboardEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { type AssistantMessageEnvelope, type ProjectDetail } from "@empirical/shared";
 import { apiRequest, streamApiRequest } from "../lib/api";
+import { buildPastedImageText, ensureNamedImageFile, extractImageText } from "../lib/image-ocr";
 import { appendCommittedSpeech, buildSpeechText, finalizeSpeechText } from "../lib/speech";
 import { saveStoredProject, setPendingProjectBootstrap } from "../lib/storage";
 import { ThinkingBubble } from "./thinking-bubble";
@@ -93,6 +94,8 @@ export function HomeHero() {
   const [focused, setFocused] = useState(false);
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
+  const [imageProcessing, setImageProcessing] = useState(false);
+  const [statusText, setStatusText] = useState("");
   const [error, setError] = useState("");
   const [handoffReady, setHandoffReady] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -113,7 +116,7 @@ export function HomeHero() {
 
   const createProject = async () => {
     const nextTopic = topic.trim();
-    if (!nextTopic) {
+    if (!nextTopic || imageProcessing) {
       return;
     }
 
@@ -166,7 +169,7 @@ export function HomeHero() {
   };
 
   const handleTopicKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== "Enter" || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+    if (imageProcessing || event.key !== "Enter" || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
       return;
     }
 
@@ -174,8 +177,39 @@ export function HomeHero() {
     void createProject();
   };
 
+  const handleTopicPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const imageItem = Array.from(event.clipboardData.items).find((item) => item.type.startsWith("image/"));
+
+    if (!imageItem) {
+      return;
+    }
+
+    const file = imageItem.getAsFile();
+    if (!file) {
+      return;
+    }
+
+    event.preventDefault();
+
+    void (async () => {
+      try {
+        setError("");
+        setImageProcessing(true);
+        setStatusText("\u6b63\u5728\u8bc6\u522b\u622a\u56fe\u6587\u5b57...");
+        const normalizedFile = ensureNamedImageFile(file);
+        const extractedText = await extractImageText(normalizedFile, (status) => setStatusText(status.text));
+        setTopic((current) => buildPastedImageText(current, extractedText));
+      } catch (requestError) {
+        setError(requestError instanceof Error ? requestError.message : "\u622a\u56fe\u8bc6\u522b\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002");
+      } finally {
+        setImageProcessing(false);
+        setStatusText("");
+      }
+    })();
+  };
+
   const handleMicClick = () => {
-    if (loading) {
+    if (loading || imageProcessing) {
       return;
     }
 
@@ -329,13 +363,17 @@ export function HomeHero() {
               onChange={(event) => setTopic(event.target.value)}
               onFocus={() => setFocused(true)}
               onKeyDown={handleTopicKeyDown}
+              onPaste={handleTopicPaste}
             />
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-4 px-1">
-            <button className="text-sm font-medium text-slate-500 transition hover:text-slate-900" type="button">
-              {"Enter\u53d1\u9001\uff0cCtrl+Enter\u6362\u884c"}
-            </button>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-slate-500 transition">
+                {imageProcessing ? statusText || "\u6b63\u5728\u8bc6\u522b\u622a\u56fe\u6587\u5b57..." : "Enter\u53d1\u9001\uff0cCtrl+Enter\u6362\u884c"}
+              </p>
+              <p className="mt-1 text-xs text-slate-400">{"\u652f\u6301\u76f4\u63a5 Ctrl+V \u7c98\u8d34\u622a\u56fe\uff0cTank \u4f1a\u81ea\u52a8\u8bc6\u522b\u56fe\u7247\u91cc\u7684\u6587\u5b57\u3002"}</p>
+            </div>
 
             <div className="flex items-center gap-2.5">
               <button
@@ -344,7 +382,7 @@ export function HomeHero() {
                     ? "border-slate-950 bg-slate-950 text-white shadow-[0_10px_24px_rgba(15,23,42,0.18)]"
                     : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
                 }`}
-                disabled={loading}
+                disabled={loading || imageProcessing}
                 onClick={handleMicClick}
                 type="button"
               >
@@ -353,7 +391,7 @@ export function HomeHero() {
 
               <button
                 className="inline-flex min-w-[132px] items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-base font-semibold text-white shadow-floating transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-55"
-                disabled={loading || !topic.trim()}
+                disabled={loading || imageProcessing || !topic.trim()}
                 onClick={() => void createProject()}
                 type="button"
               >
