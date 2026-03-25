@@ -393,7 +393,7 @@ export function HomeHero() {
                 {imageProcessing
                   ? statusText || "\u6b63\u5728\u8bc6\u522b\u622a\u56fe\u6587\u5b57..."
                   : pastedImage
-                    ? `\u5df2\u9644\u52a0\u622a\u56fe ${pastedImage.name}\uff0c\u70b9\u51fb\u786e\u8ba4\u540e\u4f1a\u81ea\u52a8\u8bc6\u522b\u3002`
+                    ? `\u5df2\u9644\u52a0\u622a\u56fe ${pastedImage.name}`
                     : "Enter\u53d1\u9001\uff0cCtrl+Enter\u6362\u884c"}
               </p>
             </div>

@@ -1603,9 +1603,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
               ) : attachment ? (
                 <p className="mt-1 truncate text-xs font-normal text-slate-500">
                   {attachment.source === "image"
-                    ? attachment.processed
-                      ? `已附加截图 ${attachment.name}，文字识别完成后会和消息一起发送。`
-                      : `已附加截图 ${attachment.name}，发送后会自动识别并一起处理。`
+                    ? `已附加截图 ${attachment.name}`
                     : `已附加 ${attachment.name}，发送后 Tank 会一起读取。`}
                 </p>
               ) : listening ? (
