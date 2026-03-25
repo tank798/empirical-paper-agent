@@ -55,6 +55,8 @@ type ComposerAttachment = {
   content: string;
   truncated: boolean;
   source: "file" | "image";
+  file: File | null;
+  processed: boolean;
 };
 
 type SpeechRecognitionAlternativeLike = {
@@ -214,7 +216,22 @@ function buildAttachment(file: File, mimeType: string, rawContent: string, trunc
     size: file.size,
     content: normalized.slice(0, MAX_ATTACHMENT_CHARACTERS),
     truncated: truncated || normalized.length > MAX_ATTACHMENT_CHARACTERS,
-    source: mimeType.startsWith("image/") ? "image" : "file"
+    source: mimeType.startsWith("image/") ? "image" : "file",
+    file: null,
+    processed: true
+  };
+}
+
+function buildPendingImageAttachment(file: File): ComposerAttachment {
+  return {
+    name: file.name,
+    mimeType: file.type || "image/png",
+    size: file.size,
+    content: "",
+    truncated: false,
+    source: "image",
+    file,
+    processed: false
   };
 }
 
@@ -959,10 +976,29 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     rawMessage: string,
     options: { attachment?: ComposerAttachment | null; payload?: Record<string, unknown> } = {}
   ) => {
-    const resolvedAttachment = options.attachment ?? null;
+    if (!stored || sending || attachmentProcessing) {
+      return;
+    }
+
+    let resolvedAttachment = options.attachment ?? null;
+
+    if (!rawMessage.trim() && !resolvedAttachment) {
+      return;
+    }
+
+    try {
+      resolvedAttachment = await resolveAttachmentForSubmission(resolvedAttachment);
+    } catch (attachmentError) {
+      setComposerError(
+        attachmentError instanceof Error ? attachmentError.message : "\u622a\u56fe\u8bc6\u522b\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002"
+      );
+      return;
+    }
+
     const submission = buildComposerSubmission(rawMessage, resolvedAttachment);
 
-    if (!stored || !submission.userMessage.trim() || sending) {
+    if (!submission.userMessage.trim()) {
+      setComposerError("\u622a\u56fe\u4e2d\u6ca1\u6709\u8bc6\u522b\u5230\u53ef\u7528\u6587\u5b57\uff0c\u8bf7\u6362\u4e00\u5f20\u66f4\u6e05\u6670\u7684\u56fe\u7247\u518d\u8bd5\u3002");
       return;
     }
 
@@ -1121,12 +1157,18 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const processAttachment = async (file: File) => {
     const normalizedFile = ensureNamedImageFile(file);
 
+    if (normalizedFile.type.startsWith("image/")) {
+      setComposerError("");
+      setAttachmentStatusText("");
+      setAttachment(buildPendingImageAttachment(normalizedFile));
+      return;
+    }
+
     try {
       setComposerError("");
+      setAttachment(null);
       setAttachmentProcessing(true);
-      setAttachmentStatusText(
-        normalizedFile.type.startsWith("image/") ? "正在识别截图文字..." : "正在解析附件..."
-      );
+      setAttachmentStatusText("正在解析附件...");
       const nextAttachment = await readComposerAttachment(normalizedFile, {
         onStatus: (statusText) => setAttachmentStatusText(statusText)
       });
@@ -1151,6 +1193,22 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     }
 
     await processAttachment(file);
+  };
+
+  const resolveAttachmentForSubmission = async (nextAttachment: ComposerAttachment | null) => {
+    if (!nextAttachment || nextAttachment.source !== "image" || !nextAttachment.file || nextAttachment.processed) {
+      return nextAttachment;
+    }
+
+    try {
+      setComposerError("");
+      setAttachmentProcessing(true);
+      setAttachmentStatusText("\u6b63\u5728\u8bc6\u522b\u622a\u56fe\u6587\u5b57...");
+      return await readImageAttachment(nextAttachment.file, (statusText) => setAttachmentStatusText(statusText));
+    } finally {
+      setAttachmentProcessing(false);
+      setAttachmentStatusText("");
+    }
   };
 
   const handleComposerPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -1490,7 +1548,9 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
                 <p className="mt-1 text-xs font-normal text-slate-500">
                   {formatAttachmentSize(attachment.size)}
                   {attachment.source === "image"
-                    ? " \u00b7 \u56fe\u7247\u6587\u5b57\u5df2\u8bc6\u522b"
+                    ? attachment.processed
+                      ? " \u00b7 \u56fe\u7247\u6587\u5b57\u5df2\u8bc6\u522b"
+                      : " \u00b7 \u53d1\u9001\u540e\u81ea\u52a8\u8bc6\u522b"
                     : attachment.truncated
                       ? " \u00b7 \u5185\u5bb9\u5df2\u622a\u65ad"
                       : " \u00b7 \u5185\u5bb9\u5df2\u5b8c\u6210\u89e3\u6790"}
@@ -1543,7 +1603,9 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
               ) : attachment ? (
                 <p className="mt-1 truncate text-xs font-normal text-slate-500">
                   {attachment.source === "image"
-                    ? `已附加截图 ${attachment.name}，文字识别完成后会和消息一起发送。`
+                    ? attachment.processed
+                      ? `已附加截图 ${attachment.name}，文字识别完成后会和消息一起发送。`
+                      : `已附加截图 ${attachment.name}，发送后会自动识别并一起处理。`
                     : `已附加 ${attachment.name}，发送后 Tank 会一起读取。`}
                 </p>
               ) : listening ? (

@@ -95,6 +95,7 @@ export function HomeHero() {
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
   const [imageProcessing, setImageProcessing] = useState(false);
+  const [pastedImage, setPastedImage] = useState<File | null>(null);
   const [statusText, setStatusText] = useState("");
   const [error, setError] = useState("");
   const [handoffReady, setHandoffReady] = useState(false);
@@ -104,7 +105,7 @@ export function HomeHero() {
   const speechInterimTextRef = useRef("");
   const keepListeningRef = useRef(false);
 
-  const showGhostText = !focused && !topic.trim();
+  const showGhostText = !focused && !topic.trim() && !pastedImage;
 
   useEffect(() => {
     return () => {
@@ -116,7 +117,7 @@ export function HomeHero() {
 
   const createProject = async () => {
     const nextTopic = topic.trim();
-    if (!nextTopic || imageProcessing) {
+    if ((!nextTopic && !pastedImage) || imageProcessing) {
       return;
     }
 
@@ -125,9 +126,24 @@ export function HomeHero() {
       setError("");
       setHandoffReady(false);
 
+      let submittedTopic = nextTopic;
+
+      if (pastedImage) {
+        setImageProcessing(true);
+        setStatusText("\u6b63\u5728\u8bc6\u522b\u622a\u56fe\u6587\u5b57...");
+        const extractedText = await extractImageText(pastedImage, (status) => setStatusText(status.text));
+        submittedTopic = buildPastedImageText(submittedTopic, extractedText).trim();
+        setImageProcessing(false);
+        setStatusText("");
+      }
+
+      if (!submittedTopic) {
+        throw new Error("\u622a\u56fe\u4e2d\u6ca1\u6709\u8bc6\u522b\u5230\u53ef\u7528\u6587\u5b57\uff0c\u8bf7\u6362\u4e00\u5f20\u66f4\u6e05\u6670\u7684\u56fe\u7247\u518d\u8bd5\u3002");
+      }
+
       const data = await apiRequest<{ project: { id: string; title: string }; resumeToken: string }>("/projects", {
         method: "POST",
-        body: JSON.stringify({ topicRaw: nextTopic })
+        body: JSON.stringify({ topicRaw: submittedTopic })
       });
 
       saveStoredProject({ id: data.project.id, token: data.resumeToken, title: data.project.title });
@@ -136,7 +152,7 @@ export function HomeHero() {
       await streamApiRequest(`/projects/${data.project.id}/workflow/stream`, {
         token: data.resumeToken,
         body: {
-          userMessage: nextTopic
+          userMessage: submittedTopic
         },
         onEvent: (event) => {
           if (event.type === "error") {
@@ -149,12 +165,13 @@ export function HomeHero() {
 
       setPendingProjectBootstrap({
         projectId: data.project.id,
-        topic: nextTopic,
+        topic: submittedTopic,
         createdAt: Date.now(),
         detail,
         messages
       });
 
+      setPastedImage(null);
       setHandoffReady(true);
       window.setTimeout(() => {
         startTransition(() => {
@@ -165,6 +182,8 @@ export function HomeHero() {
       setError(requestError instanceof Error ? requestError.message : "\u521b\u5efa\u9879\u76ee\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002");
       setLoading(false);
       setHandoffReady(false);
+      setImageProcessing(false);
+      setStatusText("");
     }
   };
 
@@ -190,22 +209,9 @@ export function HomeHero() {
     }
 
     event.preventDefault();
-
-    void (async () => {
-      try {
-        setError("");
-        setImageProcessing(true);
-        setStatusText("\u6b63\u5728\u8bc6\u522b\u622a\u56fe\u6587\u5b57...");
-        const normalizedFile = ensureNamedImageFile(file);
-        const extractedText = await extractImageText(normalizedFile, (status) => setStatusText(status.text));
-        setTopic((current) => buildPastedImageText(current, extractedText));
-      } catch (requestError) {
-        setError(requestError instanceof Error ? requestError.message : "\u622a\u56fe\u8bc6\u522b\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002");
-      } finally {
-        setImageProcessing(false);
-        setStatusText("");
-      }
-    })();
+    setError("");
+    setStatusText("");
+    setPastedImage(ensureNamedImageFile(file));
   };
 
   const handleMicClick = () => {
@@ -367,12 +373,29 @@ export function HomeHero() {
             />
           </div>
 
+          {pastedImage ? (
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="min-w-0 truncate text-sm font-medium text-slate-700">{`\u5df2\u9644\u52a0\u622a\u56fe ${pastedImage.name}`}</p>
+              <button
+                className="text-xs font-medium text-slate-500 transition hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={loading || imageProcessing}
+                onClick={() => setPastedImage(null)}
+                type="button"
+              >
+                {"\u79fb\u9664"}
+              </button>
+            </div>
+          ) : null}
+
           <div className="mt-4 flex flex-wrap items-center justify-between gap-4 px-1">
             <div className="min-w-0">
               <p className="text-sm font-medium text-slate-500 transition">
-                {imageProcessing ? statusText || "\u6b63\u5728\u8bc6\u522b\u622a\u56fe\u6587\u5b57..." : "Enter\u53d1\u9001\uff0cCtrl+Enter\u6362\u884c"}
+                {imageProcessing
+                  ? statusText || "\u6b63\u5728\u8bc6\u522b\u622a\u56fe\u6587\u5b57..."
+                  : pastedImage
+                    ? `\u5df2\u9644\u52a0\u622a\u56fe ${pastedImage.name}\uff0c\u70b9\u51fb\u786e\u8ba4\u540e\u4f1a\u81ea\u52a8\u8bc6\u522b\u3002`
+                    : "Enter\u53d1\u9001\uff0cCtrl+Enter\u6362\u884c"}
               </p>
-              <p className="mt-1 text-xs text-slate-400">{"\u652f\u6301\u76f4\u63a5 Ctrl+V \u7c98\u8d34\u622a\u56fe\uff0cTank \u4f1a\u81ea\u52a8\u8bc6\u522b\u56fe\u7247\u91cc\u7684\u6587\u5b57\u3002"}</p>
             </div>
 
             <div className="flex items-center gap-2.5">
@@ -391,7 +414,7 @@ export function HomeHero() {
 
               <button
                 className="inline-flex min-w-[132px] items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-base font-semibold text-white shadow-floating transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-55"
-                disabled={loading || imageProcessing || !topic.trim()}
+                disabled={loading || imageProcessing || (!topic.trim() && !pastedImage)}
                 onClick={() => void createProject()}
                 type="button"
               >
