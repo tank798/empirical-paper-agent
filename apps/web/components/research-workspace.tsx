@@ -695,6 +695,14 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     mechanism: null,
     heterogeneity: null
   });
+  const stageIndicatorPreviousRef = useRef({
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+    ready: false
+  });
+  const stageIndicatorMotionTimeoutRef = useRef<number | null>(null);
   const [stageIndicator, setStageIndicator] = useState({
     left: 0,
     top: 0,
@@ -702,6 +710,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     height: 0,
     ready: false
   });
+  const [stageIndicatorMotion, setStageIndicatorMotion] = useState<"idle" | "forward" | "backward">("idle");
 
   useIsomorphicLayoutEffect(() => {
     const pendingBootstrap = getPendingProjectBootstrap(projectId);
@@ -769,6 +778,9 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       keepListeningRef.current = false;
       speechCommittedTextRef.current = "";
       speechInterimTextRef.current = "";
+      if (stageIndicatorMotionTimeoutRef.current !== null) {
+        window.clearTimeout(stageIndicatorMotionTimeoutRef.current);
+      }
       recognitionRef.current?.stop();
       recognitionRef.current = null;
     };
@@ -888,6 +900,22 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       ready: true
     };
 
+    const previousIndicator = stageIndicatorPreviousRef.current;
+    if (
+      previousIndicator.ready &&
+      (previousIndicator.left !== nextIndicator.left || previousIndicator.width !== nextIndicator.width)
+    ) {
+      setStageIndicatorMotion(nextIndicator.left >= previousIndicator.left ? "forward" : "backward");
+      if (stageIndicatorMotionTimeoutRef.current !== null) {
+        window.clearTimeout(stageIndicatorMotionTimeoutRef.current);
+      }
+      stageIndicatorMotionTimeoutRef.current = window.setTimeout(() => {
+        setStageIndicatorMotion("idle");
+      }, 360);
+    }
+
+    stageIndicatorPreviousRef.current = nextIndicator;
+
     setStageIndicator((current) => {
       if (
         current.left === nextIndicator.left &&
@@ -915,13 +943,16 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         return;
       }
 
-      setStageIndicator({
+      const nextIndicator = {
         left: button.offsetLeft,
         top: button.offsetTop,
         width: button.offsetWidth,
         height: button.offsetHeight,
         ready: true
-      });
+      };
+
+      stageIndicatorPreviousRef.current = nextIndicator;
+      setStageIndicator(nextIndicator);
     };
 
     syncIndicator();
@@ -1436,46 +1467,74 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         pageEntered ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
       )}>
       <div className="border-b border-slate-200 pb-4">
-        <div ref={stageRailRef} className="relative flex flex-wrap gap-[10px] sm:gap-3">
-          {stageIndicator.ready ? (
-            <div
-              className="pointer-events-none absolute rounded-full bg-slate-950 shadow-[0_14px_30px_rgba(15,23,42,0.16)] transition-[transform,width,height] duration-300 ease-in-out"
-              style={{
-                width: stageIndicator.width,
-                height: stageIndicator.height,
-                transform: `translate(${stageIndicator.left}px, ${stageIndicator.top}px)`
-              }}
-            />
-          ) : null}
-
-          {stageMeta.map((stage, index) => {
-            const isHighlighted = highlightedStageId === stage.id;
-
-            return (
-              <button
-                key={stage.id}
-                ref={(node) => {
-                  stageButtonRefs.current[stage.id] = node;
-                }}
+        <div className="overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div
+            ref={stageRailRef}
+            className="stage-rail-track relative inline-flex min-w-max items-stretch rounded-[30px] border border-slate-200/80 bg-white/88 p-1.5 backdrop-blur-sm"
+          >
+            {stageIndicator.ready ? (
+              <div
                 className={clsx(
-                  "interactive-chip relative z-10 inline-flex h-[38px] items-center rounded-full border px-3 text-[13px] font-medium whitespace-nowrap transition-[color,border-color,background-color,transform,box-shadow] duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-slate-200",
-                  isHighlighted
-                    ? "border-transparent bg-transparent text-white shadow-none"
-                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900",
-                  confirmProcessing ? "cursor-default" : ""
+                  "stage-rail-indicator pointer-events-none absolute rounded-full transition-[transform,width,height] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                  stageIndicatorMotion === "forward" && "stage-rail-indicator-forward",
+                  stageIndicatorMotion === "backward" && "stage-rail-indicator-backward"
                 )}
-                disabled={confirmProcessing}
-                onClick={() => {
-                  if (!confirmProcessing) {
-                    setSelectedStageId(stage.id);
-                  }
+                style={{
+                  width:
+                    stageIndicator.width +
+                    (stageIndicatorMotion === "forward" ? 28 : stageIndicatorMotion === "backward" ? 16 : 0),
+                  height: stageIndicator.height,
+                  transform: `translate(${stageIndicator.left - (stageIndicatorMotion === "backward" ? 16 : 0)}px, ${stageIndicator.top}px)`
                 }}
-                type="button"
               >
-                <span>{`0${index + 1} ${stage.label}`}</span>
-              </button>
-            );
-          })}
+                <div className="absolute inset-0 rounded-full bg-[#050918] shadow-[0_18px_34px_rgba(2,6,23,0.18),0_0_34px_rgba(15,23,42,0.16)]" />
+                <div className="absolute inset-y-1 -left-2 w-7 rounded-full bg-[radial-gradient(circle_at_right,rgba(15,23,42,0.18),transparent_72%)] blur-lg opacity-70" />
+                <div className="absolute inset-y-0 -right-5 w-14 rounded-full bg-[radial-gradient(circle_at_left,rgba(15,23,42,0.42),transparent_76%)] blur-xl opacity-85" />
+              </div>
+            ) : null}
+
+            {stageMeta.map((stage, index) => {
+              const isHighlighted = highlightedStageId === stage.id;
+              const previousStageId = index > 0 ? stageMeta[index - 1]?.id : null;
+              const hideSeparator = previousStageId === highlightedStageId || stage.id === highlightedStageId;
+
+              return (
+                <button
+                  key={stage.id}
+                  ref={(node) => {
+                    stageButtonRefs.current[stage.id] = node;
+                  }}
+                  className={clsx(
+                    "relative z-10 inline-flex h-[46px] items-center rounded-[24px] px-5 text-[14px] font-medium whitespace-nowrap tracking-[0.01em] transition-[color,transform,filter] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus:ring-2 focus:ring-slate-200",
+                    isHighlighted
+                      ? "text-white [text-shadow:0_1px_10px_rgba(255,255,255,0.12)]"
+                      : stage.isCompleted
+                        ? "text-[#4d78ad] hover:text-slate-900"
+                        : "text-slate-600 hover:text-slate-900",
+                    confirmProcessing ? "cursor-default" : ""
+                  )}
+                  disabled={confirmProcessing}
+                  onClick={() => {
+                    if (!confirmProcessing) {
+                      setSelectedStageId(stage.id);
+                    }
+                  }}
+                  type="button"
+                >
+                  {index > 0 ? (
+                    <span
+                      aria-hidden="true"
+                      className={clsx(
+                        "pointer-events-none absolute left-0 top-1/2 h-[18px] w-px -translate-y-1/2 bg-[linear-gradient(180deg,rgba(226,232,240,0.02),rgba(203,213,225,0.9),rgba(226,232,240,0.02))] transition-opacity duration-300",
+                        hideSeparator ? "opacity-0" : "opacity-100"
+                      )}
+                    />
+                  ) : null}
+                  <span className={clsx("relative", isHighlighted && stageIndicatorMotion !== "idle" ? "blur-[0.2px]" : "")}>{`0${index + 1} ${stage.label}`}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 

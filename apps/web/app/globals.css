@@ -270,6 +270,27 @@ h4 {
     box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
   }
 
+  .stage-rail-track {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.94),
+      inset 0 -1px 0 rgba(15, 23, 42, 0.04),
+      inset 0 0 0 1px rgba(226, 232, 240, 0.58),
+      0 14px 34px rgba(15, 23, 42, 0.035);
+  }
+
+  .stage-rail-indicator {
+    overflow: hidden;
+    will-change: transform, width;
+  }
+
+  .stage-rail-indicator-forward {
+    filter: saturate(1.05) blur(0.1px);
+  }
+
+  .stage-rail-indicator-backward {
+    filter: saturate(1.02) blur(0.08px);
+  }
+
   .topic-confirm-floating {
     animation: topic-confirm-float 3s ease-in-out infinite;
   }
