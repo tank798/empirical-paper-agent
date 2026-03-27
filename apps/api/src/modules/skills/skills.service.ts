@@ -11,6 +11,11 @@ import { skillExecutionProfiles } from "./skill.execution-profiles";
 import { normalizeResearchObject, normalizeSopGuideMessage, sanitizeSkillOutputStrings } from "./skill.utils";
 import { skillRegistry } from "./skills.registry";
 import type { SkillRunResult } from "./skill.types";
+import {
+  buildDataCheckOutputTemplate,
+  buildDataCleaningOutputTemplate,
+  buildRegressionModuleOutput
+} from "./workflow-output.builder";
 
 type RecentMessage = {
   role: string;
@@ -124,6 +129,7 @@ export class SkillsService {
     }
 
     output = sanitizeSkillOutputStrings(output);
+    output = this.normalizeStructuredModuleOutput(params.skillName, input, output);
 
     const run = await this.prisma.skillRun.create({
       data: {
@@ -394,5 +400,59 @@ export class SkillsService {
         exportCode: output.export?.exportCode ?? null
       }
     });
+  }
+
+  private normalizeStructuredModuleOutput(skillName: SkillName, input: Record<string, any>, output: Record<string, any>) {
+    if (skillName === SkillName.DATA_CLEANING) {
+      const template = buildDataCleaningOutputTemplate(input as any);
+      return {
+        ...output,
+        variableDesign: template.variableDesign,
+        termMappings: template.termMappings,
+        modelSpec: template.modelSpec,
+        stataCode: template.stataCode,
+        codeExplanation: template.codeExplanation,
+        interpretationGuide: template.interpretationGuide
+      };
+    }
+
+    if (skillName === SkillName.DATA_CHECK) {
+      const template = buildDataCheckOutputTemplate(input as any);
+      return {
+        ...output,
+        variableDesign: template.variableDesign,
+        modelSpec: template.modelSpec,
+        stataCode: template.stataCode,
+        codeExplanation: template.codeExplanation,
+        checkItems: template.checkItems
+      };
+    }
+
+    const regressionVariants: Partial<Record<SkillName, { label: string; variant: "baseline" | "robustness" | "iv" | "mechanism" | "heterogeneity" }>> = {
+      [SkillName.BASELINE_REGRESSION]: { label: "基准回归", variant: "baseline" },
+      [SkillName.ROBUSTNESS]: { label: "稳健性检验", variant: "robustness" },
+      [SkillName.IV]: { label: "内生性分析", variant: "iv" },
+      [SkillName.MECHANISM]: { label: "机制分析", variant: "mechanism" },
+      [SkillName.HETEROGENEITY]: { label: "异质性分析", variant: "heterogeneity" }
+    };
+
+    const regressionConfig = regressionVariants[skillName];
+    if (!regressionConfig) {
+      return output;
+    }
+
+    const template = buildRegressionModuleOutput(skillName, input as any, regressionConfig.label, regressionConfig.variant);
+    return {
+      ...output,
+      variableDesign: template.variableDesign,
+      termMappings: template.termMappings,
+      instrumentSelectionCriteria: template.instrumentSelectionCriteria,
+      mechanismPaths: template.mechanismPaths,
+      modelSpec: template.modelSpec,
+      stataCode: template.stataCode,
+      codeExplanation: template.codeExplanation,
+      interpretationGuide: template.interpretationGuide,
+      export: template.export
+    };
   }
 }
