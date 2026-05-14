@@ -271,6 +271,26 @@ function splitItems(value: string) {
     .filter(Boolean);
 }
 
+function normalizeExportFormats(value: string) {
+  const normalized = new Set<string>();
+  for (const item of splitItems(value)) {
+    const compact = item.toLowerCase().replace(/[\s_-]+/g, "");
+    if (/word|docx|rtf|文档/.test(compact)) {
+      normalized.add("word");
+    }
+    if (/latex|tex|overleaf/.test(compact)) {
+      normalized.add("latex");
+    }
+    if (/excel|xlsx|表格/.test(compact)) {
+      normalized.add("excel");
+    }
+    if (/stata|dofile|do文件|代码/.test(compact)) {
+      normalized.add("stata_do");
+    }
+  }
+  return Array.from(normalized);
+}
+
 function splitFixedEffectItems(value: string) {
   return value
     .replace(/[\uFF0C\u3001\uFF1B]/g, ",")
@@ -443,7 +463,7 @@ function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch
   }
 
   const panelId = firstMatch(text, [
-    buildFieldPattern(["\u9762\u677f\u4e3b\u4f53", "\u4e2a\u4f53id", "\u4f01\u4e1aid"]),
+    buildFieldPattern(["\u9762\u677f\u4e3b\u4f53", "\u9762\u677fid", "\u9762\u677f id", "\u4e2a\u4f53id", "\u4e2a\u4f53 id", "\u4f01\u4e1aid", "\u4f01\u4e1a id"]),
     buildFieldPattern(["panel id", "entity id", "firm id"])
   ]);
   if (panelId) {
@@ -464,6 +484,83 @@ function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch
   ]);
   if (sampleScope) {
     updates.sampleScope = sampleScope;
+  }
+
+  if (/(?:\u4e0d\u505a|\u4e0d\u9700\u8981|\u4e0d\u7528|no)\s*DID/i.test(text)) {
+    updates.didEnabled = false;
+  } else if (/\bDID\b|\u653f\u7b56\u51b2\u51fb|\u5904\u7406\u7ec4|\u5bf9\u7167\u7ec4|\u653f\u7b56\u5e74\u4efd/i.test(text)) {
+    updates.didEnabled = true;
+  }
+
+  if (/(?:\u4e0d\u505a|\u4e0d\u9700\u8981|\u4e0d\u7528|no)\s*PSM/i.test(text)) {
+    updates.psmEnabled = false;
+  } else if (/\bPSM\b|\u503e\u5411\u5f97\u5206|\u5339\u914d/i.test(text)) {
+    updates.psmEnabled = true;
+  }
+
+  const treatmentVar = firstMatch(text, [
+    buildFieldPattern(["DID\u5904\u7406\u7ec4\u53d8\u91cf", "PSM\u5904\u7406\u53d8\u91cf", "\u5904\u7406\u7ec4\u53d8\u91cf", "\u5904\u7406\u53d8\u91cf", "treat\u53d8\u91cf"]),
+    buildFieldPattern(["treatment variable", "treat var"])
+  ]);
+  if (treatmentVar) {
+    updates.treatmentVar = treatmentVar;
+  }
+
+  const policyTimeVar = firstMatch(text, [
+    buildFieldPattern(["\u653f\u7b56\u65f6\u95f4\u53d8\u91cf", "\u653f\u7b56\u5e74\u4efd\u53d8\u91cf"]),
+    buildFieldPattern(["policy time variable", "policy year variable"])
+  ]);
+  if (policyTimeVar) {
+    updates.policyTimeVar = policyTimeVar;
+  }
+
+  const policyStartYear = firstMatch(text, [
+    buildFieldPattern(["\u653f\u7b56\u53d1\u751f\u5e74\u4efd", "\u653f\u7b56\u5e74\u4efd", "\u653f\u7b56\u65f6\u95f4"]),
+    buildFieldPattern(["policy year", "policy start year"])
+  ]) || text.match(/(?:\u653f\u7b56|\u8bd5\u70b9|\u51b2\u51fb).{0,8}((?:19|20)\d{2})\s*\u5e74?/)?.[1] || "";
+  if (policyStartYear) {
+    updates.policyStartYear = policyStartYear;
+  }
+
+  const instrumentVariable = firstMatch(text, [
+    buildFieldPattern(["\u5de5\u5177\u53d8\u91cf", "IV\u53d8\u91cf"]),
+    buildFieldPattern(["instrument variable", "instrumental variable", "iv variable"])
+  ]);
+  if (instrumentVariable) {
+    updates.instrumentVariable = instrumentVariable;
+  }
+
+  const psmMatchVars = firstMatch(text, [
+    buildFieldPattern(["PSM\u5339\u914d\u53d8\u91cf", "\u5339\u914d\u53d8\u91cf"]),
+    buildFieldPattern(["matching variables", "psm variables"])
+  ]);
+  if (psmMatchVars) {
+    updates.psmMatchVars = splitItems(psmMatchVars);
+  }
+
+  const mechanismVariables = firstMatch(text, [
+    buildFieldPattern(["\u673a\u5236\u53d8\u91cf", "\u4e2d\u4ecb\u53d8\u91cf"]),
+    buildFieldPattern(["mechanism variables", "mediator variables"])
+  ]);
+  if (mechanismVariables) {
+    updates.mechanismVariables = splitItems(mechanismVariables);
+  }
+
+  const heterogeneityVars = firstMatch(text, [
+    buildFieldPattern(["\u5f02\u8d28\u6027\u53d8\u91cf", "\u5206\u7ec4\u53d8\u91cf", "\u8c03\u8282\u53d8\u91cf"]),
+    buildFieldPattern(["heterogeneity variables", "group variables", "moderator variables"])
+  ]);
+  if (heterogeneityVars) {
+    updates.heterogeneityVars = splitItems(heterogeneityVars);
+  }
+
+  const exportFormats = firstMatch(text, [
+    buildFieldPattern(["\u5bfc\u51fa\u683c\u5f0f", "\u8f93\u51fa\u683c\u5f0f"]),
+    buildFieldPattern(["export formats", "output formats"])
+  ]);
+  const normalizedExportFormats = normalizeExportFormats(exportFormats);
+  if (normalizedExportFormats.length > 0) {
+    updates.exportFormats = normalizedExportFormats as Array<"word" | "latex" | "excel" | "stata_do">;
   }
 
   return Object.fromEntries(
@@ -728,8 +825,8 @@ export function detectTopic(raw: string): TopicDetectOutput {
 }
 function normalizeTopicFragment(value: string, role: "x" | "y") {
   let cleaned = cleanTerm(value)
-    .replace(/s+/g, " ")
-    .replace(/^[“”"'`s]+|[“”"'`s]+$/gu, "")
+    .replace(/\s+/g, " ")
+    .replace(/^[“”"'`\s]+|[“”"'`\s]+$/gu, "")
     .trim();
 
   if (role === "y") {
@@ -753,7 +850,7 @@ export function normalizeTopic(raw: string): TopicNormalizeOutput {
   const againstPattern = input.match(
     new RegExp(`(.+?)(?:${CHINESE_TO}|${CHINESE_AND}|${CHINESE_AND_ALT}|to)(.+?)(?:${CHINESE_INFLUENCE}|impact|effect)?$`, "i")
   );
-  const relationPattern = input.match(/(.+?)s+(?:affects?|impacts?)s+(.+)/i);
+  const relationPattern = input.match(/(.+?)\s+(?:affects?|impacts?)\s+(.+)/i);
 
   let x = "核心解释变量";
   let y = "核心结果变量";

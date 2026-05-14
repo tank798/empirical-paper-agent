@@ -55,6 +55,36 @@ function isTermMappingArray(value: unknown): value is TermMapping[] {
   return Array.isArray(value) && value.every((item) => item && typeof item === "object");
 }
 
+const EXPORT_FORMAT_LABELS: Record<string, string> = {
+  word: "Word",
+  latex: "LaTeX",
+  excel: "Excel",
+  stata_do: "Stata do-file"
+};
+
+function renderSetupList(value: unknown, fallback = "") {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeDisplayText(item)).filter(Boolean).join("\u3001") || fallback;
+  }
+
+  return normalizeDisplayText(value) || fallback;
+}
+
+function renderExportFormats(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return "Word\u3001Stata do-file";
+  }
+
+  return value
+    .map((item) => EXPORT_FORMAT_LABELS[String(item)] ?? normalizeDisplayText(item))
+    .filter(Boolean)
+    .join("\u3001");
+}
+
+function renderToggleStatus(value: unknown, enabledLabel: string, disabledLabel: string) {
+  return value === true ? enabledLabel : disabledLabel;
+}
+
 function TermMappingSection({ mappings }: { mappings: TermMapping[] }) {
   if (mappings.length === 0) {
     return null;
@@ -140,22 +170,49 @@ export function MessageCard({
   }
 
   const setupFields = [
+    {
+      label: "\u8bba\u6587\u8def\u7ebf",
+      value: json.analysisRoute === "panel_fe" || !json.analysisRoute ? "\u9762\u677f\u53cc\u5411\u56fa\u5b9a\u6548\u5e94" : normalizeDisplayText(json.analysisRoute)
+    },
     { label: "\u89e3\u91ca\u53d8\u91cf", value: json.independentVariable },
     { label: "\u88ab\u89e3\u91ca\u53d8\u91cf", value: json.dependentVariable },
     { label: "\u7814\u7a76\u5bf9\u8c61", value: normalizeResearchObjectText(json.researchObject) },
     {
       label: "\u63a7\u5236\u53d8\u91cf",
-      value: Array.isArray(json.controls)
-        ? json.controls.map((item: unknown) => normalizeDisplayText(item)).filter(Boolean).join("\u3001")
-        : normalizeDisplayText(json.controls)
+      value: renderSetupList(json.controls)
     },
     { label: "\u6837\u672c\u533a\u95f4", value: normalizeDisplayText(json.sampleScope) },
+    { label: "\u9762\u677f\u4e2a\u4f53\u53d8\u91cf", value: normalizeDisplayText(json.panelId) },
+    { label: "\u65f6\u95f4\u53d8\u91cf", value: normalizeDisplayText(json.timeVar) },
+    { label: "\u805a\u7c7b\u53d8\u91cf", value: normalizeDisplayText(json.clusterVar) || normalizeDisplayText(json.panelId) },
     {
       label: "\u56fa\u5b9a\u6548\u5e94",
-      value: Array.isArray(json.fixedEffects)
-        ? json.fixedEffects.map((item: unknown) => normalizeDisplayText(item)).filter(Boolean).join("\u3001")
-        : normalizeDisplayText(json.fixedEffects)
+      value: renderSetupList(json.fixedEffects)
     },
+    {
+      label: "DID \u6269\u5c55",
+      value: renderToggleStatus(json.didEnabled, "\u8981\u505a\uff08\u9700\u5904\u7406\u7ec4\u548c\u653f\u7b56\u65f6\u95f4\uff09", "\u9ed8\u8ba4\u4e0d\u505a")
+    },
+    ...(json.didEnabled
+      ? [
+          { label: "\u5904\u7406\u7ec4\u53d8\u91cf", value: normalizeDisplayText(json.treatmentVar) },
+          { label: "\u653f\u7b56\u65f6\u95f4", value: normalizeDisplayText(json.policyStartYear || json.policyTimeVar) }
+        ]
+      : []),
+    {
+      label: "PSM \u6269\u5c55",
+      value: renderToggleStatus(json.psmEnabled, "\u8981\u505a\uff08\u9700\u5339\u914d\u53d8\u91cf\uff09", "\u9ed8\u8ba4\u4e0d\u505a")
+    },
+    ...(json.psmEnabled
+      ? [{ label: "PSM \u5339\u914d\u53d8\u91cf", value: renderSetupList(json.psmMatchVars) }]
+      : []),
+    {
+      label: "IV \u5de5\u5177\u53d8\u91cf",
+      value: normalizeDisplayText(json.instrumentVariable) || "\u5f85\u8865\u5145\u771f\u5b9e\u5de5\u5177\u53d8\u91cf"
+    },
+    { label: "\u673a\u5236\u53d8\u91cf", value: renderSetupList(json.mechanismVariables) },
+    { label: "\u5f02\u8d28\u6027\u5206\u7ec4", value: renderSetupList(json.heterogeneityVars) },
+    { label: "\u5bfc\u51fa\u683c\u5f0f", value: renderExportFormats(json.exportFormats) },
     {
       label: "\u5173\u7cfb\u7c7b\u578b",
       value: normalizeRelationshipText(json.relationship, json.normalizedTopic)
@@ -245,7 +302,7 @@ export function MessageCard({
                         disabled={topicConfirmAction.disabled || isRefining}
                         onChange={(event) => setRefineValue(event.target.value)}
                         onKeyDown={handleRefineKeyDown}
-                        placeholder={"\u4f8b\u5982\uff1a\u628a\u7814\u7a76\u5bf9\u8c61\u6539\u6210\u4e2d\u56fdA\u80a1\u4e0a\u5e02\u516c\u53f8\uff08\u5254\u9664ST\u548c\u91d1\u878d\u80a1\uff09"}
+                        placeholder={"\u4f8b\u5982\uff1a\u9762\u677f id \u662f stkcd\uff0c\u5e74\u4efd\u53d8\u91cf\u662f year\uff0c\u4e0d\u505a DID\uff0cPSM \u8981\u505a\uff0c\u5de5\u5177\u53d8\u91cf\u662f iv_index"}
                         value={refineValue}
                       />
                       <button

@@ -50,6 +50,34 @@ function buildOutregLine(filePath: string, writeMode: ExportWriteMode) {
   return `outreg2 using "${filePath}", ${writeMode} bdec(3) tdec(2) adjr2 tstat`;
 }
 
+function buildRegCommand(dependentAlias: string, explanatoryAliases: string[], options: string[] = [], whereClause = "") {
+  const regressors = unique(explanatoryAliases);
+  const optionCopy = options.filter(Boolean);
+  return `reg ${dependentAlias} ${regressors.join(" ")}${whereClause ? ` ${whereClause}` : ""}${optionCopy.length ? `, ${optionCopy.join(" ")}` : ""}`;
+}
+
+function formatList(values: Array<string | null | undefined> | null | undefined, fallback: string) {
+  const items = unique(values ?? []);
+  return items.length ? items.join("、") : fallback;
+}
+
+function toStataName(value: string | null | undefined, fallback: string) {
+  const trimmed = String(value ?? "").trim();
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed) ? trimmed : fallback;
+}
+
+function buildIvreghdfeOptions(fixedEffectAliases: string[], clusterAlias: string) {
+  const options: string[] = [];
+  if (fixedEffectAliases.length > 0) {
+    options.push(`absorb(${fixedEffectAliases.join(" ")})`);
+  }
+  if (clusterAlias) {
+    options.push(`cluster(${clusterAlias})`);
+  }
+  options.push("first");
+  return options;
+}
+
 function buildExportNoticeLines(fileName: string) {
   return ["* \u8bf7\u628a D:\\results\\ \u66ff\u6362\u6210\u4f60\u81ea\u5df1\u7684\u5bfc\u51fa\u8def\u5f84", `* \u6587\u4ef6\u540d\u4e5f\u53ef\u4ee5\u6309\u9700\u81ea\u884c\u4fee\u6539\uff1a${fileName}`];
 }
@@ -97,7 +125,7 @@ function buildIvreghdfeCommand(
   controls: string[],
   options: string[] = []
 ) {
-  const regressors = unique([`(${independentAlias} = ${instrumentAlias})`, ...controls]);
+  const regressors = unique([...controls, `(${independentAlias} = ${instrumentAlias})`]);
   const optionCopy = options.filter(Boolean);
   return `ivreghdfe ${dependentAlias} ${regressors.join(" ")}${optionCopy.length ? `, ${optionCopy.join(" ")}` : ""}`;
 }
@@ -108,7 +136,12 @@ function buildCommonVariableDesign(input: RegressionSkillInput) {
     `\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\uff1a${input.independentVariable}`,
     `\u63a7\u5236\u53d8\u91cf\uff1a${input.controls?.length ? input.controls.join("\u3001") : "\u8bf7\u6309\u6587\u732e\u53e3\u5f84\u8865\u5145"}`,
     `\u56fa\u5b9a\u6548\u5e94\uff1a${input.fixedEffects?.length ? input.fixedEffects.join("\u3001") : "\u8bf7\u81f3\u5c11\u8865\u5145\u4f01\u4e1a\u548c\u5e74\u4efd\u56fa\u5b9a\u6548\u5e94"}`,
-    `\u6837\u672c\u533a\u95f4\uff1a${input.sampleScope || "\u8bf7\u8865\u5145\u6837\u672c\u533a\u95f4"}`
+    `\u6837\u672c\u533a\u95f4\uff1a${input.sampleScope || "\u8bf7\u8865\u5145\u6837\u672c\u533a\u95f4"}`,
+    `面板设定：个体变量 ${input.panelId || "待补充"}，时间变量 ${input.timeVar || "待补充"}，聚类变量 ${input.clusterVar || input.panelId || "默认按个体聚类"}`,
+    `论文路线：面板双向固定效应；DID 扩展${input.didEnabled ? "已选择" : "默认不做"}，PSM 扩展${input.psmEnabled ? "已选择" : "默认不做"}`,
+    `工具变量：${input.instrumentVariable || "待补充真实工具变量；系统只给选择标准，不编造 IV"}`,
+    `机制变量：${formatList(input.mechanismVariables, "可后续补充")}；异质性分组：${formatList(input.heterogeneityVars, "可后续补充")}`,
+    `导出格式：${formatList(input.exportFormats, "Word、Stata do-file")}`
   ];
 }
 
@@ -121,10 +154,6 @@ function buildBaseOptions(fixedEffectAliases: string[], clusterAlias: string) {
     options.push(`vce(cluster ${clusterAlias})`);
   }
   return options;
-}
-
-function buildSimpleRegressionOptions(clusterAlias: string) {
-  return clusterAlias ? [`vce(cluster ${clusterAlias})`] : [];
 }
 
 export function buildDataCleaningOutputTemplate(input: DataCleaningInput): DataCleaningOutput {
@@ -194,13 +223,20 @@ export function buildDataCleaningOutputTemplate(input: DataCleaningInput): DataC
 
 export function buildDataCheckOutputTemplate(input: DataCheckInput): DataCheckOutput {
   const keyVariables = unique(input.keyVariables ?? []);
-  const lines = ["describe", `summarize ${keyVariables.join(" ")}`];
+  const lines = [
+    "describe",
+    `misstable summarize ${keyVariables.join(" ")}`,
+    `summarize ${keyVariables.join(" ")}, detail`,
+    `tabstat ${keyVariables.join(" ")}, stat(n mean sd min p25 p50 p75 max) columns(statistics)`
+  ];
 
   if (input.timeVar) {
     lines.push(`tab ${input.timeVar}`);
   }
   if (input.panelId && input.timeVar) {
     lines.push(`xtset ${input.panelId} ${input.timeVar}`);
+    lines.push("xtdescribe");
+    lines.push(`duplicates report ${input.panelId} ${input.timeVar}`);
   }
 
   return {
@@ -212,9 +248,10 @@ export function buildDataCheckOutputTemplate(input: DataCheckInput): DataCheckOu
     stataCode: lines.join("\n"),
     codeExplanation: [
       "describe \u7528\u4e8e\u5feb\u901f\u67e5\u770b\u53d8\u91cf\u7c7b\u578b\u3001\u6807\u7b7e\u548c\u5b58\u50a8\u683c\u5f0f\u3002",
-      "summarize \u7528\u4e8e\u68c0\u67e5\u5173\u952e\u53d8\u91cf\u7684\u5747\u503c\u3001\u6807\u51c6\u5dee\u4e0e\u6781\u503c\u3002",
+      "misstable summarize 用于先看关键变量缺失情况，避免正式回归时样本量突然变化。",
+      "summarize, detail 和 tabstat 用于检查关键变量的均值、分位数、标准差与极值。",
       input.timeVar ? `tab ${input.timeVar} \u7528\u4e8e\u68c0\u67e5\u65f6\u95f4\u7ef4\u5ea6\u662f\u5426\u8fde\u7eed\u3002` : "\u5f53\u524d\u6ca1\u6709\u63d0\u4f9b\u65f6\u95f4\u53d8\u91cf\uff0c\u56e0\u6b64\u8df3\u8fc7\u5e74\u4efd\u5206\u5e03\u68c0\u67e5\u3002",
-      input.panelId && input.timeVar ? "xtset \u7528\u4e8e\u9a8c\u8bc1\u9762\u677f\u8bbe\u5b9a\u662f\u5426\u6210\u7acb\u3002" : "\u82e5\u540e\u7eed\u8981\u505a\u9762\u677f\u56de\u5f52\uff0c\u8bf7\u8865\u5145\u4e2a\u4f53\u7ef4\u5ea6\u548c\u65f6\u95f4\u7ef4\u5ea6\u53d8\u91cf\u3002"
+      input.panelId && input.timeVar ? "xtset、xtdescribe 和 duplicates report 用于验证面板 id-年份是否唯一、是否存在重复观测和非平衡面板。" : "\u82e5\u540e\u7eed\u8981\u505a\u9762\u677f\u56de\u5f52\uff0c\u8bf7\u8865\u5145\u4e2a\u4f53\u7ef4\u5ea6\u548c\u65f6\u95f4\u7ef4\u5ea6\u53d8\u91cf\u3002"
     ],
     checkItems: ["\u53d8\u91cf\u7c7b\u578b\u662f\u5426\u6b63\u786e", "\u6837\u672c\u91cf\u662f\u5426\u5408\u7406", "\u5e74\u4efd\u8986\u76d6\u662f\u5426\u5b8c\u6574", "\u9762\u677f\u7ed3\u6784\u662f\u5426\u53ef\u7528"],
     nextSuggestion: "\u6570\u636e\u68c0\u67e5\u65e0\u8bef\u540e\uff0c\u5c31\u53ef\u4ee5\u8fdb\u5165\u57fa\u51c6\u56de\u5f52\u3002"
@@ -237,13 +274,30 @@ export function buildRegressionModuleOutput(
     timeVar: input.timeVar,
     termMappings: input.termMappings
   });
-  const fixedEffectAliases = aliasBundle.fixedEffectAliases;
-  const clusterAlias = aliasBundle.clusterAlias || aliasBundle.preferredPanelAlias;
+  const panelAlias = aliasBundle.panelAlias || aliasBundle.preferredPanelAlias || "panel_id";
   const timeAlias = aliasBundle.timeAlias || aliasBundle.preferredTimeAlias || "year";
+  const clusterAlias = aliasBundle.clusterAlias || panelAlias;
+  const fixedEffectAliases = aliasBundle.fixedEffectAliases;
+  const mainFixedEffectAliases = unique(fixedEffectAliases.length ? fixedEffectAliases : [panelAlias, timeAlias]);
+  const treatmentAlias = toStataName(input.treatmentVar, "treat");
+  const policyStartYear = String(input.policyStartYear || "policy_year").trim();
+  const instrumentRaw = String(input.instrumentVariable || "").trim();
+  const instrumentAlias = toStataName(instrumentRaw, "iv_var");
+  const hasUsableInstrumentAlias = Boolean(instrumentRaw && instrumentRaw === instrumentAlias);
+  const psmCovariates = unique(
+    (input.psmMatchVars?.length ? input.psmMatchVars : input.controls ?? []).map((item, index) =>
+      toStataName(item, `match_var${index + 1}`)
+    )
+  );
+  const psmCovariateList = psmCovariates.length ? psmCovariates : ["match_var1", "match_var2"];
+  const mechanismAlias = toStataName(input.mechanismVariables?.[0], "mediator_var");
+  const moderatorAlias = toStataName(input.mechanismVariables?.[1], "moderator_var");
+  const groupAlias = toStataName(input.heterogeneityVars?.[0], "group_var");
   const fileName = MODULE_EXPORT_FILES[variant];
   const filePath = buildExportPath(fileName);
   const baselineInstallLines = buildInstallLines([
     { command: "reghdfe", install: "ssc install reghdfe, replace" },
+    { command: "ftools", install: "ssc install ftools, replace" },
     { command: "outreg2", install: "ssc install outreg2, replace" }
   ]);
 
@@ -255,39 +309,59 @@ export function buildRegressionModuleOutput(
     termMappings: aliasBundle.termMappings,
     instrumentSelectionCriteria: [],
     mechanismPaths: [],
-    modelSpec: `\u6a21\u578b 1\uff1a${aliasBundle.dependentAlias} = beta0 + beta1 ${aliasBundle.independentAlias} + error\uff1b\u6a21\u578b 2 \u5728\u6b64\u57fa\u7840\u4e0a\u52a0\u5165\u63a7\u5236\u53d8\u91cf\uff1b\u6a21\u578b 3 \u518d\u52a0\u5165\u56fa\u5b9a\u6548\u5e94\u3002`,
+    modelSpec: `M1 只放核心解释变量；M2 加入控制变量；M3 加入时间固定效应；M4 加入个体固定效应；M5 同时加入个体和时间固定效应；M6 在 M5 基础上按 ${clusterAlias} 聚类，是论文主规格。`,
     stataCode: [
       ...baselineInstallLines,
       "",
       ...buildExportNoticeLines(fileName),
       "",
-      buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias], buildSimpleRegressionOptions(clusterAlias)),
+      `xtset ${panelAlias} ${timeAlias}`,
+      "",
+      "* M1：不加控制变量和固定效应，先看核心变量的原始相关关系",
+      buildRegCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias]),
       buildOutregLine(filePath, ExportWriteMode.REPLACE),
       "",
-      buildReghdfeCommand(
-        aliasBundle.dependentAlias,
-        [aliasBundle.independentAlias, ...aliasBundle.controlAliases],
-        buildSimpleRegressionOptions(clusterAlias)
-      ),
+      "* M2：加入控制变量，观察核心系数是否明显变化",
+      buildRegCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases]),
       buildOutregLine(filePath, ExportWriteMode.APPEND),
       "",
+      "* M3：加入时间固定效应，控制年度共同冲击",
+      buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases], [
+        `absorb(${timeAlias})`
+      ]),
+      buildOutregLine(filePath, ExportWriteMode.APPEND),
+      "",
+      "* M4：加入个体固定效应，控制不随时间变化的个体特征",
+      buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases], [
+        `absorb(${panelAlias})`
+      ]),
+      buildOutregLine(filePath, ExportWriteMode.APPEND),
+      "",
+      "* M5：加入个体和时间双向固定效应",
+      buildReghdfeCommand(aliasBundle.dependentAlias, [aliasBundle.independentAlias, ...aliasBundle.controlAliases], [
+        `absorb(${panelAlias} ${timeAlias})`
+      ]),
+      buildOutregLine(filePath, ExportWriteMode.APPEND),
+      "",
+      "* M6：主规格，在双向固定效应基础上按个体聚类稳健标准误",
       buildReghdfeCommand(
         aliasBundle.dependentAlias,
         [aliasBundle.independentAlias, ...aliasBundle.controlAliases],
-        buildBaseOptions(fixedEffectAliases, clusterAlias)
+        buildBaseOptions([panelAlias, timeAlias], clusterAlias)
       ),
       buildOutregLine(filePath, ExportWriteMode.APPEND)
     ].join("\n"),
     codeExplanation: [
-      "ssc install reghdfe, replace \u548c ssc install outreg2, replace \u53ea\u5728\u4f60\u4ee5\u524d\u6ca1\u5b89\u88c5\u8fc7\u8fd9\u4e9b\u547d\u4ee4\u65f6\u8fd0\u884c\u5373\u53ef\uff1b\u88c5\u8fc7\u7684\u8bdd\u53ef\u4ee5\u76f4\u63a5\u5ffd\u7565\uff0c\u6216\u8005\u7528 Ctrl+/ \u6ce8\u91ca\u6389\u3002",
-      "\u7b2c\u4e00\u6761\u6a21\u578b\u5148\u53ea\u68c0\u9a8c\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u4e0e\u88ab\u89e3\u91ca\u53d8\u91cf\u4e4b\u95f4\u7684\u57fa\u7840\u5173\u7cfb\u3002",
-      "\u7b2c\u4e8c\u6761\u6a21\u578b\u5728\u6b64\u57fa\u7840\u4e0a\u52a0\u5165\u63a7\u5236\u53d8\u91cf\uff0c\u89c2\u5bdf\u4e3b\u6548\u5e94\u662f\u5426\u7a33\u5b9a\u3002",
-      "\u7b2c\u4e09\u6761\u6a21\u578b\u8fdb\u4e00\u6b65\u52a0\u5165\u56fa\u5b9a\u6548\u5e94\uff0c\u4f5c\u4e3a\u8bba\u6587\u4e2d\u7684\u4e3b\u89c4\u683c\u3002",
-      "\u6bcf\u6761\u56de\u5f52\u540e\u90fd\u76f4\u63a5\u8ddf outreg2\uff0c\u7b2c\u4e00\u6761\u7528 replace\uff0c\u540e\u4e24\u6761\u7528 append\u3002"
+      "ssc install reghdfe、ftools 和 outreg2 只在第一次使用这些命令时运行；已安装可以直接注释掉。",
+      "xtset 用于声明面板数据结构，后续所有规格都沿用同一组个体变量和时间变量。",
+      "M1-M6 是递进规格：从最简相关关系逐步加入控制变量、时间固定效应、个体固定效应、双向固定效应和聚类稳健标准误。",
+      "M6 是默认主回归规格，前面几列主要用于说明结论不是由某一个控制项或固定效应突然驱动。",
+      "每条回归后都跟 outreg2：第一列 replace，后续列 append，最终形成同一张递进回归表。"
     ],
     interpretationGuide: [
       "\u5148\u770b\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u7684\u7cfb\u6570\u65b9\u5411\u662f\u5426\u7b26\u5408\u7406\u8bba\u9884\u671f\u3002",
-      "\u518d\u6bd4\u8f83\u52a0\u5165\u63a7\u5236\u53d8\u91cf\u548c\u56fa\u5b9a\u6548\u5e94\u540e\uff0c\u6838\u5fc3\u7cfb\u6570\u662f\u5426\u7a33\u5b9a\u3002",
+      "重点比较 M1 到 M6 中核心系数方向、量级和显著性是否逐步稳定。",
+      "论文正文通常解释 M6，M1-M5 作为递进展示和模型设定合理性说明。",
       "\u4ee3\u7801\u4e2d\u7684 D:\\results\\ \u53ea\u662f\u793a\u4f8b\u8def\u5f84\uff0c\u8fd0\u884c\u524d\u8bf7\u6539\u6210\u4f60\u81ea\u5df1\u7684\u5bfc\u51fa\u8def\u5f84\u3002"
     ],
     nextSuggestion: "\u5b8c\u6210\u57fa\u51c6\u56de\u5f52\u540e\uff0c\u53ef\u4ee5\u7ee7\u7eed\u770b\u7a33\u5065\u6027\u3001\u5185\u751f\u6027\u3001\u673a\u5236\u548c\u5f02\u8d28\u6027\u5206\u6790\u3002"
@@ -301,39 +375,94 @@ export function buildRegressionModuleOutput(
     return {
       ...baseline,
       purpose: "\u7a33\u5065\u6027\u68c0\u9a8c\u7528\u4e8e\u786e\u8ba4\u4e3b\u7ed3\u8bba\u4e0d\u4f9d\u8d56\u67d0\u4e00\u4e2a\u53d8\u91cf\u53e3\u5f84\u6216\u7279\u5b9a\u6837\u672c\u533a\u95f4\u3002",
-      meaning: "\u8fd9\u4e00\u90e8\u5206\u91cd\u70b9\u5c55\u793a\u4e24\u7c7b\u5e38\u89c1\u7a33\u5065\u6027\u68c0\u9a8c\uff1a\u66ff\u6362\u53d8\u91cf\u53e3\u5f84\uff0c\u4ee5\u53ca\u8c03\u6574\u6837\u672c\u533a\u95f4\u3002",
-      modelSpec: "\u7a33\u5065\u6027\u68c0\u9a8c 1 \u4f7f\u7528\u66ff\u4ee3\u53e3\u5f84\u53d8\u91cf\uff1b\u7a33\u5065\u6027\u68c0\u9a8c 2 \u8c03\u6574\u6837\u672c\u671f\uff0c\u518d\u6bd4\u8f83\u6838\u5fc3\u7cfb\u6570\u65b9\u5411\u548c\u663e\u8457\u6027\u662f\u5426\u7a33\u5b9a\u3002",
+      meaning: `这一部分围绕面板双向固定效应主规格做稳健性：替换变量口径、调整样本期、改变聚类或标准误处理；DID 和 PSM 只在用户明确选择时作为扩展检验，不把论文主回归改成 DID。`,
+      modelSpec: `主规格为 ${aliasBundle.dependentAlias} 对 ${aliasBundle.independentAlias} 的双向固定效应模型；稳健性依次检查替代变量、样本区间、聚类稳健标准误，并按选择追加 DID 或 PSM 扩展。`,
       stataCode: [
-        ...baselineInstallLines,
+        ...buildInstallLines([
+          { command: "reghdfe", install: "ssc install reghdfe, replace" },
+          { command: "ftools", install: "ssc install ftools, replace" },
+          { command: "winsor2", install: "ssc install winsor2, replace" },
+          { command: "outreg2", install: "ssc install outreg2, replace" },
+          ...(input.psmEnabled ? [{ command: "psmatch2", install: "ssc install psmatch2, replace" }] : [])
+        ]),
         "",
         ...buildExportNoticeLines(fileName),
         "",
-        "* \u7a33\u5065\u6027\u68c0\u9a8c 1\uff1a\u66ff\u6362\u53d8\u91cf\u53e3\u5f84\uff0c\u8bf7\u628a x_alt \u6216 y_alt \u66ff\u6362\u6210\u4f60\u7684\u66ff\u4ee3\u53e3\u5f84\u53d8\u91cf",
+        "* 主规格复现：双向固定效应 + 聚类稳健标准误",
+        buildReghdfeCommand(
+          aliasBundle.dependentAlias,
+          [aliasBundle.independentAlias, ...aliasBundle.controlAliases],
+          buildBaseOptions(mainFixedEffectAliases, clusterAlias)
+        ),
+        buildOutregLine(filePath, ExportWriteMode.REPLACE),
+        "",
+        "* 稳健性检验 1：替换变量口径，请把 x_alt 或 y_alt 替换成你的替代口径变量",
         `* \u5982\u679c\u4f60\u60f3\u66ff\u6362\u88ab\u89e3\u91ca\u53d8\u91cf\uff0c\u8bf7\u628a ${aliasBundle.dependentAlias} \u6539\u6210 y_alt\uff1b\u5982\u679c\u60f3\u66ff\u6362\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\uff0c\u8bf7\u628a ${aliasBundle.independentAlias} \u6539\u6210 x_alt`,
         buildReghdfeCommand(
           aliasBundle.dependentAlias,
           ["x_alt", ...aliasBundle.controlAliases],
-          buildBaseOptions(fixedEffectAliases, clusterAlias)
+          buildBaseOptions(mainFixedEffectAliases, clusterAlias)
         ),
-        buildOutregLine(filePath, ExportWriteMode.REPLACE),
+        buildOutregLine(filePath, ExportWriteMode.APPEND),
         "",
-        "* \u7a33\u5065\u6027\u68c0\u9a8c 2\uff1a\u8c03\u6574\u6837\u672c\u533a\u95f4\uff0c\u8bf7\u628a 2012 \u548c 2021 \u66ff\u6362\u6210\u4f60\u81ea\u5df1\u7684\u5907\u9009\u6837\u672c\u671f",
+        "* 稳健性检验 2：调整样本区间，请把 2012 和 2021 替换成你的备选样本期",
         buildReghdfeCommand(
           aliasBundle.dependentAlias,
           [aliasBundle.independentAlias, ...aliasBundle.controlAliases],
-          buildBaseOptions(fixedEffectAliases, clusterAlias),
+          buildBaseOptions(mainFixedEffectAliases, clusterAlias),
           `if inrange(${timeAlias}, 2012, 2021)`
         ),
-        buildOutregLine(filePath, ExportWriteMode.APPEND)
+        buildOutregLine(filePath, ExportWriteMode.APPEND),
+        "",
+        "* 稳健性检验 3：对关键连续变量缩尾后重新估计；如果已在数据清洗阶段完成，可保留这一段作为说明",
+        `winsor2 ${unique([aliasBundle.dependentAlias, aliasBundle.independentAlias, ...aliasBundle.controlAliases]).join(" ")}, replace cuts(1 99)`,
+        buildReghdfeCommand(
+          aliasBundle.dependentAlias,
+          [aliasBundle.independentAlias, ...aliasBundle.controlAliases],
+          buildBaseOptions(mainFixedEffectAliases, clusterAlias)
+        ),
+        buildOutregLine(filePath, ExportWriteMode.APPEND),
+        "",
+        ...(input.didEnabled
+          ? [
+              "* 可选 DID 扩展：仅当你有处理组和政策时间时使用；这里不把 DID 作为主回归路线",
+              `gen post = ${timeAlias} >= ${policyStartYear}`,
+              `gen did = ${treatmentAlias} * post`,
+              buildReghdfeCommand(
+                aliasBundle.dependentAlias,
+                ["did", ...aliasBundle.controlAliases],
+                buildBaseOptions([panelAlias, timeAlias], clusterAlias)
+              ),
+              buildOutregLine(filePath, ExportWriteMode.APPEND),
+              ""
+            ]
+          : ["* 当前未选择 DID 扩展，因此不生成 DID 或事件研究代码。", ""]),
+        ...(input.psmEnabled
+          ? [
+              "* 可选 PSM 扩展：先匹配，再在匹配样本上复现主规格；请确认处理变量和匹配变量有理论依据",
+              `psmatch2 ${treatmentAlias} ${psmCovariateList.join(" ")}, outcome(${aliasBundle.dependentAlias}) neighbor(1) common logit`,
+              `pstest ${psmCovariateList.join(" ")}, both`,
+              "gen matched_sample = _weight < .",
+              buildReghdfeCommand(
+                aliasBundle.dependentAlias,
+                [aliasBundle.independentAlias, ...aliasBundle.controlAliases],
+                buildBaseOptions(mainFixedEffectAliases, clusterAlias),
+                "if matched_sample == 1"
+              ),
+              buildOutregLine(filePath, ExportWriteMode.APPEND)
+            ]
+          : ["* 当前未选择 PSM 扩展，因此不生成 PSM 匹配代码。"])
       ].join("\n"),
       codeExplanation: [
-        "\u7b2c\u4e00\u7ec4\u4ee3\u7801\u901a\u8fc7\u66ff\u6362\u53d8\u91cf\u53e3\u5f84\uff0c\u68c0\u67e5\u4e3b\u7ed3\u8bba\u662f\u5426\u53ea\u4f9d\u8d56\u67d0\u4e00\u4e2a\u7279\u5b9a\u6d4b\u91cf\u65b9\u5f0f\u3002",
-        "\u7b2c\u4e8c\u7ec4\u4ee3\u7801\u901a\u8fc7\u8c03\u6574\u6837\u672c\u533a\u95f4\uff0c\u68c0\u67e5\u7ed3\u679c\u662f\u5426\u53ea\u5728\u67d0\u4e00\u6bb5\u5e74\u4efd\u6210\u7acb\u3002",
-        "\u7a33\u5065\u6027\u68c0\u9a8c\u91cd\u70b9\u770b\u6838\u5fc3\u7cfb\u6570\u7684\u65b9\u5411\u548c\u663e\u8457\u6027\u662f\u5426\u4fdd\u6301\u4e00\u81f4\uff0c\u800c\u4e0d\u662f\u8981\u6c42\u6570\u503c\u5b8c\u5168\u4e00\u6837\u3002"
+        "先复现主规格，后续所有稳健性结果都和这列比较。",
+        "替换变量口径用于检验结论是否依赖某一个特定测量方式；x_alt 和 y_alt 必须替换成真实变量名。",
+        "调整样本区间用于检查结论是否只在某一段年份成立。",
+        "DID 和 PSM 只在用户明确选择后追加；如果没有处理组、政策年份或匹配变量，就不应该硬做。"
       ],
       interpretationGuide: [
         "\u6bd4\u8f83\u66ff\u6362\u53d8\u91cf\u53e3\u5f84\u540e\uff0c\u6838\u5fc3\u7cfb\u6570\u7684\u65b9\u5411\u548c\u663e\u8457\u6027\u662f\u5426\u4e0e\u57fa\u51c6\u56de\u5f52\u4e00\u81f4\u3002",
         "\u6bd4\u8f83\u8c03\u6574\u6837\u672c\u533a\u95f4\u540e\uff0c\u7ed3\u8bba\u662f\u5426\u4f9d\u7136\u7a33\u5b9a\u3002",
+        "如果选择 DID 或 PSM，要先解释为什么这篇论文适合处理组/政策冲击或匹配思路，再解释估计结果。",
         "\u5982\u679c\u53ea\u6709\u5728\u67d0\u4e00\u4e2a\u53e3\u5f84\u6216\u6837\u672c\u671f\u4e0b\u663e\u8457\uff0c\u9700\u8981\u5728\u8bba\u6587\u91cc\u989d\u5916\u89e3\u91ca\u3002"
       ],
       nextSuggestion: "\u7a33\u5065\u6027\u68c0\u9a8c\u7a33\u5b9a\u540e\uff0c\u53ef\u4ee5\u7ee7\u7eed\u5904\u7406\u5185\u751f\u6027\u95ee\u9898\u3002"
@@ -344,39 +473,56 @@ export function buildRegressionModuleOutput(
     return {
       ...baseline,
       purpose: "\u5185\u751f\u6027\u5206\u6790\u7528\u4e8e\u7f13\u89e3\u53cd\u5411\u56e0\u679c\u3001\u9057\u6f0f\u53d8\u91cf\u6216\u6d4b\u91cf\u8bef\u5dee\u5e26\u6765\u7684\u4f30\u8ba1\u504f\u8bef\u3002",
-      meaning: "\u8fd9\u4e00\u90e8\u5206\u7ed9\u51fa\u5de5\u5177\u53d8\u91cf\u8bc6\u522b\u6a21\u677f\u3002\u5de5\u5177\u53d8\u91cf\u662f\u4e00\u7c7b\u7528\u6765\u8bc6\u522b\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u5916\u751f\u53d8\u52a8\u7684\u4fe1\u606f\u6765\u6e90\uff0c\u4f46\u5b83\u4e0d\u7b49\u4e8e\u201c\u5916\u751f\u51b2\u51fb\u201d\u8fd9\u4e2a\u6982\u5ff5\uff1b\u5916\u751f\u51b2\u51fb\u53ea\u662f\u5de5\u5177\u53d8\u91cf\u53ef\u80fd\u7684\u6765\u6e90\u4e4b\u4e00\u3002",
+      meaning: hasUsableInstrumentAlias
+        ? `这一部分使用用户提供的工具变量 ${instrumentAlias} 做 IV 识别。工具变量必须同时满足相关性、外生性和排他性，代码只能帮助估计，不能替代理论论证。`
+        : "这一部分先给出工具变量选择标准和 Stata 占位模板。当前还没有可直接写入代码的真实工具变量，因此 iv_var 只是占位符，不能当成有效实证结果。",
       instrumentSelectionCriteria: [
         "\u76f8\u5173\u6027\uff1a\u5de5\u5177\u53d8\u91cf\u5e94\u4e0e\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u663e\u8457\u76f8\u5173\uff0c\u4e14\u7b2c\u4e00\u9636\u6bb5\u4e0d\u80fd\u592a\u5f31\u3002",
         "\u5916\u751f\u6027\uff1a\u5de5\u5177\u53d8\u91cf\u4e0d\u80fd\u76f4\u63a5\u5f71\u54cd\u88ab\u89e3\u91ca\u53d8\u91cf\uff0c\u4e5f\u4e0d\u80fd\u548c\u8bef\u5dee\u9879\u76f8\u5173\u3002",
         "\u6392\u4ed6\u6027\uff1a\u5de5\u5177\u53d8\u91cf\u53ea\u80fd\u901a\u8fc7\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u8fd9\u4e00\u6761\u8def\u5f84\u5f71\u54cd\u7ed3\u679c\u53d8\u91cf\u3002",
         "\u53ef\u8bba\u8bc1\u6027\uff1a\u6700\u597d\u80fd\u4ece\u5236\u5ea6\u3001\u5730\u7406\u3001\u5386\u53f2\u6216\u653f\u7b56\u80cc\u666f\u4e2d\u7ed9\u51fa\u6e05\u6670\u6765\u6e90\u3002"
       ],
-      modelSpec: `\u7b2c\u4e00\u9636\u6bb5\u7528\u5de5\u5177\u53d8\u91cf iv_var \u89e3\u91ca ${aliasBundle.independentAlias}\uff0c\u7b2c\u4e8c\u9636\u6bb5\u518d\u4f30\u8ba1 ${aliasBundle.independentAlias} \u5bf9 ${aliasBundle.dependentAlias} \u7684\u51c0\u6548\u5e94\u3002`,
+      modelSpec: `第一阶段用工具变量 ${instrumentAlias} 解释 ${aliasBundle.independentAlias}；第二阶段在双向固定效应框架下估计 ${aliasBundle.independentAlias} 对 ${aliasBundle.dependentAlias} 的净效应。`,
       stataCode: [
         ...buildInstallLines([
+          { command: "reghdfe", install: "ssc install reghdfe, replace" },
+          { command: "ftools", install: "ssc install ftools, replace" },
           { command: "ivreghdfe", install: "ssc install ivreghdfe, replace" },
           { command: "outreg2", install: "ssc install outreg2, replace" }
         ]),
         "",
         ...buildExportNoticeLines(fileName),
         "",
-        "* \u8bf7\u628a iv_var \u66ff\u6362\u6210\u4f60\u771f\u6b63\u7684\u5de5\u5177\u53d8\u91cf",
-        "* \u5982\u679c\u4f60\u6709\u591a\u4e2a\u5de5\u5177\u53d8\u91cf\uff0c\u53ef\u4ee5\u628a\u5b83\u4eec\u4e00\u8d77\u653e\u5230\u62ec\u53f7\u91cc\uff0c\u518d\u8865\u5145\u8fc7\u5ea6\u8bc6\u522b\u68c0\u9a8c",
+        hasUsableInstrumentAlias
+          ? `* 当前工具变量：${instrumentAlias}；运行前仍需在论文中解释相关性、外生性和排他性`
+          : "* 当前还没有真实工具变量；iv_var 只是占位符，请先替换成你能论证的工具变量",
+        "* 如果你有多个工具变量，可以把它们一起放到括号右侧，并补充过度识别检验。",
+        "",
+        "* 第一阶段：检查工具变量是否能解释核心解释变量",
+        buildReghdfeCommand(
+          aliasBundle.independentAlias,
+          [instrumentAlias, ...aliasBundle.controlAliases],
+          buildBaseOptions(mainFixedEffectAliases, clusterAlias)
+        ),
+        buildOutregLine(filePath, ExportWriteMode.REPLACE),
+        "",
+        "* 第二阶段：双向固定效应 IV 估计",
         buildIvreghdfeCommand(
           aliasBundle.dependentAlias,
           aliasBundle.independentAlias,
-          "iv_var",
+          instrumentAlias,
           aliasBundle.controlAliases,
-          buildBaseOptions(fixedEffectAliases, clusterAlias)
+          buildIvreghdfeOptions(mainFixedEffectAliases, clusterAlias)
         ),
-        buildOutregLine(filePath, ExportWriteMode.REPLACE),
-        "estat firststage"
+        buildOutregLine(filePath, ExportWriteMode.APPEND)
       ].join("\n"),
       codeExplanation: [
-        "ssc install ivreghdfe, replace \u548c ssc install outreg2, replace \u53ea\u5728\u4f60\u4ee5\u524d\u6ca1\u5b89\u88c5\u8fc7\u8fd9\u4e9b\u547d\u4ee4\u65f6\u8fd0\u884c\u5373\u53ef\uff1b\u88c5\u8fc7\u7684\u8bdd\u53ef\u4ee5\u76f4\u63a5\u5ffd\u7565\uff0c\u6216\u8005\u7528 Ctrl+/ \u6ce8\u91ca\u6389\u3002",
-        "iv_var \u53ea\u662f\u5360\u4f4d\u7b26\uff0c\u9700\u8981\u66ff\u6362\u6210\u771f\u6b63\u6709\u7406\u8bba\u652f\u6491\u7684\u5de5\u5177\u53d8\u91cf\u3002",
-        "ivreghdfe \u9002\u5408\u5728\u56fa\u5b9a\u6548\u5e94\u6846\u67b6\u4e0b\u505a\u4e24\u9636\u6bb5\u4f30\u8ba1\u3002",
-        "estat firststage \u7528\u4e8e\u68c0\u67e5\u7b2c\u4e00\u9636\u6bb5\u662f\u5426\u8db3\u591f\u5f3a\u3002"
+        "IV 不是由数据形态决定，而是为了解决核心解释变量可能存在的内生性问题。",
+        hasUsableInstrumentAlias
+          ? `代码会把 ${instrumentAlias} 放入第一阶段和第二阶段；但是否成立取决于论文中的理论和制度背景论证。`
+          : "iv_var 只是占位符，必须替换成真实工具变量后才能运行和解释。",
+        "第一阶段 reghdfe 用于观察工具变量与核心解释变量的相关性。",
+        "第二阶段 ivreghdfe 在双向固定效应和聚类标准误下估计 IV 模型。"
       ],
       interpretationGuide: [
         "\u5148\u770b\u7b2c\u4e00\u9636\u6bb5\u5de5\u5177\u53d8\u91cf\u662f\u5426\u663e\u8457\uff0c\u662f\u5426\u5b58\u5728\u5f31\u5de5\u5177\u53d8\u91cf\u95ee\u9898\u3002",
@@ -396,31 +542,31 @@ export function buildRegressionModuleOutput(
         "\u4e2d\u4ecb\u673a\u5236\uff1a\u5148\u68c0\u9a8c\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u662f\u5426\u663e\u8457\u5f71\u54cd\u4e2d\u4ecb\u53d8\u91cf\uff0c\u518d\u628a\u4e2d\u4ecb\u53d8\u91cf\u653e\u56de\u4e3b\u56de\u5f52\uff0c\u89c2\u5bdf\u6838\u5fc3\u7cfb\u6570\u662f\u5426\u6536\u7f29\u3002",
         "\u8c03\u8282\u673a\u5236\uff1a\u6784\u9020 \u6838\u5fc3\u89e3\u91ca\u53d8\u91cf \u00d7 \u8c03\u8282\u53d8\u91cf \u7684\u4ea4\u4e92\u9879\uff0c\u68c0\u9a8c\u4e0d\u540c\u6761\u4ef6\u4e0b\u7684\u8fb9\u9645\u6548\u5e94\u662f\u5426\u53d8\u5316\u3002"
       ],
-      modelSpec: "\u5148\u505a\u4e2d\u4ecb\u673a\u5236\u4e24\u6b65\u56de\u5f52\uff0c\u518d\u8865\u4e00\u4e2a\u4ea4\u4e92\u9879\u6a21\u578b\u68c0\u9a8c\u8c03\u8282\u6548\u5e94\u3002",
+      modelSpec: `先用 ${mechanismAlias} 做中介机制两步回归；如有第二个机制或调节变量，再用 ${moderatorAlias} 构造交互项检验调节效应。`,
       stataCode: [
         ...baselineInstallLines,
         "",
         ...buildExportNoticeLines(fileName),
         "",
-        "* \u8bf7\u628a mediator_var \u66ff\u6362\u6210\u4e2d\u4ecb\u53d8\u91cf\uff0c\u628a moderator_var \u66ff\u6362\u6210\u8c03\u8282\u53d8\u91cf",
+        `* 中介变量：${mechanismAlias}；调节变量：${moderatorAlias}。如果只是占位符，请替换成真实变量名。`,
         buildReghdfeCommand(
-          "mediator_var",
+          mechanismAlias,
           [aliasBundle.independentAlias, ...aliasBundle.controlAliases],
-          buildBaseOptions(fixedEffectAliases, clusterAlias)
+          buildBaseOptions(mainFixedEffectAliases, clusterAlias)
         ),
         buildOutregLine(filePath, ExportWriteMode.REPLACE),
         "",
         buildReghdfeCommand(
           aliasBundle.dependentAlias,
-          [aliasBundle.independentAlias, "mediator_var", ...aliasBundle.controlAliases],
-          buildBaseOptions(fixedEffectAliases, clusterAlias)
+          [aliasBundle.independentAlias, mechanismAlias, ...aliasBundle.controlAliases],
+          buildBaseOptions(mainFixedEffectAliases, clusterAlias)
         ),
         buildOutregLine(filePath, ExportWriteMode.APPEND),
         "",
         buildReghdfeCommand(
           aliasBundle.dependentAlias,
-          [`c.${aliasBundle.independentAlias}##c.moderator_var`, ...aliasBundle.controlAliases],
-          buildBaseOptions(fixedEffectAliases, clusterAlias)
+          [`c.${aliasBundle.independentAlias}##c.${moderatorAlias}`, ...aliasBundle.controlAliases],
+          buildBaseOptions(mainFixedEffectAliases, clusterAlias)
         ),
         buildOutregLine(filePath, ExportWriteMode.APPEND)
       ].join("\n"),
@@ -442,33 +588,33 @@ export function buildRegressionModuleOutput(
     ...baseline,
     purpose: "\u5f02\u8d28\u6027\u5206\u6790\u7528\u4e8e\u8bc6\u522b\u4e0d\u540c\u6837\u672c\u7ec4\u4e2d\u6548\u5e94\u662f\u5426\u5b58\u5728\u7cfb\u7edf\u5dee\u5f02\u3002",
     meaning: "\u5e38\u89c1\u505a\u6cd5\u662f\u505a\u5206\u7ec4\u56de\u5f52\uff0c\u6216\u8005\u76f4\u63a5\u6784\u9020\u4ea4\u4e92\u9879\u6bd4\u8f83\u4e0d\u540c\u7ec4\u522b\u7684\u7cfb\u6570\u5dee\u5f02\u3002",
-    modelSpec: "\u5148\u5206\u522b\u8dd1\u4e24\u7ec4\u6837\u672c\uff0c\u518d\u7528\u4ea4\u4e92\u9879\u6a21\u578b\u76f4\u63a5\u68c0\u9a8c\u7ec4\u95f4\u7cfb\u6570\u5dee\u5f02\u3002",
+    modelSpec: `先按 ${groupAlias} 分别跑两组样本，再用交互项模型直接检验组间系数差异。`,
     stataCode: [
       ...baselineInstallLines,
       "",
       ...buildExportNoticeLines(fileName),
       "",
-      "* \u8bf7\u628a group_var \u66ff\u6362\u6210\u771f\u5b9e\u5206\u7ec4\u53d8\u91cf\uff0c\u4f8b\u5982\u56fd\u6709/\u975e\u56fd\u6709\u3001\u5927\u4f01\u4e1a/\u5c0f\u4f01\u4e1a\u7b49",
+      `* 分组变量：${groupAlias}。如果这里仍是 group_var，请替换成真实分组变量，例如国有/非国有、大企业/小企业等。`,
       buildReghdfeCommand(
         aliasBundle.dependentAlias,
         [aliasBundle.independentAlias, ...aliasBundle.controlAliases],
-        buildBaseOptions(fixedEffectAliases, clusterAlias),
-        "if group_var == 1"
+        buildBaseOptions(mainFixedEffectAliases, clusterAlias),
+        `if ${groupAlias} == 1`
       ),
       buildOutregLine(filePath, ExportWriteMode.REPLACE),
       "",
       buildReghdfeCommand(
         aliasBundle.dependentAlias,
         [aliasBundle.independentAlias, ...aliasBundle.controlAliases],
-        buildBaseOptions(fixedEffectAliases, clusterAlias),
-        "if group_var == 0"
+        buildBaseOptions(mainFixedEffectAliases, clusterAlias),
+        `if ${groupAlias} == 0`
       ),
       buildOutregLine(filePath, ExportWriteMode.APPEND),
       "",
       buildReghdfeCommand(
         aliasBundle.dependentAlias,
-        [`c.${aliasBundle.independentAlias}##i.group_var`, ...aliasBundle.controlAliases],
-        buildBaseOptions(fixedEffectAliases, clusterAlias)
+        [`c.${aliasBundle.independentAlias}##i.${groupAlias}`, ...aliasBundle.controlAliases],
+        buildBaseOptions(mainFixedEffectAliases, clusterAlias)
       ),
       buildOutregLine(filePath, ExportWriteMode.APPEND)
     ].join("\n"),

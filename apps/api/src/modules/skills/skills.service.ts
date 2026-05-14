@@ -257,6 +257,16 @@ export class SkillsService {
         panelId: resolved.panelId,
         timeVar: resolved.timeVar,
         sampleScope: resolved.sampleScope,
+        instrumentVariable: resolved.instrumentVariable,
+        mechanismVariables: resolved.mechanismVariables,
+        heterogeneityVars: resolved.heterogeneityVars,
+        didEnabled: resolved.didEnabled,
+        psmEnabled: resolved.psmEnabled,
+        treatmentVar: resolved.treatmentVar,
+        policyTimeVar: resolved.policyTimeVar,
+        policyStartYear: resolved.policyStartYear,
+        psmMatchVars: resolved.psmMatchVars,
+        exportFormats: resolved.exportFormats,
         termMappings: resolved.termMappings,
         exportState: {
           fileName: exportState.fileName,
@@ -343,6 +353,17 @@ export class SkillsService {
         panelId: researchProfile.panelId,
         timeVar: researchProfile.timeVar,
         sampleScope: researchProfile.sampleScope,
+        analysisRoute: researchProfile.analysisRoute,
+        didEnabled: researchProfile.didEnabled,
+        psmEnabled: researchProfile.psmEnabled,
+        treatmentVar: researchProfile.treatmentVar,
+        policyTimeVar: researchProfile.policyTimeVar,
+        policyStartYear: researchProfile.policyStartYear,
+        instrumentVariable: researchProfile.instrumentVariable,
+        psmMatchVars: researchProfile.psmMatchVars,
+        mechanismVariables: researchProfile.mechanismVariables,
+        heterogeneityVars: researchProfile.heterogeneityVars,
+        exportFormats: researchProfile.exportFormats,
         termMappings: researchProfile.termMappings
       }).filter(([, value]) => {
         if (Array.isArray(value)) {
@@ -429,11 +450,11 @@ export class SkillsService {
     }
 
     const regressionVariants: Partial<Record<SkillName, { label: string; variant: "baseline" | "robustness" | "iv" | "mechanism" | "heterogeneity" }>> = {
-      [SkillName.BASELINE_REGRESSION]: { label: "»ù×¼»Ø¹é", variant: "baseline" },
-      [SkillName.ROBUSTNESS]: { label: "ÎÈ½¡ĞÔ¼ìÑé", variant: "robustness" },
-      [SkillName.IV]: { label: "ÄÚÉúĞÔ·ÖÎö", variant: "iv" },
-      [SkillName.MECHANISM]: { label: "»úÖÆ·ÖÎö", variant: "mechanism" },
-      [SkillName.HETEROGENEITY]: { label: "ÒìÖÊĞÔ·ÖÎö", variant: "heterogeneity" }
+      [SkillName.BASELINE_REGRESSION]: { label: "åŸºå‡†å›å½’", variant: "baseline" },
+      [SkillName.ROBUSTNESS]: { label: "ç¨³å¥æ€§æ£€éªŒ", variant: "robustness" },
+      [SkillName.IV]: { label: "å†…ç”Ÿæ€§åˆ†æ", variant: "iv" },
+      [SkillName.MECHANISM]: { label: "æœºåˆ¶åˆ†æ", variant: "mechanism" },
+      [SkillName.HETEROGENEITY]: { label: "å¼‚è´¨æ€§åˆ†æ", variant: "heterogeneity" }
     };
 
     const regressionConfig = regressionVariants[skillName];

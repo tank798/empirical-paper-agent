@@ -4,6 +4,7 @@ import {
   ProjectStepStatus,
   SkillName,
   WorkflowStep,
+  type ExportFormat,
   type ResearchProfile,
   type WorkflowProgressPayload
 } from "@empirical/shared";
@@ -25,6 +26,17 @@ type SetupDraft = {
   clusterVar: string;
   panelId: string;
   timeVar: string;
+  analysisRoute: "panel_fe";
+  didEnabled: boolean;
+  psmEnabled: boolean;
+  treatmentVar: string;
+  policyTimeVar: string;
+  policyStartYear: string;
+  instrumentVariable: string;
+  psmMatchVars: string[];
+  mechanismVariables: string[];
+  heterogeneityVars: string[];
+  exportFormats: ExportFormat[];
   notes: string;
 };
 
@@ -35,7 +47,13 @@ type SetupFieldKey =
   | "dependentVariable"
   | "controls"
   | "sampleScope"
-  | "fixedEffects";
+  | "fixedEffects"
+  | "panelId"
+  | "timeVar"
+  | "instrumentVariable"
+  | "treatmentVar"
+  | "policyStartYear"
+  | "psmMatchVars";
 
 type WorkflowRunEntry = {
   step: WorkflowStep;
@@ -45,6 +63,7 @@ type WorkflowRunEntry = {
 
 const DEFAULT_RELATIONSHIP_LABEL = "正向、负向和不显著";
 const DEFAULT_RESEARCH_OBJECT = "中国A股上市公司";
+const EXPORT_FORMATS = new Set<ExportFormat>(["word", "latex", "excel", "stata_do"]);
 
 const REQUIRED_SETUP_FIELDS: Array<{ key: SetupFieldKey; label: string; example: string }> = [
   { key: "normalizedTopic", label: "研究主题", example: "研究主题：数字金融对企业创新的影响" },
@@ -57,7 +76,10 @@ const REQUIRED_SETUP_FIELDS: Array<{ key: SetupFieldKey; label: string; example:
     example: "控制变量：企业规模、资产负债率、ROA、现金流、股权集中度"
   },
   { key: "sampleScope", label: "样本区间", example: "样本区间：2011-2022年" },
-  { key: "fixedEffects", label: "固定效应", example: "固定效应：企业固定效应、年份固定效应" }
+  { key: "fixedEffects", label: "固定效应", example: "固定效应：企业固定效应、年份固定效应" },
+  { key: "panelId", label: "个体变量", example: "个体变量：firm_id 或 stkcd" },
+  { key: "timeVar", label: "时间变量", example: "时间变量：year" },
+  { key: "instrumentVariable", label: "工具变量", example: "工具变量：iv_index（必须是真实变量名或候选变量名）" }
 ];
 
 const GENERATED_WORKFLOW: WorkflowRunEntry[] = [
@@ -441,6 +463,29 @@ export class WorkflowService {
       clusterVar: this.stringValue(payload.clusterVar) || stored?.clusterVar || "",
       panelId: this.stringValue(payload.panelId) || stored?.panelId || "",
       timeVar: this.stringValue(payload.timeVar) || stored?.timeVar || "",
+      analysisRoute: "panel_fe",
+      didEnabled: this.booleanValue(payload.didEnabled, stored?.didEnabled ?? false),
+      psmEnabled: this.booleanValue(payload.psmEnabled, stored?.psmEnabled ?? false),
+      treatmentVar: this.stringValue(payload.treatmentVar) || stored?.treatmentVar || "",
+      policyTimeVar: this.stringValue(payload.policyTimeVar) || stored?.policyTimeVar || "",
+      policyStartYear: this.stringValue(payload.policyStartYear) || stored?.policyStartYear || "",
+      instrumentVariable: this.stringValue(payload.instrumentVariable) || stored?.instrumentVariable || "",
+      psmMatchVars:
+        this.arrayValue(payload.psmMatchVars).length > 0
+          ? this.arrayValue(payload.psmMatchVars)
+          : stored?.psmMatchVars ?? [],
+      mechanismVariables:
+        this.arrayValue(payload.mechanismVariables).length > 0
+          ? this.arrayValue(payload.mechanismVariables)
+          : stored?.mechanismVariables ?? [],
+      heterogeneityVars:
+        this.arrayValue(payload.heterogeneityVars).length > 0
+          ? this.arrayValue(payload.heterogeneityVars)
+          : stored?.heterogeneityVars ?? [],
+      exportFormats:
+        this.arrayValue(payload.exportFormats).length > 0
+          ? this.normalizeExportFormats(this.arrayValue(payload.exportFormats))
+          : this.normalizeExportFormats(stored?.exportFormats ?? []),
       notes: this.stringValue(payload.notes) || stored?.notes || ""
     };
 
@@ -449,6 +494,18 @@ export class WorkflowService {
     }
     if (draft.fixedEffects.length === 0 && typeof payload.fixedEffects === "string") {
       draft.fixedEffects = normalizeFixedEffects(String(payload.fixedEffects));
+    }
+    if (draft.psmMatchVars.length === 0 && typeof payload.psmMatchVars === "string") {
+      draft.psmMatchVars = this.splitItems(String(payload.psmMatchVars));
+    }
+    if (draft.mechanismVariables.length === 0 && typeof payload.mechanismVariables === "string") {
+      draft.mechanismVariables = this.splitItems(String(payload.mechanismVariables));
+    }
+    if (draft.heterogeneityVars.length === 0 && typeof payload.heterogeneityVars === "string") {
+      draft.heterogeneityVars = this.splitItems(String(payload.heterogeneityVars));
+    }
+    if (draft.exportFormats.length === 0 && typeof payload.exportFormats === "string") {
+      draft.exportFormats = this.normalizeExportFormats(this.splitItems(String(payload.exportFormats)));
     }
 
     if ((draft.normalizedTopic && !draft.independentVariable) || (draft.normalizedTopic && !draft.dependentVariable)) {
@@ -495,6 +552,13 @@ export class WorkflowService {
     }
 
     draft.relationship = DEFAULT_RELATIONSHIP_LABEL;
+    draft.clusterVar ||= draft.panelId;
+    if (draft.didEnabled) {
+      draft.policyTimeVar ||= draft.timeVar;
+    }
+    if (!draft.exportFormats.length) {
+      draft.exportFormats = ["word", "stata_do"];
+    }
 
     return draft;
   }
@@ -509,9 +573,20 @@ export class WorkflowService {
       controls: draft.controls,
       fixedEffects: draft.fixedEffects,
       sampleScope: draft.sampleScope || null,
+      analysisRoute: draft.analysisRoute,
+      didEnabled: draft.didEnabled,
+      psmEnabled: draft.psmEnabled,
       clusterVar: draft.clusterVar || null,
       panelId: draft.panelId || null,
       timeVar: draft.timeVar || null,
+      treatmentVar: draft.treatmentVar || null,
+      policyTimeVar: draft.policyTimeVar || null,
+      policyStartYear: draft.policyStartYear || null,
+      instrumentVariable: draft.instrumentVariable || null,
+      psmMatchVars: draft.psmMatchVars,
+      mechanismVariables: draft.mechanismVariables,
+      heterogeneityVars: draft.heterogeneityVars,
+      exportFormats: draft.exportFormats,
       notes: draft.notes || null
     });
 
@@ -549,6 +624,17 @@ export class WorkflowService {
           clusterVar: draft.clusterVar || undefined,
           panelId: draft.panelId || undefined,
           timeVar: draft.timeVar || undefined,
+          analysisRoute: draft.analysisRoute,
+          didEnabled: draft.didEnabled,
+          psmEnabled: draft.psmEnabled,
+          treatmentVar: draft.treatmentVar || undefined,
+          policyTimeVar: draft.policyTimeVar || undefined,
+          policyStartYear: draft.policyStartYear || undefined,
+          instrumentVariable: draft.instrumentVariable || undefined,
+          psmMatchVars: draft.psmMatchVars,
+          mechanismVariables: draft.mechanismVariables,
+          heterogeneityVars: draft.heterogeneityVars,
+          exportFormats: draft.exportFormats,
           notes: draft.notes || undefined
         }
       });
@@ -678,9 +764,14 @@ export class WorkflowService {
   private buildSetupCollectionPrompt() {
     return {
       message:
-        "请直接把研究设定告诉我，我会先帮您整理成结构化摘要，再确认是否生成整套 Stata 工作流。",
+        "请直接把面板数据研究设定告诉我，我会先整理成结构化摘要，再确认是否生成整套 Stata 工作流。DID 和 PSM 默认不做，只有您明确需要时我才会追问后续信息。",
       guidanceTitle: "建议至少包含这些信息",
-      guidanceOptions: REQUIRED_SETUP_FIELDS.map((item) => item.example)
+      guidanceOptions: [
+        ...REQUIRED_SETUP_FIELDS.map((item) => item.example),
+        "可选：如果需要 DID，请说明处理组变量和政策年份；如果不需要，可以直接说不做 DID",
+        "可选：如果需要 PSM，请说明处理变量和匹配变量；如果不需要，可以直接说不做 PSM",
+        "可选：如果已有机制变量或分组变量，也可以一起告诉我"
+      ]
     };
   }
 
@@ -711,18 +802,68 @@ export class WorkflowService {
       controls: draft.controls,
       sampleScope: draft.sampleScope,
       fixedEffects: draft.fixedEffects,
+      panelId: draft.panelId,
+      timeVar: draft.timeVar,
+      clusterVar: draft.clusterVar,
+      analysisRoute: draft.analysisRoute,
+      didEnabled: draft.didEnabled,
+      psmEnabled: draft.psmEnabled,
+      treatmentVar: draft.treatmentVar,
+      policyTimeVar: draft.policyTimeVar,
+      policyStartYear: draft.policyStartYear,
+      instrumentVariable: draft.instrumentVariable,
+      psmMatchVars: draft.psmMatchVars,
+      mechanismVariables: draft.mechanismVariables,
+      heterogeneityVars: draft.heterogeneityVars,
+      exportFormats: draft.exportFormats,
       confirmationMessage: "如无问题，请确认并直接生成整套 Stata 工作流。"
     };
   }
 
   private getMissingSetupFields(draft: SetupDraft) {
-    return REQUIRED_SETUP_FIELDS.filter((field) => {
+    const missing = REQUIRED_SETUP_FIELDS.filter((field) => {
       const value = draft[field.key];
       if (Array.isArray(value)) {
         return value.length === 0;
       }
       return !String(value ?? "").trim();
     });
+
+    if (draft.didEnabled) {
+      if (!draft.treatmentVar) {
+        missing.push({
+          key: "treatmentVar",
+          label: "DID处理组变量",
+          example: "DID处理组变量：treat"
+        });
+      }
+      if (!draft.policyStartYear) {
+        missing.push({
+          key: "policyStartYear",
+          label: "DID政策年份",
+          example: "DID政策年份：2015"
+        });
+      }
+    }
+
+    if (draft.psmEnabled) {
+      if (!draft.treatmentVar) {
+        missing.push({
+          key: "treatmentVar",
+          label: "PSM处理变量",
+          example: "PSM处理变量：treat"
+        });
+      }
+      if (draft.psmMatchVars.length === 0) {
+        missing.push({
+          key: "psmMatchVars",
+          label: "PSM匹配变量",
+          example: "PSM匹配变量：企业规模、资产负债率、ROA、成长性"
+        });
+      }
+    }
+
+    return missing;
   }
 
   private hasAnySetupContent(draft: SetupDraft) {
@@ -733,7 +874,16 @@ export class WorkflowService {
         draft.researchObject ||
         draft.controls.length ||
         draft.sampleScope ||
-        draft.fixedEffects.length
+        draft.fixedEffects.length ||
+        draft.panelId ||
+        draft.timeVar ||
+        draft.clusterVar ||
+        draft.didEnabled ||
+        draft.psmEnabled ||
+        draft.instrumentVariable ||
+        draft.psmMatchVars.length ||
+        draft.mechanismVariables.length ||
+        draft.heterogeneityVars.length
     );
   }
 
@@ -818,6 +968,17 @@ export class WorkflowService {
       "clusterVar",
       "panelId",
       "timeVar",
+      "analysisRoute",
+      "didEnabled",
+      "psmEnabled",
+      "treatmentVar",
+      "policyTimeVar",
+      "policyStartYear",
+      "instrumentVariable",
+      "psmMatchVars",
+      "mechanismVariables",
+      "heterogeneityVars",
+      "exportFormats",
       "notes"
     ].some((key) => {
       const value = payload[key];
@@ -867,6 +1028,22 @@ export class WorkflowService {
     return /coef\.|adj\s*r2|r-squared|observations|number of obs|t\s*=|p\s*</i.test(userMessage);
   }
 
+  private booleanValue(value: unknown, fallback: boolean) {
+    if (typeof value === "boolean") {
+      return value;
+    }
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (["1", "true", "yes", "y", "要", "做", "需要", "是"].includes(normalized)) {
+        return true;
+      }
+      if (["0", "false", "no", "n", "不要", "不做", "不需要", "否"].includes(normalized)) {
+        return false;
+      }
+    }
+    return fallback;
+  }
+
   private stringValue(value: unknown) {
     return typeof value === "string" ? value.trim() : "";
   }
@@ -885,6 +1062,29 @@ export class WorkflowService {
       .split(/[\s,\/]+/)
       .map((item) => item.trim())
       .filter(Boolean);
+  }
+
+  private normalizeExportFormats(values: string[]): ExportFormat[] {
+    const normalized = new Set<ExportFormat>();
+    for (const value of values) {
+      const compact = value.toLowerCase().replace(/[\s_-]+/g, "");
+      if (/word|docx|rtf|文档/.test(compact)) {
+        normalized.add("word");
+      }
+      if (/latex|tex|overleaf/.test(compact)) {
+        normalized.add("latex");
+      }
+      if (/excel|xlsx|表格/.test(compact)) {
+        normalized.add("excel");
+      }
+      if (/stata|dofile|do文件|代码/.test(compact)) {
+        normalized.add("stata_do");
+      }
+      if (EXPORT_FORMATS.has(value as ExportFormat)) {
+        normalized.add(value as ExportFormat);
+      }
+    }
+    return Array.from(normalized);
   }
 
   private cleanProfileUpdatePayload(payload: Record<string, unknown>) {
@@ -974,4 +1174,3 @@ export class WorkflowService {
     };
   }
 }
-

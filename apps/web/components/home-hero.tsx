@@ -351,12 +351,12 @@ export function HomeHero() {
               <div className="pointer-events-none absolute inset-0 z-10 px-4 py-4 sm:px-6 sm:py-5">
                 <p className="max-w-3xl text-lg leading-8 text-slate-500 sm:text-[1.06rem]">
                   {
-                    "\u8bf7\u8f93\u5165\u4f60\u7684\u7814\u7a76\u4e3b\u9898\u3001\u7814\u7a76\u5bf9\u8c61\u3001\u89e3\u91ca\u53d8\u91cf\u3001\u88ab\u89e3\u91ca\u53d8\u91cf\u3001\u63a7\u5236\u53d8\u91cf\u3001\u6837\u672c\u533a\u95f4\u548c\u56fa\u5b9a\u6548\u5e94\u3002\u4f60\u53ef\u4ee5\u5199\u5f97\u5f88\u4e71\uff0c\u6211\u4f1a\u5148\u5e2e\u4f60\u6574\u7406\u6210\u7ed3\u6784\u5316\u7814\u7a76\u8bbe\u5b9a\u3002"
+                    "请输入面板数据论文的研究主题、研究对象、解释变量、被解释变量、控制变量、样本区间、个体变量、时间变量和固定效应。DID 和 PSM 可以明确说做或不做；IV 需要你提供真实工具变量。你可以写得很乱，我会先整理成结构化研究设定。"
                   }
                 </p>
                 <p className="mt-4 max-w-3xl text-base leading-8 text-slate-400 sm:text-[1rem]">
                   {
-                    "\u4f8b\u5982\uff1a\u7814\u7a76\u6570\u5b57\u91d1\u878d\u5bf9\u4f01\u4e1a\u521b\u65b0\u7684\u5f71\u54cd\uff1b\u6837\u672c\u662f2011-2022\u5e74\u4e2d\u56fdA\u80a1\u4e0a\u5e02\u516c\u53f8\uff08\u5254\u9664ST\u548c\u91d1\u878d\u80a1\uff09\uff1b\u89e3\u91ca\u53d8\u91cf\u662f\u6570\u5b57\u91d1\u878d\u6307\u6570\uff1b\u88ab\u89e3\u91ca\u53d8\u91cf\u662f\u4e13\u5229\u7533\u8bf7\u6570\u91cf\uff1b\u63a7\u5236\u53d8\u91cf\u5305\u62ec\u4f01\u4e1a\u89c4\u6a21\u3001\u8d44\u4ea7\u8d1f\u503a\u7387\u3001ROA\uff1b\u56fa\u5b9a\u6548\u5e94\u4e3a\u4f01\u4e1a\u548c\u5e74\u4efd\u56fa\u5b9a\u6548\u5e94\u3002"
+                    "例如：研究数字金融对企业创新的影响；样本是2011-2022年中国A股上市公司；面板 id 是 stkcd，时间变量是 year；控制变量包括企业规模、资产负债率、ROA；固定效应为企业和年份；不做 DID，PSM 要做；工具变量是 iv_index。"
                   }
                 </p>
               </div>
@@ -394,7 +394,7 @@ export function HomeHero() {
                   ? statusText || "\u6b63\u5728\u8bc6\u522b\u622a\u56fe\u6587\u5b57..."
                   : pastedImage
                     ? `\u5df2\u9644\u52a0\u622a\u56fe ${pastedImage.name}`
-                    : "Enter\u53d1\u9001\uff0cCtrl+Enter\u6362\u884c"}
+                    : "Enter发送，Ctrl+Enter换行；也可以点麦克风语音输入"}
               </p>
             </div>
 

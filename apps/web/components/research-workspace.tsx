@@ -1382,11 +1382,11 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   };
 
   const helperText = showTopicConfirmBar
-    ? "如需调整研究设定，可直接补充；如无问题，请点击上方确认主题。"
-    : "可以继续追问当前模块，也可以直接修改研究设定。";
+    ? "如需调整研究设定，可直接补充；语音会先转成文字，发送后 Tank 会判断你是在改设定、选择 DID/PSM，还是普通追问。"
+    : "可以继续追问当前模块，也可以直接修改研究设定；语音输入发送后同样会先由 Tank 判断意图。";
   const placeholderText = showTopicConfirmBar
-    ? "例如：研究对象改成中国A股上市公司（剔除ST和金融股）\n例如：控制变量补充企业规模、资产负债率、ROA\n例如：固定效应改成企业固定效应和年份固定效应"
-    : "例如：请解释一下这一步的代码逻辑\n例如：把控制变量再补充完整一点\n例如：请重写一版更详细的 Stata 代码";
+    ? "例如：面板 id 是 stkcd，年份变量是 year，聚类变量按企业\n例如：不做 DID；PSM 要做，匹配变量用企业规模、资产负债率和 ROA\n例如：工具变量是 iv_index，机制变量是融资约束，异质性按产权性质分组"
+    : "例如：请解释一下 M1-M6 递进规格是什么意思\n例如：把控制变量再补充完整一点\n例如：我想做 PSM，但不做 DID，请更新研究设定";
 
   if (!bootstrapResolved) {
     return <section aria-hidden="true" className="mx-auto max-w-[1100px] px-6 pb-8 pt-6 opacity-0" />;
@@ -1654,7 +1654,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
               <PlusIcon />
             </button>
             <div className="min-w-0">
-              <p className="text-xs font-normal text-slate-400">{"Enter发送，Ctrl+Enter换行"}</p>
+              <p className="text-xs font-normal text-slate-400">{"Enter发送，Ctrl+Enter换行；语音会先转文字再由 Tank 判断意图"}</p>
               {composerError ? (
                 <p className="mt-1 text-xs font-normal text-rose-500">{composerError}</p>
               ) : attachmentProcessing ? (
@@ -1666,7 +1666,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
                     : `已附加 ${attachment.name}，发送后 Tank 会一起读取。`}
                 </p>
               ) : listening ? (
-                <p className="mt-1 text-xs font-normal text-slate-500">{"\u6b63\u5728\u76d1\u542c\u8bed\u97f3\u8f93\u5165..."}</p>
+                <p className="mt-1 text-xs font-normal text-slate-500">{"正在监听语音输入，发送后会自动理解这段话对应的研究设定。"}</p>
               ) : null}
             </div>
           </div>

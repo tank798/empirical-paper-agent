@@ -19,14 +19,15 @@ export class PromptService {
 
   constructor(private readonly configService: ConfigService) {}
 
-  async getSystemPrompt() {
+  async getSystemPrompt(): Promise<string> {
     if (this.systemPromptCache) {
       return this.systemPromptCache;
     }
 
     const root = this.resolvePromptsRoot();
-    this.systemPromptCache = await fs.readFile(path.join(root, promptManifest.system.file), "utf8");
-    return this.systemPromptCache;
+    const systemPrompt = await fs.readFile(path.join(root, promptManifest.system.file), "utf8");
+    this.systemPromptCache = systemPrompt;
+    return systemPrompt;
   }
 
   async getSkillPrompt(skillName: PromptSkillName) {

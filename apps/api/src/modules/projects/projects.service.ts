@@ -120,6 +120,17 @@ export class ProjectsService {
             panelId: project.researchProfile.panelId,
             timeVar: project.researchProfile.timeVar,
             sampleScope: project.researchProfile.sampleScope,
+            analysisRoute: project.researchProfile.analysisRoute ?? "panel_fe",
+            didEnabled: project.researchProfile.didEnabled ?? false,
+            psmEnabled: project.researchProfile.psmEnabled ?? false,
+            treatmentVar: project.researchProfile.treatmentVar,
+            policyTimeVar: project.researchProfile.policyTimeVar,
+            policyStartYear: project.researchProfile.policyStartYear,
+            instrumentVariable: project.researchProfile.instrumentVariable,
+            psmMatchVars: project.researchProfile.psmMatchVars ?? [],
+            mechanismVariables: project.researchProfile.mechanismVariables ?? [],
+            heterogeneityVars: project.researchProfile.heterogeneityVars ?? [],
+            exportFormats: project.researchProfile.exportFormats ?? [],
             notes: project.researchProfile.notes,
             termMappings: Array.isArray(project.researchProfile.termMappingsJson)
               ? (project.researchProfile.termMappingsJson as Array<{

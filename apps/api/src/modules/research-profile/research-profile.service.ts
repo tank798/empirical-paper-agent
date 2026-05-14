@@ -1,5 +1,5 @@
 ﻿import { Injectable } from "@nestjs/common";
-import type { ResearchProfile, TermMapping } from "@empirical/shared";
+import type { ExportFormat, ResearchProfile, TermMapping } from "@empirical/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { normalizeFixedEffects } from "../skills/skill.utils";
 import { buildTermMappings } from "./term-mappings";
@@ -14,8 +14,44 @@ type RegressionInput = {
   timeVar: string | null;
   sampleScope: string | null;
   normalizedTopic: string;
+  analysisRoute: "panel_fe";
+  didEnabled: boolean;
+  psmEnabled: boolean;
+  treatmentVar: string | null;
+  policyTimeVar: string | null;
+  policyStartYear: string | null;
+  instrumentVariable: string | null;
+  psmMatchVars: string[];
+  mechanismVariables: string[];
+  heterogeneityVars: string[];
+  exportFormats: ExportFormat[];
   termMappings: TermMapping[];
 };
+
+const EXPORT_FORMATS = new Set<ExportFormat>(["word", "latex", "excel", "stata_do"]);
+
+function normalizeExportFormats(values?: string[] | null): ExportFormat[] {
+  const normalized = new Set<ExportFormat>();
+  for (const value of values ?? []) {
+    const compact = value.toLowerCase().replace(/[\s_-]+/g, "");
+    if (/word|docx|rtf|文档/.test(compact)) {
+      normalized.add("word");
+    }
+    if (/latex|tex|overleaf/.test(compact)) {
+      normalized.add("latex");
+    }
+    if (/excel|xlsx|表格/.test(compact)) {
+      normalized.add("excel");
+    }
+    if (/stata|dofile|do文件|代码/.test(compact)) {
+      normalized.add("stata_do");
+    }
+    if (EXPORT_FORMATS.has(value as ExportFormat)) {
+      normalized.add(value as ExportFormat);
+    }
+  }
+  return Array.from(normalized);
+}
 
 @Injectable()
 export class ResearchProfileService {
@@ -86,6 +122,17 @@ export class ResearchProfileService {
       panelId: payload.panelId ?? existing?.panelId ?? null,
       timeVar: payload.timeVar ?? existing?.timeVar ?? null,
       sampleScope: payload.sampleScope ?? existing?.sampleScope ?? null,
+      analysisRoute: payload.analysisRoute ?? existing?.analysisRoute ?? "panel_fe",
+      didEnabled: payload.didEnabled ?? existing?.didEnabled ?? false,
+      psmEnabled: payload.psmEnabled ?? existing?.psmEnabled ?? false,
+      treatmentVar: payload.treatmentVar ?? existing?.treatmentVar ?? null,
+      policyTimeVar: payload.policyTimeVar ?? existing?.policyTimeVar ?? null,
+      policyStartYear: payload.policyStartYear ?? existing?.policyStartYear ?? null,
+      instrumentVariable: payload.instrumentVariable ?? existing?.instrumentVariable ?? null,
+      psmMatchVars: payload.psmMatchVars ?? existing?.psmMatchVars ?? [],
+      mechanismVariables: payload.mechanismVariables ?? existing?.mechanismVariables ?? [],
+      heterogeneityVars: payload.heterogeneityVars ?? existing?.heterogeneityVars ?? [],
+      exportFormats: payload.exportFormats ?? existing?.exportFormats ?? [],
       notes: payload.notes ?? existing?.notes ?? null
     };
 
@@ -135,7 +182,40 @@ export class ResearchProfileService {
       panelId: (stored?.panelId || payload.panelId || inferred.panelId || null) as string | null,
       timeVar: (stored?.timeVar || payload.timeVar || inferred.timeVar || null) as string | null,
       sampleScope: (stored?.sampleScope || payload.sampleScope || inferred.sampleScope || null) as string | null,
-      normalizedTopic: (stored?.normalizedTopic || payload.normalizedTopic || inferred.normalizedTopic || "") as string
+      normalizedTopic: (stored?.normalizedTopic || payload.normalizedTopic || inferred.normalizedTopic || "") as string,
+      analysisRoute: "panel_fe" as const,
+      didEnabled: Boolean(stored?.didEnabled ?? payload.didEnabled ?? inferred.didEnabled ?? false),
+      psmEnabled: Boolean(stored?.psmEnabled ?? payload.psmEnabled ?? inferred.psmEnabled ?? false),
+      treatmentVar: (stored?.treatmentVar || payload.treatmentVar || inferred.treatmentVar || null) as string | null,
+      policyTimeVar: (stored?.policyTimeVar || payload.policyTimeVar || inferred.policyTimeVar || null) as string | null,
+      policyStartYear: (stored?.policyStartYear || payload.policyStartYear || inferred.policyStartYear || null) as string | null,
+      instrumentVariable: (stored?.instrumentVariable || payload.instrumentVariable || inferred.instrumentVariable || null) as string | null,
+      psmMatchVars:
+        (stored?.psmMatchVars?.length
+          ? stored.psmMatchVars
+          : Array.isArray(payload.psmMatchVars)
+            ? (payload.psmMatchVars as string[])
+            : inferred.psmMatchVars) ?? [],
+      mechanismVariables:
+        (stored?.mechanismVariables?.length
+          ? stored.mechanismVariables
+          : Array.isArray(payload.mechanismVariables)
+            ? (payload.mechanismVariables as string[])
+            : inferred.mechanismVariables) ?? [],
+      heterogeneityVars:
+        (stored?.heterogeneityVars?.length
+          ? stored.heterogeneityVars
+          : Array.isArray(payload.heterogeneityVars)
+            ? (payload.heterogeneityVars as string[])
+            : inferred.heterogeneityVars) ?? [],
+      exportFormats:
+        normalizeExportFormats(
+          (stored?.exportFormats?.length
+            ? stored.exportFormats
+            : Array.isArray(payload.exportFormats)
+              ? (payload.exportFormats as string[])
+              : inferred.exportFormats) ?? []
+        )
     };
 
     const termMappings = stored?.termMappings?.length
@@ -162,6 +242,8 @@ export class ResearchProfileService {
     const text = recentMessages
       .map((message) => message.contentText || JSON.stringify(message.contentJson ?? {}))
       .join("\n");
+    const didDisabled = /(?:不做|不需要|不用|no)\s*DID/i.test(text);
+    const psmDisabled = /(?:不做|不需要|不用|no)\s*PSM/i.test(text);
 
     const firstMatch = (patterns: RegExp[]) => {
       for (const pattern of patterns) {
@@ -185,10 +267,20 @@ export class ResearchProfileService {
       controls: splitList(firstMatch([/controls[:：]\s*([^\n]+)/i, /控制变量[:：]\s*([^\n]+)/])),
       fixedEffects: normalizeFixedEffects(firstMatch([/fixed effects[:：]\s*([^\n]+)/i, /固定效应[:：]\s*([^\n]+)/])),
       clusterVar: firstMatch([/cluster variable[:：]\s*([^\n]+)/i, /聚类变量[:：]\s*([^\n]+)/]) || null,
-      panelId: firstMatch([/panel[_\s-]*id[:：]\s*([^\n]+)/i]) || null,
-      timeVar: firstMatch([/time[_\s-]*var[:：]\s*([^\n]+)/i]) || null,
+      panelId: firstMatch([/panel[_\s-]*id[:：]\s*([^\n]+)/i, /面板\s*id[:：]\s*([^\n]+)/i, /个体变量[:：]\s*([^\n]+)/]) || null,
+      timeVar: firstMatch([/time[_\s-]*var[:：]\s*([^\n]+)/i, /时间变量[:：]\s*([^\n]+)/, /年份变量[:：]\s*([^\n]+)/]) || null,
       sampleScope: firstMatch([/sample scope[:：]\s*([^\n]+)/i, /样本范围[:：]\s*([^\n]+)/]) || null,
-      normalizedTopic: firstMatch([/topic[:：]\s*([^\n]+)/i, /题目[:：]\s*([^\n]+)/])
+      normalizedTopic: firstMatch([/topic[:：]\s*([^\n]+)/i, /题目[:：]\s*([^\n]+)/]),
+      didEnabled: didDisabled ? false : /要做\s*DID|做\s*DID|政策冲击|处理组/.test(text),
+      psmEnabled: psmDisabled ? false : /要做\s*PSM|做\s*PSM|匹配/.test(text),
+      treatmentVar: firstMatch([/处理组变量[:：]\s*([^\n]+)/, /treatment variable[:：]\s*([^\n]+)/i]) || null,
+      policyTimeVar: firstMatch([/政策时间变量[:：]\s*([^\n]+)/, /policy time variable[:：]\s*([^\n]+)/i]) || null,
+      policyStartYear: firstMatch([/政策年份[:：]\s*([^\n]+)/, /policy year[:：]\s*([^\n]+)/i]) || null,
+      instrumentVariable: firstMatch([/工具变量[:：]\s*([^\n]+)/, /instrument(?:al)? variable[:：]\s*([^\n]+)/i]) || null,
+      psmMatchVars: splitList(firstMatch([/匹配变量[:：]\s*([^\n]+)/, /matching variables?[:：]\s*([^\n]+)/i])),
+      mechanismVariables: splitList(firstMatch([/机制变量[:：]\s*([^\n]+)/, /mechanism variables?[:：]\s*([^\n]+)/i])),
+      heterogeneityVars: splitList(firstMatch([/分组变量[:：]\s*([^\n]+)/, /异质性变量[:：]\s*([^\n]+)/, /heterogeneity variables?[:：]\s*([^\n]+)/i])),
+      exportFormats: normalizeExportFormats(splitList(firstMatch([/导出格式[:：]\s*([^\n]+)/, /export formats?[:：]\s*([^\n]+)/i])))
     };
   }
 
@@ -205,6 +297,17 @@ export class ResearchProfileService {
     panelId: string | null;
     timeVar: string | null;
     sampleScope: string | null;
+    analysisRoute?: string | null;
+    didEnabled?: boolean | null;
+    psmEnabled?: boolean | null;
+    treatmentVar?: string | null;
+    policyTimeVar?: string | null;
+    policyStartYear?: string | null;
+    instrumentVariable?: string | null;
+    psmMatchVars?: string[] | null;
+    mechanismVariables?: string[] | null;
+    heterogeneityVars?: string[] | null;
+    exportFormats?: string[] | null;
     notes: string | null;
     termMappingsJson: unknown;
   }): ResearchProfile {
@@ -221,10 +324,20 @@ export class ResearchProfileService {
       panelId: profile.panelId,
       timeVar: profile.timeVar,
       sampleScope: profile.sampleScope,
+      analysisRoute: "panel_fe",
+      didEnabled: profile.didEnabled ?? false,
+      psmEnabled: profile.psmEnabled ?? false,
+      treatmentVar: profile.treatmentVar ?? null,
+      policyTimeVar: profile.policyTimeVar ?? null,
+      policyStartYear: profile.policyStartYear ?? null,
+      instrumentVariable: profile.instrumentVariable ?? null,
+      psmMatchVars: profile.psmMatchVars ?? [],
+      mechanismVariables: profile.mechanismVariables ?? [],
+      heterogeneityVars: profile.heterogeneityVars ?? [],
+      exportFormats: normalizeExportFormats(profile.exportFormats),
       notes: profile.notes,
       termMappings: Array.isArray(profile.termMappingsJson) ? (profile.termMappingsJson as TermMapping[]) : []
     };
   }
 }
-
 

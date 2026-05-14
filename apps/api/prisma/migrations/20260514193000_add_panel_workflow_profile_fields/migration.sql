@@ -1,0 +1,12 @@
+ALTER TABLE "research_profiles"
+  ADD COLUMN IF NOT EXISTS "analysis_route" TEXT NOT NULL DEFAULT 'panel_fe',
+  ADD COLUMN IF NOT EXISTS "did_enabled" BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS "psm_enabled" BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS "treatment_var" TEXT,
+  ADD COLUMN IF NOT EXISTS "policy_time_var" TEXT,
+  ADD COLUMN IF NOT EXISTS "policy_start_year" TEXT,
+  ADD COLUMN IF NOT EXISTS "instrument_variable" TEXT,
+  ADD COLUMN IF NOT EXISTS "psm_match_vars" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  ADD COLUMN IF NOT EXISTS "mechanism_variables" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  ADD COLUMN IF NOT EXISTS "heterogeneity_vars" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  ADD COLUMN IF NOT EXISTS "export_formats" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

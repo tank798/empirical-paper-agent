@@ -66,6 +66,9 @@ export const termMappingSchema = z.object({
   alias: z.string()
 });
 
+export const analysisRouteSchema = z.enum(["panel_fe"]);
+export const exportFormatSchema = z.enum(["word", "latex", "excel", "stata_do"]);
+
 export const researchProfileSchema = z.object({
   projectId: z.string().uuid().optional(),
   normalizedTopic: z.string().optional().default(""),
@@ -79,6 +82,17 @@ export const researchProfileSchema = z.object({
   panelId: z.string().optional().nullable(),
   timeVar: z.string().optional().nullable(),
   sampleScope: z.string().optional().nullable(),
+  analysisRoute: analysisRouteSchema.optional().default("panel_fe"),
+  didEnabled: z.boolean().optional().default(false),
+  psmEnabled: z.boolean().optional().default(false),
+  treatmentVar: z.string().optional().nullable(),
+  policyTimeVar: z.string().optional().nullable(),
+  policyStartYear: z.string().optional().nullable(),
+  instrumentVariable: z.string().optional().nullable(),
+  psmMatchVars: z.array(z.string()).optional().default([]),
+  mechanismVariables: z.array(z.string()).optional().default([]),
+  heterogeneityVars: z.array(z.string()).optional().default([]),
+  exportFormats: z.array(exportFormatSchema).optional().default([]),
   notes: z.string().optional().nullable(),
   termMappings: z.array(termMappingSchema).optional().default([])
 });
@@ -220,6 +234,16 @@ export const regressionSkillInputSchema = z.object({
   clusterVar: z.string().optional().nullable(),
   panelId: z.string().optional().nullable(),
   timeVar: z.string().optional().nullable(),
+  instrumentVariable: z.string().optional().nullable(),
+  mechanismVariables: z.array(z.string()).optional().default([]),
+  heterogeneityVars: z.array(z.string()).optional().default([]),
+  didEnabled: z.boolean().optional().default(false),
+  psmEnabled: z.boolean().optional().default(false),
+  treatmentVar: z.string().optional().nullable(),
+  policyTimeVar: z.string().optional().nullable(),
+  policyStartYear: z.string().optional().nullable(),
+  psmMatchVars: z.array(z.string()).optional().default([]),
+  exportFormats: z.array(exportFormatSchema).optional().default([]),
   exportState: regressionExportSchema
     .pick({
       fileName: true,
@@ -272,6 +296,17 @@ export const workflowInputInterpreterProfilePatchSchema = researchProfileSchema
     panelId: true,
     timeVar: true,
     sampleScope: true,
+    analysisRoute: true,
+    didEnabled: true,
+    psmEnabled: true,
+    treatmentVar: true,
+    policyTimeVar: true,
+    policyStartYear: true,
+    instrumentVariable: true,
+    psmMatchVars: true,
+    mechanismVariables: true,
+    heterogeneityVars: true,
+    exportFormats: true,
     notes: true
   })
   .partial();
@@ -382,6 +417,8 @@ export type StataErrorDebugOutput = z.infer<
 >;
 export type TermMappingCategory = z.infer<typeof termMappingCategorySchema>;
 export type TermMapping = z.infer<typeof termMappingSchema>;
+export type AnalysisRoute = z.infer<typeof analysisRouteSchema>;
+export type ExportFormat = z.infer<typeof exportFormatSchema>;
 export type PlaceholderSkillOutput = z.infer<
   typeof placeholderSkillOutputSchema
 >;
