@@ -1,10 +1,19 @@
 "use client";
 
-import { startTransition, type ClipboardEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { startTransition, type ChangeEvent, type ClipboardEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { type AssistantMessageEnvelope, type ProjectDetail } from "@empirical/shared";
+import {
+  SUPPORTED_ATTACHMENT_ACCEPT,
+  buildComposerSubmission,
+  buildPendingImageAttachment,
+  formatAttachmentSize,
+  readComposerAttachment,
+  readImageAttachment,
+  type ComposerAttachment
+} from "../lib/attachments";
 import { apiRequest, streamApiRequest } from "../lib/api";
-import { buildPastedImageText, ensureNamedImageFile, extractImageText } from "../lib/image-ocr";
+import { ensureNamedImageFile } from "../lib/image-ocr";
 import { appendCommittedSpeech, buildSpeechText, finalizeSpeechText } from "../lib/speech";
 import { saveStoredProject, setPendingProjectBootstrap } from "../lib/storage";
 import { ThinkingBubble } from "./thinking-bubble";
@@ -56,6 +65,33 @@ function MicIcon() {
   );
 }
 
+function UploadIcon() {
+  return (
+    <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
+      <path
+        d="M8 11.333V3.667M4.667 7 8 3.667 11.333 7M3.333 12.333h9.334"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 16 16">
+      <path
+        d="m4.333 4.333 7.334 7.334M11.667 4.333l-7.334 7.334"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
 async function fetchHydratedProjectSnapshot(projectId: string, token: string) {
   let lastDetail: ProjectDetail | null = null;
   let lastMessages: AssistantMessageEnvelope[] = [];
@@ -94,18 +130,19 @@ export function HomeHero() {
   const [focused, setFocused] = useState(false);
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
-  const [imageProcessing, setImageProcessing] = useState(false);
-  const [pastedImage, setPastedImage] = useState<File | null>(null);
+  const [attachmentProcessing, setAttachmentProcessing] = useState(false);
+  const [attachment, setAttachment] = useState<ComposerAttachment | null>(null);
   const [statusText, setStatusText] = useState("");
   const [error, setError] = useState("");
   const [handoffReady, setHandoffReady] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const speechBaseTextRef = useRef("");
   const speechCommittedTextRef = useRef("");
   const speechInterimTextRef = useRef("");
   const keepListeningRef = useRef(false);
 
-  const showGhostText = !focused && !topic.trim() && !pastedImage;
+  const showGhostText = !focused && !topic.trim() && !attachment;
 
   useEffect(() => {
     return () => {
@@ -115,9 +152,66 @@ export function HomeHero() {
     };
   }, []);
 
+  const processAttachment = async (file: File) => {
+    const normalizedFile = ensureNamedImageFile(file);
+
+    if (normalizedFile.type.startsWith("image/")) {
+      setError("");
+      setStatusText("");
+      setAttachment(buildPendingImageAttachment(normalizedFile));
+      return;
+    }
+
+    try {
+      setError("");
+      setAttachment(null);
+      setAttachmentProcessing(true);
+      setStatusText("正在解析附件...");
+      const nextAttachment = await readComposerAttachment(normalizedFile, {
+        onStatus: (status) => setStatusText(status)
+      });
+      setAttachment(nextAttachment);
+    } catch (attachmentError) {
+      setAttachment(null);
+      setError(attachmentError instanceof Error ? attachmentError.message : "文件读取失败，请稍后重试。");
+    } finally {
+      setAttachmentProcessing(false);
+      setStatusText("");
+    }
+  };
+
+  const handleAttachmentPick = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    await processAttachment(file);
+  };
+
+  const resolveAttachmentForSubmission = async (nextAttachment: ComposerAttachment | null) => {
+    if (!nextAttachment || nextAttachment.source !== "image" || !nextAttachment.file || nextAttachment.processed) {
+      return nextAttachment;
+    }
+
+    try {
+      setError("");
+      setAttachmentProcessing(true);
+      setStatusText("正在识别截图文字...");
+      const resolved = await readImageAttachment(nextAttachment.file, (status) => setStatusText(status));
+      setAttachment(resolved);
+      return resolved;
+    } finally {
+      setAttachmentProcessing(false);
+      setStatusText("");
+    }
+  };
+
   const createProject = async () => {
     const nextTopic = topic.trim();
-    if ((!nextTopic && !pastedImage) || imageProcessing) {
+    if ((!nextTopic && !attachment) || attachmentProcessing) {
       return;
     }
 
@@ -126,24 +220,18 @@ export function HomeHero() {
       setError("");
       setHandoffReady(false);
 
-      let submittedTopic = nextTopic;
-
-      if (pastedImage) {
-        setImageProcessing(true);
-        setStatusText("\u6b63\u5728\u8bc6\u522b\u622a\u56fe\u6587\u5b57...");
-        const extractedText = await extractImageText(pastedImage, (status) => setStatusText(status.text));
-        submittedTopic = buildPastedImageText(submittedTopic, extractedText).trim();
-        setImageProcessing(false);
-        setStatusText("");
-      }
+      const resolvedAttachment = await resolveAttachmentForSubmission(attachment);
+      const submission = buildComposerSubmission(nextTopic, resolvedAttachment);
+      const submittedTopic = submission.userMessage.trim();
+      const projectTopic = nextTopic || (resolvedAttachment ? `识别数据文件 ${resolvedAttachment.name}` : submittedTopic);
 
       if (!submittedTopic) {
-        throw new Error("\u622a\u56fe\u4e2d\u6ca1\u6709\u8bc6\u522b\u5230\u53ef\u7528\u6587\u5b57\uff0c\u8bf7\u6362\u4e00\u5f20\u66f4\u6e05\u6670\u7684\u56fe\u7247\u518d\u8bd5\u3002");
+        throw new Error("附件中没有识别到可用文字，请换一个更清晰的文件再试。");
       }
 
       const data = await apiRequest<{ project: { id: string; title: string }; resumeToken: string }>("/projects", {
         method: "POST",
-        body: JSON.stringify({ topicRaw: submittedTopic })
+        body: JSON.stringify({ topicRaw: projectTopic })
       });
 
       saveStoredProject({ id: data.project.id, token: data.resumeToken, title: data.project.title });
@@ -152,7 +240,8 @@ export function HomeHero() {
       await streamApiRequest(`/projects/${data.project.id}/workflow/stream`, {
         token: data.resumeToken,
         body: {
-          userMessage: submittedTopic
+          userMessage: submittedTopic,
+          payload: submission.payload
         },
         onEvent: (event) => {
           if (event.type === "error") {
@@ -171,7 +260,7 @@ export function HomeHero() {
         messages
       });
 
-      setPastedImage(null);
+      setAttachment(null);
       setHandoffReady(true);
       window.setTimeout(() => {
         startTransition(() => {
@@ -182,13 +271,13 @@ export function HomeHero() {
       setError(requestError instanceof Error ? requestError.message : "\u521b\u5efa\u9879\u76ee\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002");
       setLoading(false);
       setHandoffReady(false);
-      setImageProcessing(false);
+      setAttachmentProcessing(false);
       setStatusText("");
     }
   };
 
   const handleTopicKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (imageProcessing || event.key !== "Enter" || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+    if (attachmentProcessing || event.key !== "Enter" || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
       return;
     }
 
@@ -209,13 +298,11 @@ export function HomeHero() {
     }
 
     event.preventDefault();
-    setError("");
-    setStatusText("");
-    setPastedImage(ensureNamedImageFile(file));
+    void processAttachment(file);
   };
 
   const handleMicClick = () => {
-    if (loading || imageProcessing) {
+    if (loading || attachmentProcessing) {
       return;
     }
 
@@ -373,16 +460,25 @@ export function HomeHero() {
             />
           </div>
 
-          {pastedImage ? (
+          {attachment ? (
             <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-              <p className="min-w-0 truncate text-sm font-medium text-slate-700">{`\u5df2\u9644\u52a0\u622a\u56fe ${pastedImage.name}`}</p>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-800">{attachment.name}</p>
+                <p className="mt-0.5 truncate text-xs text-slate-500">
+                  {attachment.source === "image" && !attachment.processed
+                    ? "截图将在发送时 OCR 识别"
+                    : `${formatAttachmentSize(attachment.size)} · ${
+                        attachment.truncated ? "已解析前部内容" : "内容已完成解析"
+                      }`}
+                </p>
+              </div>
               <button
-                className="text-xs font-medium text-slate-500 transition hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={loading || imageProcessing}
-                onClick={() => setPastedImage(null)}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={loading || attachmentProcessing}
+                onClick={() => setAttachment(null)}
                 type="button"
               >
-                {"\u79fb\u9664"}
+                <CloseIcon />
               </button>
             </div>
           ) : null}
@@ -390,22 +486,39 @@ export function HomeHero() {
           <div className="mt-4 flex flex-wrap items-center justify-between gap-4 px-1">
             <div className="min-w-0">
               <p className="text-sm font-medium text-slate-500 transition">
-                {imageProcessing
-                  ? statusText || "\u6b63\u5728\u8bc6\u522b\u622a\u56fe\u6587\u5b57..."
-                  : pastedImage
-                    ? `\u5df2\u9644\u52a0\u622a\u56fe ${pastedImage.name}`
-                    : "Enter发送，Ctrl+Enter换行；也可以点麦克风语音输入"}
+                {attachmentProcessing
+                  ? statusText || "正在解析附件..."
+                  : attachment
+                    ? `已附加 ${attachment.name}，确认后会一起识别数据结构。`
+                    : "Enter发送，Ctrl+Enter换行；也可以上传文件或语音输入"}
               </p>
             </div>
 
             <div className="flex items-center gap-2.5">
+              <input
+                accept={SUPPORTED_ATTACHMENT_ACCEPT}
+                className="hidden"
+                onChange={handleAttachmentPick}
+                ref={fileInputRef}
+                type="file"
+              />
+              <button
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={loading || attachmentProcessing}
+                onClick={() => fileInputRef.current?.click()}
+                type="button"
+              >
+                <UploadIcon />
+                <span className="hidden sm:inline">上传数据/字典</span>
+              </button>
+
               <button
                 className={`inline-flex h-11 w-11 items-center justify-center rounded-full border text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
                   listening
                     ? "border-slate-950 bg-slate-950 text-white shadow-[0_10px_24px_rgba(15,23,42,0.18)]"
                     : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
                 }`}
-                disabled={loading || imageProcessing}
+                disabled={loading || attachmentProcessing}
                 onClick={handleMicClick}
                 type="button"
               >
@@ -414,7 +527,7 @@ export function HomeHero() {
 
               <button
                 className="inline-flex min-w-[132px] items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-base font-semibold text-white shadow-floating transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-55"
-                disabled={loading || imageProcessing || (!topic.trim() && !pastedImage)}
+                disabled={loading || attachmentProcessing || (!topic.trim() && !attachment)}
                 onClick={() => void createProject()}
                 type="button"
               >

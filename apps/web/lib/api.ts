@@ -19,10 +19,24 @@ function getApiErrorMessage(payload: unknown, fallback: string) {
   }
 
   const data = payload as Partial<ApiResponse<unknown>> & {
-    error?: { message?: string } | null;
+    error?: { message?: string } | string | null;
+    message?: string;
   };
 
-  return data.error?.message ?? fallback;
+  const rawMessage =
+    typeof data.error === "string"
+      ? data.error
+      : data.error?.message ?? (typeof data.message === "string" ? data.message : "");
+
+  if (/application not found/i.test(rawMessage)) {
+    return "API 服务当前不可用：Railway 后端没有运行或已被停用。";
+  }
+
+  if (/trial has expired/i.test(rawMessage)) {
+    return "API 服务当前不可用：Railway 试用期已过期，需要升级或迁移后端。";
+  }
+
+  return rawMessage || fallback;
 }
 
 function flushSseBuffer(buffer: string, onEvent: (event: WorkflowStreamEvent) => void) {
@@ -62,13 +76,28 @@ export async function apiRequest<T>(
     headers,
     cache: "no-store"
   });
-  const json = (await response.json()) as ApiResponse<T>;
+  const text = await response.text();
+  let json: unknown = null;
 
-  if (!json.success) {
-    throw new Error(json.error?.message ?? "Request failed");
+  if (text) {
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error(text || `Request failed with status ${response.status}`);
+    }
   }
 
-  return json.data;
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(json, `Request failed with status ${response.status}`));
+  }
+
+  const apiJson = json as ApiResponse<T>;
+
+  if (!apiJson?.success) {
+    throw new Error(getApiErrorMessage(apiJson, "Request failed"));
+  }
+
+  return apiJson.data;
 }
 
 export async function streamApiRequest(

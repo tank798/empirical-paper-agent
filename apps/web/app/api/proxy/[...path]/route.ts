@@ -36,12 +36,26 @@ async function forwardRequest(request: Request, context: { params: Promise<{ pat
   const upstreamUrl = buildUpstreamUrl(params.path, new URL(request.url).search);
   const body = method === "GET" || method === "HEAD" ? undefined : await request.text();
 
-  const upstreamResponse = await fetch(upstreamUrl, {
-    method,
-    headers: createUpstreamHeaders(request),
-    body,
-    cache: "no-store"
-  });
+  let upstreamResponse: Response;
+
+  try {
+    upstreamResponse = await fetch(upstreamUrl, {
+      method,
+      headers: createUpstreamHeaders(request),
+      body,
+      cache: "no-store"
+    });
+  } catch {
+    return Response.json(
+      {
+        success: false,
+        error: {
+          message: "API 服务暂时无法连接，请检查 API_BASE_URL 或后端部署状态。"
+        }
+      },
+      { status: 502 }
+    );
+  }
 
   const responseHeaders = new Headers();
   const contentType = upstreamResponse.headers.get("content-type");
