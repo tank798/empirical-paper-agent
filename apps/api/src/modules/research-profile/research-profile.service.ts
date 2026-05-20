@@ -1,5 +1,5 @@
 ﻿import { Injectable } from "@nestjs/common";
-import type { ExportFormat, ResearchProfile, TermMapping } from "@empirical/shared";
+import type { DataDictionaryEntry, DataDictionaryRole, DataDictionaryType, ExportFormat, ResearchProfile, TermMapping } from "@empirical/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { normalizeFixedEffects } from "../skills/skill.utils";
 import { buildTermMappings } from "./term-mappings";
@@ -25,10 +25,35 @@ type RegressionInput = {
   mechanismVariables: string[];
   heterogeneityVars: string[];
   exportFormats: ExportFormat[];
+  dataDictionary: DataDictionaryEntry[];
   termMappings: TermMapping[];
 };
 
 const EXPORT_FORMATS = new Set<ExportFormat>(["word", "latex", "excel", "stata_do"]);
+const DATA_DICTIONARY_TYPES = new Set<DataDictionaryType>([
+  "numeric",
+  "string",
+  "date",
+  "categorical",
+  "boolean",
+  "unknown"
+]);
+const DATA_DICTIONARY_ROLES = new Set<DataDictionaryRole>([
+  "dependent",
+  "independent",
+  "control",
+  "fixed_effect",
+  "cluster",
+  "panel",
+  "time",
+  "treatment",
+  "instrument",
+  "mechanism",
+  "heterogeneity",
+  "match",
+  "sample_filter",
+  "unknown"
+]);
 
 function normalizeExportFormats(values?: string[] | null): ExportFormat[] {
   const normalized = new Set<ExportFormat>();
@@ -51,6 +76,134 @@ function normalizeExportFormats(values?: string[] | null): ExportFormat[] {
     }
   }
   return Array.from(normalized);
+}
+
+function stringField(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function stringArrayField(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as string[];
+  }
+
+  return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function normalizeDataDictionaryType(value: unknown): DataDictionaryType {
+  const normalized = String(value ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+
+  if (/num|double|float|int|long|byte|数值|连续|金额|比例|指数/.test(normalized)) {
+    return "numeric";
+  }
+  if (/str|char|text|文本|字符|名称|代码/.test(normalized)) {
+    return "string";
+  }
+  if (/date|time|year|month|日期|时间|年份/.test(normalized)) {
+    return "date";
+  }
+  if (/cat|class|enum|dummy|分组|类别|分类|虚拟/.test(normalized)) {
+    return "categorical";
+  }
+  if (/bool|boolean|true|false|0\/1|是否/.test(normalized)) {
+    return "boolean";
+  }
+
+  return DATA_DICTIONARY_TYPES.has(value as DataDictionaryType) ? (value as DataDictionaryType) : "unknown";
+}
+
+function normalizeDataDictionaryRole(value: unknown): DataDictionaryRole {
+  const normalized = String(value ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+
+  if (/被解释|因变量|dependent|outcome|^y$/.test(normalized)) {
+    return "dependent";
+  }
+  if (/解释变量|核心变量|自变量|independent|explanatory|^x$/.test(normalized)) {
+    return "independent";
+  }
+  if (/控制变量|control|covariate/.test(normalized)) {
+    return "control";
+  }
+  if (/固定效应|fixedeffect|fe/.test(normalized)) {
+    return "fixed_effect";
+  }
+  if (/聚类|cluster/.test(normalized)) {
+    return "cluster";
+  }
+  if (/面板|个体|公司代码|证券代码|firm|company|panel|id/.test(normalized)) {
+    return "panel";
+  }
+  if (/时间|年份|year|time|date/.test(normalized)) {
+    return "time";
+  }
+  if (/处理组|政策处理|treat|did/.test(normalized)) {
+    return "treatment";
+  }
+  if (/工具变量|instrument|iv/.test(normalized)) {
+    return "instrument";
+  }
+  if (/机制|中介|mechanism|mediator/.test(normalized)) {
+    return "mechanism";
+  }
+  if (/异质|分组|heterogeneity|group/.test(normalized)) {
+    return "heterogeneity";
+  }
+  if (/匹配|psm|match/.test(normalized)) {
+    return "match";
+  }
+  if (/样本|筛选|filter|sample/.test(normalized)) {
+    return "sample_filter";
+  }
+
+  return DATA_DICTIONARY_ROLES.has(value as DataDictionaryRole) ? (value as DataDictionaryRole) : "unknown";
+}
+
+function normalizeDataDictionary(value: unknown): DataDictionaryEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const entries: DataDictionaryEntry[] = [];
+
+  for (const rawItem of value) {
+    if (!rawItem || typeof rawItem !== "object") {
+      continue;
+    }
+
+    const item = rawItem as Record<string, unknown>;
+    const variableName =
+      stringField(item.variableName) ||
+      stringField(item.name) ||
+      stringField(item.varName) ||
+      stringField(item.fieldName);
+    if (!variableName) {
+      continue;
+    }
+
+    const key = variableName.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+
+    entries.push({
+      variableName,
+      labelCn: stringField(item.labelCn) || stringField(item.label) || stringField(item.chineseName),
+      description: stringField(item.description) || stringField(item.definition) || stringField(item.meaning),
+      dataType: normalizeDataDictionaryType(item.dataType ?? item.type),
+      candidateRole: normalizeDataDictionaryRole(item.candidateRole ?? item.role),
+      aliases: stringArrayField(item.aliases),
+      source: stringField(item.source),
+      notes: stringField(item.notes) || null,
+      confidence:
+        item.confidence === "high" || item.confidence === "medium" || item.confidence === "low"
+          ? item.confidence
+          : "medium"
+    });
+  }
+
+  return entries.slice(0, 200);
 }
 
 @Injectable()
@@ -133,7 +286,11 @@ export class ResearchProfileService {
       mechanismVariables: payload.mechanismVariables ?? existing?.mechanismVariables ?? [],
       heterogeneityVars: payload.heterogeneityVars ?? existing?.heterogeneityVars ?? [],
       exportFormats: payload.exportFormats ?? existing?.exportFormats ?? [],
-      notes: payload.notes ?? existing?.notes ?? null
+      notes: payload.notes ?? existing?.notes ?? null,
+      dataDictionary:
+        normalizeDataDictionary(payload.dataDictionary).length > 0
+          ? normalizeDataDictionary(payload.dataDictionary)
+          : normalizeDataDictionary((existing as { dataDictionaryJson?: unknown } | null)?.dataDictionaryJson)
     };
 
     const termMappings = Array.isArray(payload.termMappings) && payload.termMappings.length > 0
@@ -145,18 +302,22 @@ export class ResearchProfileService {
           fixedEffects: mergedCore.fixedEffects,
           clusterVar: mergedCore.clusterVar,
           panelId: mergedCore.panelId,
-          timeVar: mergedCore.timeVar
+          timeVar: mergedCore.timeVar,
+          dataDictionary: mergedCore.dataDictionary
         });
+    const { dataDictionary, ...profileCore } = mergedCore;
 
     const profile = await this.prisma.researchProfile.upsert({
       where: { projectId },
       create: {
         projectId,
-        ...mergedCore,
+        ...profileCore,
+        dataDictionaryJson: dataDictionary as never,
         termMappingsJson: termMappings as never
       },
       update: {
-        ...mergedCore,
+        ...profileCore,
+        dataDictionaryJson: dataDictionary as never,
         termMappingsJson: termMappings as never
       }
     });
@@ -215,7 +376,10 @@ export class ResearchProfileService {
             : Array.isArray(payload.exportFormats)
               ? (payload.exportFormats as string[])
               : inferred.exportFormats) ?? []
-        )
+        ),
+      dataDictionary: stored?.dataDictionary?.length
+        ? stored.dataDictionary
+        : normalizeDataDictionary(payload.dataDictionary)
     };
 
     const termMappings = stored?.termMappings?.length
@@ -227,7 +391,8 @@ export class ResearchProfileService {
           fixedEffects: resolved.fixedEffects,
           clusterVar: resolved.clusterVar,
           panelId: resolved.panelId,
-          timeVar: resolved.timeVar
+          timeVar: resolved.timeVar,
+          dataDictionary: resolved.dataDictionary
         });
 
     return {
@@ -309,6 +474,7 @@ export class ResearchProfileService {
     heterogeneityVars?: string[] | null;
     exportFormats?: string[] | null;
     notes: string | null;
+    dataDictionaryJson?: unknown;
     termMappingsJson: unknown;
   }): ResearchProfile {
     return {
@@ -336,8 +502,8 @@ export class ResearchProfileService {
       heterogeneityVars: profile.heterogeneityVars ?? [],
       exportFormats: normalizeExportFormats(profile.exportFormats),
       notes: profile.notes,
+      dataDictionary: normalizeDataDictionary(profile.dataDictionaryJson),
       termMappings: Array.isArray(profile.termMappingsJson) ? (profile.termMappingsJson as TermMapping[]) : []
     };
   }
 }
-

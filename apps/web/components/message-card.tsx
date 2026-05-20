@@ -2,7 +2,7 @@
 
 import clsx from "clsx";
 import { useState, type KeyboardEvent } from "react";
-import type { AssistantMessageEnvelope, TermMapping } from "@empirical/shared";
+import type { AssistantMessageEnvelope, DataDictionaryEntry, TermMapping } from "@empirical/shared";
 import {
   normalizeAssistantCopy,
   normalizeDisplayText,
@@ -37,6 +37,32 @@ const TERM_CATEGORY_LABELS: Record<TermMapping["category"], string> = {
   time: "\u65f6\u95f4\u53d8\u91cf"
 };
 
+const DATA_DICTIONARY_ROLE_LABELS: Record<DataDictionaryEntry["candidateRole"], string> = {
+  dependent: "\u5019\u9009\u88ab\u89e3\u91ca\u53d8\u91cf",
+  independent: "\u5019\u9009\u89e3\u91ca\u53d8\u91cf",
+  control: "\u5019\u9009\u63a7\u5236\u53d8\u91cf",
+  fixed_effect: "\u5019\u9009\u56fa\u5b9a\u6548\u5e94",
+  cluster: "\u5019\u9009\u805a\u7c7b\u53d8\u91cf",
+  panel: "\u5019\u9009\u9762\u677f id",
+  time: "\u5019\u9009\u65f6\u95f4\u53d8\u91cf",
+  treatment: "\u5019\u9009\u5904\u7406\u7ec4\u53d8\u91cf",
+  instrument: "\u5019\u9009\u5de5\u5177\u53d8\u91cf",
+  mechanism: "\u5019\u9009\u673a\u5236\u53d8\u91cf",
+  heterogeneity: "\u5019\u9009\u5f02\u8d28\u6027\u5206\u7ec4",
+  match: "\u5019\u9009 PSM \u5339\u914d\u53d8\u91cf",
+  sample_filter: "\u5019\u9009\u6837\u672c\u7b5b\u9009\u5b57\u6bb5",
+  unknown: "\u5f85\u786e\u8ba4"
+};
+
+const DATA_DICTIONARY_TYPE_LABELS: Record<DataDictionaryEntry["dataType"], string> = {
+  numeric: "\u6570\u503c",
+  string: "\u5b57\u7b26",
+  date: "\u65e5\u671f/\u65f6\u95f4",
+  categorical: "\u5206\u7c7b",
+  boolean: "0/1",
+  unknown: "\u672a\u77e5"
+};
+
 function renderJsonList(items: unknown, emptyLabel = "\u6682\u65e0\u8865\u5145\u5185\u5bb9\u3002") {
   if (!Array.isArray(items) || items.length === 0) {
     return <p className="mt-3 text-sm font-normal leading-7 text-slate-500">{emptyLabel}</p>;
@@ -53,6 +79,10 @@ function renderJsonList(items: unknown, emptyLabel = "\u6682\u65e0\u8865\u5145\u
 
 function isTermMappingArray(value: unknown): value is TermMapping[] {
   return Array.isArray(value) && value.every((item) => item && typeof item === "object");
+}
+
+function isDataDictionaryArray(value: unknown): value is DataDictionaryEntry[] {
+  return Array.isArray(value) && value.every((item) => item && typeof item === "object" && typeof item.variableName === "string");
 }
 
 const EXPORT_FORMAT_LABELS: Record<string, string> = {
@@ -125,6 +155,63 @@ function TermMappingSection({ mappings }: { mappings: TermMapping[] }) {
   );
 }
 
+function DataDictionarySection({ entries }: { entries: DataDictionaryEntry[] }) {
+  if (entries.length === 0) {
+    return null;
+  }
+
+  const previewEntries = entries.slice(0, 12);
+  const remainingCount = Math.max(0, entries.length - previewEntries.length);
+
+  return (
+    <div className="mt-6 rounded-[14px] border border-[#eef2f7] bg-slate-50 p-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-slate-900">{"\u6570\u636e\u5b57\u5178\u7406\u89e3"}</p>
+          <p className="mt-1 text-xs font-normal leading-6 text-slate-500">
+            {"Tank 会优先用这些真实字段名生成后续 Stata 变量映射。"}
+          </p>
+        </div>
+        <span className="rounded-full bg-white px-2.5 py-1 text-xs font-normal text-slate-500">
+          {`\u5df2\u8bc6\u522b ${entries.length} \u4e2a\u5b57\u6bb5`}
+        </span>
+      </div>
+      <div className="mt-4 overflow-hidden rounded-[12px] border border-slate-200 bg-white">
+        <div className="grid grid-cols-[0.9fr_1fr_0.8fr_0.7fr] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-medium text-slate-500">
+          <span>{"\u5b57\u6bb5\u540d"}</span>
+          <span>{"\u542b\u4e49/\u53e3\u5f84"}</span>
+          <span>{"\u5019\u9009\u89d2\u8272"}</span>
+          <span>{"\u7c7b\u578b"}</span>
+        </div>
+        <div className="divide-y divide-slate-100">
+          {previewEntries.map((entry) => (
+            <div
+              key={`${entry.variableName}-${entry.candidateRole}`}
+              className="grid grid-cols-[0.9fr_1fr_0.8fr_0.7fr] gap-3 px-4 py-3 text-sm"
+            >
+              <code className="break-words font-mono text-[13px] text-slate-800">{normalizeDisplayText(entry.variableName)}</code>
+              <span className="break-words text-slate-700">
+                {normalizeDisplayText(entry.labelCn || entry.description) || "\u5f85\u786e\u8ba4"}
+              </span>
+              <span className="text-slate-500">
+                {DATA_DICTIONARY_ROLE_LABELS[entry.candidateRole] ?? DATA_DICTIONARY_ROLE_LABELS.unknown}
+              </span>
+              <span className="text-slate-500">
+                {DATA_DICTIONARY_TYPE_LABELS[entry.dataType] ?? DATA_DICTIONARY_TYPE_LABELS.unknown}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+      {remainingCount > 0 ? (
+        <p className="mt-3 text-xs font-normal text-slate-500">
+          {`\u8fd8\u6709 ${remainingCount} \u4e2a\u5b57\u6bb5\u5df2\u4fdd\u5b58\uff0c\u8fd9\u91cc\u53ea\u5c55\u793a\u524d ${previewEntries.length} \u4e2a\u3002`}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function MessageCard({
   message,
   fullWidth = false,
@@ -143,6 +230,9 @@ export function MessageCard({
   const stepLabel = message.step ? workflowStepMeta[message.step]?.short ?? message.step : null;
   const moduleLabel = typeof json.moduleName === "string" ? moduleLabelMap[json.moduleName] ?? json.moduleName : null;
   const termMappings = isTermMappingArray(json.termMappings) ? json.termMappings : [];
+  const dataDictionary = isDataDictionaryArray(json.dataDictionary) ? json.dataDictionary : [];
+  const currentDraft = json.currentDraft && typeof json.currentDraft === "object" ? json.currentDraft as Record<string, unknown> : null;
+  const draftDataDictionary = isDataDictionaryArray(currentDraft?.dataDictionary) ? currentDraft.dataDictionary : [];
   const instrumentSelectionCriteria = Array.isArray(json.instrumentSelectionCriteria)
     ? json.instrumentSelectionCriteria
     : [];
@@ -278,6 +368,8 @@ export function MessageCard({
             ))}
           </div>
 
+          <DataDictionarySection entries={dataDictionary} />
+
           {topicConfirmAction ? (
             <div className="mt-8">
               {topicConfirmAction.onRefineSubmit && !topicConfirmAction.locked ? (
@@ -394,6 +486,8 @@ export function MessageCard({
                   {renderJsonList(json.guidanceOptions)}
                 </div>
               ) : null}
+
+              <DataDictionarySection entries={draftDataDictionary} />
             </div>
           ) : null}
 

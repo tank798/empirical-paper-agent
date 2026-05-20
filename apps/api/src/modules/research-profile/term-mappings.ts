@@ -1,4 +1,4 @@
-﻿import type { ResearchProfile, TermMapping, TermMappingCategory } from "@empirical/shared";
+﻿import type { DataDictionaryEntry, ResearchProfile, TermMapping, TermMappingCategory } from "@empirical/shared";
 
 type MappingSeed = Pick<
   ResearchProfile,
@@ -9,7 +9,9 @@ type MappingSeed = Pick<
   | "clusterVar"
   | "panelId"
   | "timeVar"
->;
+> & {
+  dataDictionary?: DataDictionaryEntry[];
+};
 
 type AliasBundle = {
   termMappings: TermMapping[];
@@ -69,6 +71,16 @@ const DIRECT_ALIAS_BY_LABEL: Record<string, string> = {
   年份聚类: "year"
 };
 
+const TERM_CATEGORY_TO_DICTIONARY_ROLES: Record<TermMappingCategory, Array<DataDictionaryEntry["candidateRole"]>> = {
+  independent: ["independent"],
+  dependent: ["dependent"],
+  control: ["control"],
+  fixed_effect: ["fixed_effect", "panel", "time"],
+  cluster: ["cluster", "panel"],
+  panel: ["panel", "cluster"],
+  time: ["time"]
+};
+
 function cleanLabel(value?: string | null) {
   return String(value ?? "").trim().replace(/\s+/g, " ");
 }
@@ -90,6 +102,54 @@ function sanitizeAlias(alias: string) {
 
 function looksAsciiVariable(value: string) {
   return /^[A-Za-z][A-Za-z0-9_\s-]*$/.test(value.trim());
+}
+
+function dictionaryEntryValues(entry: DataDictionaryEntry) {
+  return [
+    entry.variableName,
+    entry.labelCn,
+    entry.description,
+    ...(entry.aliases ?? [])
+  ]
+    .map((value) => cleanLabel(value))
+    .filter(Boolean);
+}
+
+function dictionaryRoleMatches(entry: DataDictionaryEntry, category: TermMappingCategory) {
+  const role = entry.candidateRole ?? "unknown";
+  return role === "unknown" || TERM_CATEGORY_TO_DICTIONARY_ROLES[category].includes(role);
+}
+
+function dictionaryEntryMatchesLabel(entry: DataDictionaryEntry, label: string) {
+  const labelKey = buildLookupKey(label);
+  if (!labelKey) {
+    return false;
+  }
+
+  return dictionaryEntryValues(entry).some((value) => {
+    const valueKey = buildLookupKey(value);
+    if (!valueKey) {
+      return false;
+    }
+
+    return valueKey === labelKey || valueKey.includes(labelKey) || labelKey.includes(valueKey);
+  });
+}
+
+function inferAliasFromDictionary(
+  dataDictionary: DataDictionaryEntry[] | undefined,
+  category: TermMappingCategory,
+  label: string
+) {
+  if (!dataDictionary?.length || !label) {
+    return "";
+  }
+
+  const exact = dataDictionary.find(
+    (entry) => dictionaryRoleMatches(entry, category) && dictionaryEntryMatchesLabel(entry, label)
+  );
+
+  return exact ? sanitizeAlias(exact.variableName) : "";
 }
 
 function inferStandardAlias(label: string, category: TermMappingCategory) {
@@ -229,7 +289,8 @@ function appendMappings(
   target: TermMapping[],
   used: Set<string>,
   category: TermMappingCategory,
-  labels: Array<string | null | undefined>
+  labels: Array<string | null | undefined>,
+  dataDictionary?: DataDictionaryEntry[]
 ) {
   labels.forEach((rawLabel, index) => {
     const labelCn = cleanLabel(rawLabel);
@@ -237,7 +298,10 @@ function appendMappings(
       return;
     }
 
-    const preferredAlias = inferStandardAlias(labelCn, category) || fallbackAlias(category, index);
+    const preferredAlias =
+      inferAliasFromDictionary(dataDictionary, category, labelCn) ||
+      inferStandardAlias(labelCn, category) ||
+      fallbackAlias(category, index);
     target.push({
       category,
       labelCn,
@@ -269,13 +333,13 @@ export function buildTermMappings(input: MappingSeed): TermMapping[] {
   const used = new Set<string>();
   const termMappings: TermMapping[] = [];
 
-  appendMappings(termMappings, used, "independent", [input.independentVariable]);
-  appendMappings(termMappings, used, "dependent", [input.dependentVariable]);
-  appendMappings(termMappings, used, "control", input.controls ?? []);
-  appendMappings(termMappings, used, "fixed_effect", input.fixedEffects ?? []);
-  appendMappings(termMappings, used, "cluster", input.clusterVar ? [input.clusterVar] : []);
-  appendMappings(termMappings, used, "panel", input.panelId ? [input.panelId] : []);
-  appendMappings(termMappings, used, "time", input.timeVar ? [input.timeVar] : []);
+  appendMappings(termMappings, used, "independent", [input.independentVariable], input.dataDictionary);
+  appendMappings(termMappings, used, "dependent", [input.dependentVariable], input.dataDictionary);
+  appendMappings(termMappings, used, "control", input.controls ?? [], input.dataDictionary);
+  appendMappings(termMappings, used, "fixed_effect", input.fixedEffects ?? [], input.dataDictionary);
+  appendMappings(termMappings, used, "cluster", input.clusterVar ? [input.clusterVar] : [], input.dataDictionary);
+  appendMappings(termMappings, used, "panel", input.panelId ? [input.panelId] : [], input.dataDictionary);
+  appendMappings(termMappings, used, "time", input.timeVar ? [input.timeVar] : [], input.dataDictionary);
 
   return termMappings;
 }

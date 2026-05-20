@@ -4,6 +4,7 @@ import {
   ProjectStepStatus,
   SkillName,
   WorkflowStep,
+  type DataDictionaryEntry,
   type ExportFormat,
   type ResearchProfile,
   type WorkflowProgressPayload
@@ -38,6 +39,7 @@ type SetupDraft = {
   heterogeneityVars: string[];
   exportFormats: ExportFormat[];
   notes: string;
+  dataDictionary: DataDictionaryEntry[];
 };
 
 type SetupFieldKey =
@@ -486,7 +488,11 @@ export class WorkflowService {
         this.arrayValue(payload.exportFormats).length > 0
           ? this.normalizeExportFormats(this.arrayValue(payload.exportFormats))
           : this.normalizeExportFormats(stored?.exportFormats ?? []),
-      notes: this.stringValue(payload.notes) || stored?.notes || ""
+      notes: this.stringValue(payload.notes) || stored?.notes || "",
+      dataDictionary:
+        this.dataDictionaryValue(payload.dataDictionary).length > 0
+          ? this.dataDictionaryValue(payload.dataDictionary)
+          : stored?.dataDictionary ?? []
     };
 
     if (draft.controls.length === 0 && typeof payload.controls === "string") {
@@ -587,7 +593,8 @@ export class WorkflowService {
       mechanismVariables: draft.mechanismVariables,
       heterogeneityVars: draft.heterogeneityVars,
       exportFormats: draft.exportFormats,
-      notes: draft.notes || null
+      notes: draft.notes || null,
+      dataDictionary: draft.dataDictionary
     });
 
     if (draft.normalizedTopic) {
@@ -635,7 +642,8 @@ export class WorkflowService {
           mechanismVariables: draft.mechanismVariables,
           heterogeneityVars: draft.heterogeneityVars,
           exportFormats: draft.exportFormats,
-          notes: draft.notes || undefined
+          notes: draft.notes || undefined,
+          dataDictionary: draft.dataDictionary
         }
       });
 
@@ -816,6 +824,7 @@ export class WorkflowService {
       mechanismVariables: draft.mechanismVariables,
       heterogeneityVars: draft.heterogeneityVars,
       exportFormats: draft.exportFormats,
+      dataDictionary: draft.dataDictionary,
       confirmationMessage: "如无问题，请确认并直接生成整套 Stata 工作流。"
     };
   }
@@ -883,7 +892,8 @@ export class WorkflowService {
         draft.instrumentVariable ||
         draft.psmMatchVars.length ||
         draft.mechanismVariables.length ||
-        draft.heterogeneityVars.length
+        draft.heterogeneityVars.length ||
+        draft.dataDictionary.length
     );
   }
 
@@ -979,7 +989,8 @@ export class WorkflowService {
       "mechanismVariables",
       "heterogeneityVars",
       "exportFormats",
-      "notes"
+      "notes",
+      "dataDictionary"
     ].some((key) => {
       const value = payload[key];
       if (Array.isArray(value)) {
@@ -1054,6 +1065,65 @@ export class WorkflowService {
     }
 
     return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+
+  private dataDictionaryValue(value: unknown) {
+    if (!Array.isArray(value)) {
+      return [] as DataDictionaryEntry[];
+    }
+
+    return value
+      .map((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+          return null;
+        }
+
+        const record = item as Record<string, unknown>;
+        const variableName = this.stringValue(record.variableName);
+        if (!variableName) {
+          return null;
+        }
+
+        return {
+          variableName,
+          labelCn: this.stringValue(record.labelCn),
+          description: this.stringValue(record.description),
+          dataType: this.isDataDictionaryType(record.dataType) ? record.dataType : "unknown",
+          candidateRole: this.isDataDictionaryRole(record.candidateRole) ? record.candidateRole : "unknown",
+          aliases: this.arrayValue(record.aliases),
+          source: this.stringValue(record.source),
+          notes: this.stringValue(record.notes) || null,
+          confidence: this.isConfidence(record.confidence) ? record.confidence : "medium"
+        } satisfies DataDictionaryEntry;
+      })
+      .filter(Boolean) as DataDictionaryEntry[];
+  }
+
+  private isDataDictionaryType(value: unknown): value is DataDictionaryEntry["dataType"] {
+    return value === "numeric" || value === "string" || value === "date" || value === "categorical" || value === "boolean" || value === "unknown";
+  }
+
+  private isDataDictionaryRole(value: unknown): value is DataDictionaryEntry["candidateRole"] {
+    return (
+      value === "dependent" ||
+      value === "independent" ||
+      value === "control" ||
+      value === "fixed_effect" ||
+      value === "cluster" ||
+      value === "panel" ||
+      value === "time" ||
+      value === "treatment" ||
+      value === "instrument" ||
+      value === "mechanism" ||
+      value === "heterogeneity" ||
+      value === "match" ||
+      value === "sample_filter" ||
+      value === "unknown"
+    );
+  }
+
+  private isConfidence(value: unknown): value is DataDictionaryEntry["confidence"] {
+    return value === "high" || value === "medium" || value === "low";
   }
 
   private splitItems(value: string) {

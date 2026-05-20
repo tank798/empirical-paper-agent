@@ -66,6 +66,44 @@ export const termMappingSchema = z.object({
   alias: z.string()
 });
 
+export const dataDictionaryRoleSchema = z.enum([
+  "dependent",
+  "independent",
+  "control",
+  "fixed_effect",
+  "cluster",
+  "panel",
+  "time",
+  "treatment",
+  "instrument",
+  "mechanism",
+  "heterogeneity",
+  "match",
+  "sample_filter",
+  "unknown"
+]);
+
+export const dataDictionaryTypeSchema = z.enum([
+  "numeric",
+  "string",
+  "date",
+  "categorical",
+  "boolean",
+  "unknown"
+]);
+
+export const dataDictionaryEntrySchema = z.object({
+  variableName: z.string().min(1),
+  labelCn: z.string().optional().default(""),
+  description: z.string().optional().default(""),
+  dataType: dataDictionaryTypeSchema.optional().default("unknown"),
+  candidateRole: dataDictionaryRoleSchema.optional().default("unknown"),
+  aliases: z.array(z.string()).optional().default([]),
+  source: z.string().optional().default(""),
+  notes: z.string().optional().nullable(),
+  confidence: z.enum(["high", "medium", "low"]).optional().default("medium")
+});
+
 export const analysisRouteSchema = z.enum(["panel_fe"]);
 export const exportFormatSchema = z.enum(["word", "latex", "excel", "stata_do"]);
 
@@ -94,6 +132,7 @@ export const researchProfileSchema = z.object({
   heterogeneityVars: z.array(z.string()).optional().default([]),
   exportFormats: z.array(exportFormatSchema).optional().default([]),
   notes: z.string().optional().nullable(),
+  dataDictionary: z.array(dataDictionaryEntrySchema).optional().default([]),
   termMappings: z.array(termMappingSchema).optional().default([])
 });
 
@@ -307,7 +346,8 @@ export const workflowInputInterpreterProfilePatchSchema = researchProfileSchema
     mechanismVariables: true,
     heterogeneityVars: true,
     exportFormats: true,
-    notes: true
+    notes: true,
+    dataDictionary: true
   })
   .partial();
 
@@ -328,7 +368,19 @@ export const workflowInputInterpreterOutputSchema = z.object({
   guidanceOptions: z.array(z.string()).optional().default([]),
   reason: z.string().optional().default(""),
   confidence: z.enum(["high", "medium", "low"]).optional().default("medium"),
-  profileUpdates: workflowInputInterpreterProfilePatchSchema.optional().default({})
+  profileUpdates: workflowInputInterpreterProfilePatchSchema.optional().default({}),
+  toolCall: z
+    .object({
+      name: z.enum([
+        "update_research_profile",
+        "update_data_dictionary",
+        "continue_workflow",
+        "ask_clarification",
+        "answer_research_question"
+      ]),
+      arguments: z.record(z.any()).optional().default({})
+    })
+    .optional()
 });
 
 export const resultInterpretInputSchema = z.object({
@@ -417,6 +469,9 @@ export type StataErrorDebugOutput = z.infer<
 >;
 export type TermMappingCategory = z.infer<typeof termMappingCategorySchema>;
 export type TermMapping = z.infer<typeof termMappingSchema>;
+export type DataDictionaryRole = z.infer<typeof dataDictionaryRoleSchema>;
+export type DataDictionaryType = z.infer<typeof dataDictionaryTypeSchema>;
+export type DataDictionaryEntry = z.infer<typeof dataDictionaryEntrySchema>;
 export type AnalysisRoute = z.infer<typeof analysisRouteSchema>;
 export type ExportFormat = z.infer<typeof exportFormatSchema>;
 export type PlaceholderSkillOutput = z.infer<

@@ -411,12 +411,17 @@ function formatAttachmentSize(size: number) {
 }
 
 function buildComposerSubmission(rawMessage: string, attachment: ComposerAttachment | null) {
+  const attachmentExtension = attachment ? getFileExtension(attachment.name) : "";
+  const looksLikeDictionaryAttachment =
+    attachment?.source === "file" && ["csv", "xls", "xlsx", "json", "txt", "md"].includes(attachmentExtension);
   const baseMessage =
     rawMessage.trim() ||
     (attachment
       ? attachment.source === "image"
         ? "请结合截图识别内容继续处理。"
-        : "请结合附件内容继续处理。"
+        : looksLikeDictionaryAttachment
+          ? "请判断这个附件是否是数据字典或字段表；如果是，请识别真实字段名、字段含义和候选变量角色。"
+          : "请结合附件内容继续处理。"
       : "");
 
   if (!attachment) {
@@ -507,11 +512,13 @@ function buildStreamPreview(message: AssistantMessageEnvelope) {
   const json = message.contentJson as Record<string, unknown>;
 
   if (message.messageType === "topic_confirm") {
+    const dataDictionary = Array.isArray(json.dataDictionary) ? json.dataDictionary : [];
     return [
       textValue(json.normalizedTopic) || "已生成研究设定摘要。",
       textValue(json.independentVariable) ? `解释变量：${textValue(json.independentVariable)}` : "",
       textValue(json.dependentVariable) ? `被解释变量：${textValue(json.dependentVariable)}` : "",
       normalizeResearchObjectText(json.researchObject) ? `研究对象：${normalizeResearchObjectText(json.researchObject)}` : "",
+      dataDictionary.length > 0 ? `数据字典：已识别 ${dataDictionary.length} 个字段` : "",
       "如无问题，请确认并直接生成整套 Stata 工作流。"
     ]
       .filter(Boolean)
@@ -1382,11 +1389,11 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   };
 
   const helperText = showTopicConfirmBar
-    ? "如需调整研究设定，可直接补充；语音会先转成文字，发送后 Tank 会判断你是在改设定、选择 DID/PSM，还是普通追问。"
-    : "可以继续追问当前模块，也可以直接修改研究设定；语音输入发送后同样会先由 Tank 判断意图。";
+    ? "如需调整研究设定，可直接补充；也可以上传数据字典表，Tank 会识别真实字段名并判断候选变量角色。"
+    : "可以继续追问当前模块，也可以直接修改研究设定或上传数据字典；语音输入发送后同样会先由 Tank 判断意图。";
   const placeholderText = showTopicConfirmBar
     ? "例如：面板 id 是 stkcd，年份变量是 year，聚类变量按企业\n例如：不做 DID；PSM 要做，匹配变量用企业规模、资产负债率和 ROA\n例如：工具变量是 iv_index，机制变量是融资约束，异质性按产权性质分组"
-    : "例如：请解释一下 M1-M6 递进规格是什么意思\n例如：把控制变量再补充完整一点\n例如：我想做 PSM，但不做 DID，请更新研究设定";
+    : "例如：请解释一下 M1-M6 递进规格是什么意思\n例如：把控制变量再补充完整一点\n例如：这是我的数据字典，帮我识别字段含义和变量角色";
 
   if (!bootstrapResolved) {
     return <section aria-hidden="true" className="mx-auto max-w-[1100px] px-6 pb-8 pt-6 opacity-0" />;
@@ -1654,7 +1661,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
               <PlusIcon />
             </button>
             <div className="min-w-0">
-              <p className="text-xs font-normal text-slate-400">{"Enter发送，Ctrl+Enter换行；语音会先转文字再由 Tank 判断意图"}</p>
+              <p className="text-xs font-normal text-slate-400">{"Enter发送，Ctrl+Enter换行；可上传 Excel/CSV 数据字典或用语音补充字段含义"}</p>
               {composerError ? (
                 <p className="mt-1 text-xs font-normal text-rose-500">{composerError}</p>
               ) : attachmentProcessing ? (
@@ -1704,9 +1711,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     </>
   );
 }
-
-
-
 
 
 

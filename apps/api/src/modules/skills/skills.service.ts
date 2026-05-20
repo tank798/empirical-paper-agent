@@ -2,7 +2,7 @@ import { BadRequestException, Injectable } from "@nestjs/common";
 import { RegressionSkillNames, SkillName, WorkflowStep, type ResearchProfile } from "@empirical/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { PromptService } from "../prompt/prompt.service";
-import { LlmService } from "../llm/llm.service";
+import { LlmService, type LlmFunctionTool, type LlmProfileName, type LlmToolCall } from "../llm/llm.service";
 import { ExportStateService } from "../export-state/export-state.service";
 import { ResearchProfileService } from "../research-profile/research-profile.service";
 import { MessagesService } from "../messages/messages.service";
@@ -24,6 +24,234 @@ type RecentMessage = {
   contentText?: string | null;
   contentJson?: Record<string, unknown>;
 };
+
+const workflowDataDictionaryItemProperties = {
+  variableName: { type: "string", description: "数据中的真实字段名，例如 stkcd、year、rd_exp" },
+  labelCn: { type: "string", description: "字段中文名或变量标签；没有时省略" },
+  description: { type: "string", description: "字段定义、计算口径、单位或数据来源；没有时省略" },
+  dataType: {
+    type: "string",
+    enum: ["numeric", "string", "date", "categorical", "boolean", "unknown"],
+    description: "字段类型"
+  },
+  candidateRole: {
+    type: "string",
+    enum: [
+      "dependent",
+      "independent",
+      "control",
+      "fixed_effect",
+      "cluster",
+      "panel",
+      "time",
+      "treatment",
+      "instrument",
+      "mechanism",
+      "heterogeneity",
+      "match",
+      "sample_filter",
+      "unknown"
+    ],
+    description: "根据字段名、中文含义和当前研究设定判断出的候选角色；不确定时填 unknown"
+  },
+  aliases: {
+    type: "array",
+    items: { type: "string" },
+    description: "同义名称、中文别名或英文别名"
+  },
+  source: { type: "string", description: "字段来源，例如 CSMAR、Wind、用户上传数据字典；未知时省略" },
+  notes: { type: "string", description: "风险提示或待确认事项；没有时省略" },
+  confidence: { type: "string", enum: ["high", "medium", "low"], description: "字段理解置信度" }
+} as const;
+
+const workflowProfileUpdateProperties = {
+  normalizedTopic: { type: "string", description: "规范化后的论文题目或研究主题" },
+  independentVariable: { type: "string", description: "核心解释变量" },
+  dependentVariable: { type: "string", description: "被解释变量" },
+  researchObject: { type: "string", description: "研究对象或样本对象" },
+  relationship: { type: "string", description: "理论关系描述" },
+  controls: {
+    type: "array",
+    items: { type: "string" },
+    description: "控制变量列表"
+  },
+  fixedEffects: {
+    type: "array",
+    items: { type: "string" },
+    description: "固定效应列表"
+  },
+  clusterVar: { type: "string", description: "聚类变量；未知时省略该字段" },
+  panelId: { type: "string", description: "面板个体变量；未知时省略该字段" },
+  timeVar: { type: "string", description: "面板时间变量；未知时省略该字段" },
+  sampleScope: { type: "string", description: "样本区间或样本范围；未知时省略该字段" },
+  analysisRoute: {
+    type: "string",
+    enum: ["panel_fe"],
+    description: "当前产品只支持 panel_fe"
+  },
+  didEnabled: { type: "boolean", description: "用户是否明确选择做 DID 扩展" },
+  psmEnabled: { type: "boolean", description: "用户是否明确选择做 PSM 扩展" },
+  treatmentVar: { type: "string", description: "DID 或 PSM 处理变量；未知时省略该字段" },
+  policyTimeVar: { type: "string", description: "政策时间变量；未知时省略该字段" },
+  policyStartYear: { type: "string", description: "政策开始年份；未知时省略该字段" },
+  instrumentVariable: { type: "string", description: "用户提供的真实工具变量；未知时省略该字段" },
+  psmMatchVars: {
+    type: "array",
+    items: { type: "string" },
+    description: "PSM 匹配变量"
+  },
+  mechanismVariables: {
+    type: "array",
+    items: { type: "string" },
+    description: "机制变量"
+  },
+  heterogeneityVars: {
+    type: "array",
+    items: { type: "string" },
+    description: "异质性或分组变量"
+  },
+  exportFormats: {
+    type: "array",
+    items: { type: "string", enum: ["word", "latex", "excel", "stata_do"] },
+    description: "目标导出格式"
+  },
+  notes: { type: "string", description: "其他用户补充说明；没有时省略该字段" },
+  dataDictionary: {
+    type: "array",
+    items: {
+      type: "object",
+      additionalProperties: false,
+      properties: workflowDataDictionaryItemProperties,
+      required: ["variableName"]
+    },
+    description: "用户上传、粘贴或口头说明的数据字典字段列表"
+  }
+} as const;
+
+const workflowInterpreterTools: LlmFunctionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "update_research_profile",
+      description:
+        "用户在补充或修改面板实证论文研究设定时调用。包括题目、变量、样本、固定效应、DID/PSM 选择、IV、机制、异质性、导出格式，也可以包含少量数据字典字段。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          interpretedIntent: { type: "string" },
+          normalizedUserMessage: { type: "string" },
+          reason: { type: "string" },
+          confidence: { type: "string", enum: ["high", "medium", "low"] },
+          profileUpdates: {
+            type: "object",
+            additionalProperties: false,
+            properties: workflowProfileUpdateProperties
+          }
+        },
+        required: ["interpretedIntent", "normalizedUserMessage", "profileUpdates"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_data_dictionary",
+      description:
+        "用户上传、粘贴或口头描述数据字典、变量表、字段含义、变量标签、Excel/CSV 表头时调用。需要抽取真实字段名、中文含义、数据类型、候选研究角色，并可顺带更新研究设定。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          interpretedIntent: { type: "string" },
+          normalizedUserMessage: { type: "string" },
+          dictionarySummary: { type: "string", description: "对数据字典整体内容的简短总结" },
+          reason: { type: "string" },
+          confidence: { type: "string", enum: ["high", "medium", "low"] },
+          dataDictionary: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: workflowDataDictionaryItemProperties,
+              required: ["variableName"]
+            }
+          },
+          profileUpdates: {
+            type: "object",
+            additionalProperties: false,
+            properties: workflowProfileUpdateProperties
+          },
+          warnings: {
+            type: "array",
+            items: { type: "string" },
+            description: "字段含义冲突、疑似口径不清或需要用户确认的事项"
+          }
+        },
+        required: ["interpretedIntent", "normalizedUserMessage", "dataDictionary"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "continue_workflow",
+      description:
+        "用户只是确认、要求继续或要求按当前研究设定推进工作流，且没有新的研究设定字段需要写入时调用。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          interpretedIntent: { type: "string" },
+          normalizedUserMessage: { type: "string" },
+          reason: { type: "string" },
+          confidence: { type: "string", enum: ["high", "medium", "low"] }
+        },
+        required: ["interpretedIntent", "normalizedUserMessage"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "ask_clarification",
+      description:
+        "用户意图不足以继续生成，需要追问缺失信息时调用，例如缺少面板 id、时间变量、真实工具变量或 PSM 匹配变量。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          interpretedIntent: { type: "string" },
+          clarificationQuestion: { type: "string" },
+          guidanceTitle: { type: "string" },
+          guidanceOptions: { type: "array", items: { type: "string" } },
+          reason: { type: "string" },
+          confidence: { type: "string", enum: ["high", "medium", "low"] }
+        },
+        required: ["interpretedIntent", "clarificationQuestion"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "answer_research_question",
+      description:
+        "用户只是在问概念、代码含义、M1-M6、固定效应、DID/PSM/IV 是否适合等普通研究问题时调用。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          interpretedIntent: { type: "string" },
+          normalizedUserMessage: { type: "string" },
+          reason: { type: "string" },
+          confidence: { type: "string", enum: ["high", "medium", "low"] }
+        },
+        required: ["interpretedIntent", "normalizedUserMessage"]
+      }
+    }
+  }
+];
 
 @Injectable()
 export class SkillsService {
@@ -95,10 +323,14 @@ export class SkillsService {
       );
     } else {
       try {
+        const generationPromise =
+          params.skillName === SkillName.WORKFLOW_INPUT_INTERPRETER
+            ? this.generateWorkflowInterpreterWithTools(systemPrompt, userPrompt, input, executionProfile.llmProfile)
+            : this.llmService.generateJson(systemPrompt, userPrompt, {
+                profile: executionProfile.llmProfile
+              });
         const generated = await this.withTimeout(
-          this.llmService.generateJson(systemPrompt, userPrompt, {
-            profile: executionProfile.llmProfile
-          }),
+          generationPromise,
           executionProfile.timeoutMs,
           `${params.skillName} timed out and fell back to deterministic output.`
         );
@@ -181,6 +413,235 @@ export class SkillsService {
         clearTimeout(timer);
       }
     }
+  }
+
+  private async generateWorkflowInterpreterWithTools(
+    systemPrompt: string,
+    userPrompt: string,
+    input: Record<string, any>,
+    profile: LlmProfileName
+  ) {
+    try {
+      const toolResult = await this.llmService.generateToolCall(systemPrompt, userPrompt, workflowInterpreterTools, {
+        profile,
+        toolChoice: "required"
+      });
+      const toolCall = toolResult.toolCalls[0];
+      if (!toolCall) {
+        throw new Error("The model did not return a workflow interpreter tool call.");
+      }
+
+      return {
+        data: this.mapWorkflowInterpreterToolCall(toolCall, input),
+        model: toolResult.model
+      };
+    } catch (toolError) {
+      try {
+        return await this.llmService.generateJson(systemPrompt, userPrompt, { profile });
+      } catch (jsonError) {
+        throw new Error(
+          `Workflow interpreter tool-call failed: ${this.errorMessage(toolError)}; JSON fallback failed: ${this.errorMessage(jsonError)}`
+        );
+      }
+    }
+  }
+
+  private mapWorkflowInterpreterToolCall(toolCall: LlmToolCall, input: Record<string, any>) {
+    const args = toolCall.arguments;
+    const toolCallTrace = {
+      name: toolCall.name,
+      arguments: args
+    };
+
+    if (toolCall.name === "update_research_profile") {
+      return {
+        route: "continue_workflow",
+        interpretedIntent: this.stringArg(args.interpretedIntent, "update_research_profile"),
+        normalizedUserMessage: this.stringArg(args.normalizedUserMessage, input.userMessage ?? ""),
+        reason: this.stringArg(args.reason, "用户补充或修改了研究设定"),
+        confidence: this.confidenceArg(args.confidence),
+        profileUpdates: this.profileUpdatesArg(args),
+        toolCall: toolCallTrace
+      };
+    }
+
+    if (toolCall.name === "update_data_dictionary") {
+      const profileUpdates = this.profileUpdatesArg(args);
+      const dataDictionary = this.dataDictionaryArg(args.dataDictionary ?? profileUpdates.dataDictionary);
+      return {
+        route: "continue_workflow",
+        interpretedIntent: this.stringArg(args.interpretedIntent, "update_data_dictionary"),
+        normalizedUserMessage: this.stringArg(args.normalizedUserMessage, input.userMessage ?? ""),
+        reason: this.stringArg(args.reason, "用户补充了数据字典或变量字段说明"),
+        confidence: this.confidenceArg(args.confidence),
+        profileUpdates: {
+          ...profileUpdates,
+          ...(dataDictionary.length > 0 ? { dataDictionary } : {}),
+          notes: this.mergeNotes(profileUpdates.notes, args.dictionarySummary, args.warnings)
+        },
+        toolCall: toolCallTrace
+      };
+    }
+
+    if (toolCall.name === "continue_workflow") {
+      return {
+        route: "continue_workflow",
+        interpretedIntent: this.stringArg(args.interpretedIntent, "continue_workflow"),
+        normalizedUserMessage: this.stringArg(args.normalizedUserMessage, input.userMessage ?? ""),
+        reason: this.stringArg(args.reason, "用户希望继续推进当前工作流"),
+        confidence: this.confidenceArg(args.confidence),
+        profileUpdates: {},
+        toolCall: toolCallTrace
+      };
+    }
+
+    if (toolCall.name === "ask_clarification") {
+      return {
+        route: "ask_clarification",
+        interpretedIntent: this.stringArg(args.interpretedIntent, "ask_clarification"),
+        normalizedUserMessage: "",
+        clarificationQuestion: this.stringArg(args.clarificationQuestion, "请再补充一下必要的研究设定。"),
+        guidanceTitle: this.stringArg(args.guidanceTitle, "需要补充的信息"),
+        guidanceOptions: this.stringArrayArg(args.guidanceOptions),
+        reason: this.stringArg(args.reason, "继续生成前还缺少必要信息"),
+        confidence: this.confidenceArg(args.confidence),
+        profileUpdates: {},
+        toolCall: toolCallTrace
+      };
+    }
+
+    if (toolCall.name === "answer_research_question") {
+      return {
+        route: "general_research_chat",
+        interpretedIntent: this.stringArg(args.interpretedIntent, "answer_research_question"),
+        normalizedUserMessage: this.stringArg(args.normalizedUserMessage, input.userMessage ?? ""),
+        reason: this.stringArg(args.reason, "用户是在提出研究或代码概念问题"),
+        confidence: this.confidenceArg(args.confidence),
+        profileUpdates: {},
+        toolCall: toolCallTrace
+      };
+    }
+
+    throw new Error(`Unknown workflow interpreter tool call: ${toolCall.name}`);
+  }
+
+  private profileUpdatesArg(args: Record<string, unknown>) {
+    const nested = this.objectArg(args.profileUpdates);
+    if (Object.keys(nested).length > 0) {
+      if (Object.prototype.hasOwnProperty.call(nested, "dataDictionary")) {
+        return {
+          ...nested,
+          dataDictionary: this.dataDictionaryArg(nested.dataDictionary)
+        };
+      }
+
+      return nested;
+    }
+
+    const updates = Object.fromEntries(
+      Object.keys(workflowProfileUpdateProperties)
+        .filter((key) => Object.prototype.hasOwnProperty.call(args, key))
+        .map((key) => [key, args[key]])
+    );
+    if (Object.prototype.hasOwnProperty.call(updates, "dataDictionary")) {
+      updates.dataDictionary = this.dataDictionaryArg(updates.dataDictionary);
+    }
+
+    return updates;
+  }
+
+  private objectArg(value: unknown) {
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  }
+
+  private stringArg(value: unknown, fallback: string) {
+    return typeof value === "string" && value.trim() ? value.trim() : fallback;
+  }
+
+  private stringArrayArg(value: unknown) {
+    if (!Array.isArray(value)) {
+      return [] as string[];
+    }
+
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+
+  private dataDictionaryArg(value: unknown) {
+    if (!Array.isArray(value)) {
+      return [] as Array<Record<string, unknown>>;
+    }
+
+    return value
+      .map((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+          return null;
+        }
+
+        const record = item as Record<string, unknown>;
+        const variableName = this.stringArg(record.variableName, "");
+        if (!variableName) {
+          return null;
+        }
+
+        return {
+          variableName,
+          labelCn: this.stringArg(record.labelCn, ""),
+          description: this.stringArg(record.description, ""),
+          dataType: this.dictionaryTypeArg(record.dataType),
+          candidateRole: this.dictionaryRoleArg(record.candidateRole),
+          aliases: this.stringArrayArg(record.aliases),
+          source: this.stringArg(record.source, ""),
+          notes: this.stringArg(record.notes, ""),
+          confidence: this.confidenceArg(record.confidence)
+        };
+      })
+      .filter(Boolean) as Array<Record<string, unknown>>;
+  }
+
+  private dictionaryTypeArg(value: unknown) {
+    return value === "numeric" ||
+      value === "string" ||
+      value === "date" ||
+      value === "categorical" ||
+      value === "boolean" ||
+      value === "unknown"
+      ? value
+      : "unknown";
+  }
+
+  private dictionaryRoleArg(value: unknown) {
+    return value === "dependent" ||
+      value === "independent" ||
+      value === "control" ||
+      value === "fixed_effect" ||
+      value === "cluster" ||
+      value === "panel" ||
+      value === "time" ||
+      value === "treatment" ||
+      value === "instrument" ||
+      value === "mechanism" ||
+      value === "heterogeneity" ||
+      value === "match" ||
+      value === "sample_filter" ||
+      value === "unknown"
+      ? value
+      : "unknown";
+  }
+
+  private mergeNotes(...values: unknown[]) {
+    return values
+      .flatMap((value) => (Array.isArray(value) ? value : [value]))
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  private confidenceArg(value: unknown) {
+    return value === "high" || value === "medium" || value === "low" ? value : "medium";
+  }
+
+  private errorMessage(error: unknown) {
+    return error instanceof Error ? error.message : String(error);
   }
 
   private async prepareInput(
@@ -364,6 +825,7 @@ export class SkillsService {
         mechanismVariables: researchProfile.mechanismVariables,
         heterogeneityVars: researchProfile.heterogeneityVars,
         exportFormats: researchProfile.exportFormats,
+        dataDictionary: researchProfile.dataDictionary?.slice(0, 80),
         termMappings: researchProfile.termMappings
       }).filter(([, value]) => {
         if (Array.isArray(value)) {

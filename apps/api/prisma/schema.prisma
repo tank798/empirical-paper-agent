@@ -84,6 +84,7 @@ model ResearchProfile {
   heterogeneityVars   String[] @default([]) @map("heterogeneity_vars")
   exportFormats       String[] @default([]) @map("export_formats")
   notes               String?
+  dataDictionaryJson  Json     @default("[]") @map("data_dictionary_json")
   termMappingsJson    Json     @default("[]") @map("term_mappings_json")
   project             Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 

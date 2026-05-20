@@ -132,6 +132,9 @@ export class ProjectsService {
             heterogeneityVars: project.researchProfile.heterogeneityVars ?? [],
             exportFormats: project.researchProfile.exportFormats ?? [],
             notes: project.researchProfile.notes,
+            dataDictionary: Array.isArray((project.researchProfile as { dataDictionaryJson?: unknown }).dataDictionaryJson)
+              ? ((project.researchProfile as { dataDictionaryJson?: unknown }).dataDictionaryJson as never)
+              : [],
             termMappings: Array.isArray(project.researchProfile.termMappingsJson)
               ? (project.researchProfile.termMappingsJson as Array<{
                   category: string;

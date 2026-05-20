@@ -30,6 +30,35 @@ export type GenerateJsonResult = {
   maxTokens: number | null;
 };
 
+export type LlmFunctionTool = {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+};
+
+export type LlmToolCall = {
+  id: string | null;
+  name: string;
+  arguments: Record<string, unknown>;
+  rawArguments: string;
+};
+
+export type GenerateToolCallOptions = GenerateJsonOptions & {
+  toolChoice?: "auto" | "required" | { type: "function"; function: { name: string } };
+};
+
+export type GenerateToolCallResult = {
+  toolCalls: LlmToolCall[];
+  content: string | null;
+  model: string;
+  profile: LlmProfileName;
+  timeoutMs: number;
+  maxTokens: number | null;
+};
+
 function parseBoolean(value: string | undefined, defaultValue: boolean) {
   if (value == null || value.trim() === "") {
     return defaultValue;
@@ -81,6 +110,14 @@ function parseJsonObject(content: string) {
   }
 
   throw new Error("The model response was not a valid JSON object.");
+}
+
+function parseToolArguments(content: string | undefined) {
+  if (!content || content.trim() === "") {
+    return {};
+  }
+
+  return parseJsonObject(content);
 }
 
 function extractErrorMessage(payload: unknown, fallback: string) {
@@ -269,6 +306,127 @@ export class LlmService {
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         throw new Error(`LLM request timed out after ${resolved.timeoutMs}ms`);
+      }
+
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  async generateToolCall(
+    systemPrompt: string,
+    userPrompt: string,
+    tools: LlmFunctionTool[],
+    options: GenerateToolCallOptions = {}
+  ): Promise<GenerateToolCallResult> {
+    if (!this.apiKey) {
+      throw new Error("OPENAI_API_KEY is not configured");
+    }
+
+    if (tools.length === 0) {
+      throw new Error("At least one tool definition is required.");
+    }
+
+    const resolved = this.resolveConfig(options);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), resolved.timeoutMs);
+
+    try {
+      const requestBody: Record<string, unknown> = {
+        model: resolved.model,
+        temperature: resolved.temperature,
+        stream: false,
+        messages: [
+          {
+            role: "system",
+            content: `${systemPrompt}\n\nWhen tools are available, call exactly one matching function instead of writing plain JSON.`
+          },
+          { role: "user", content: userPrompt }
+        ],
+        tools,
+        tool_choice: options.toolChoice ?? "auto"
+      };
+
+      if (resolved.enableThinking !== null) {
+        requestBody.enable_thinking = resolved.enableThinking;
+      }
+
+      if (resolved.maxTokens !== null) {
+        requestBody.max_tokens = resolved.maxTokens;
+      }
+
+      const response = await fetch(`${this.baseURL.replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal
+      });
+
+      const text = await response.text();
+      const payload = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+      if (!response.ok) {
+        throw new Error(extractErrorMessage(payload, `LLM tool-call request failed with status ${response.status}`));
+      }
+
+      const message = (payload.choices as Array<Record<string, unknown>> | undefined)?.[0]?.message as
+        | Record<string, unknown>
+        | undefined;
+
+      if (!message) {
+        throw new Error("The model response did not include an assistant message.");
+      }
+
+      const content = typeof message.content === "string" ? message.content : null;
+      const rawToolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+      const toolCalls: LlmToolCall[] = rawToolCalls.flatMap((rawCall) => {
+        if (!rawCall || typeof rawCall !== "object") {
+          return [];
+        }
+
+        const call = rawCall as Record<string, unknown>;
+        const functionCall = call.function as Record<string, unknown> | undefined;
+        const name = typeof functionCall?.name === "string" ? functionCall.name : "";
+        if (!name) {
+          return [];
+        }
+
+        const rawArguments = typeof functionCall?.arguments === "string" ? functionCall.arguments : "{}";
+        return [
+          {
+            id: typeof call.id === "string" ? call.id : null,
+            name,
+            arguments: parseToolArguments(rawArguments),
+            rawArguments
+          }
+        ];
+      });
+
+      const legacyFunctionCall = message.function_call as Record<string, unknown> | undefined;
+      if (toolCalls.length === 0 && typeof legacyFunctionCall?.name === "string") {
+        const rawArguments = typeof legacyFunctionCall.arguments === "string" ? legacyFunctionCall.arguments : "{}";
+        toolCalls.push({
+          id: null,
+          name: legacyFunctionCall.name,
+          arguments: parseToolArguments(rawArguments),
+          rawArguments
+        });
+      }
+
+      return {
+        toolCalls,
+        content,
+        model: resolved.model,
+        profile: resolved.profile,
+        timeoutMs: resolved.timeoutMs,
+        maxTokens: resolved.maxTokens
+      };
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error(`LLM tool-call request timed out after ${resolved.timeoutMs}ms`);
       }
 
       throw error;
