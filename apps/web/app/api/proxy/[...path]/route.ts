@@ -1,9 +1,13 @@
 const API_PROXY_TARGET =
   process.env.API_BASE_URL ??
   process.env.NEXT_PUBLIC_API_BASE_URL ??
-  (process.env.VERCEL ? "https://api-production-f140.up.railway.app/api" : "http://localhost:4000/api");
+  (process.env.VERCEL ? "" : "http://localhost:4000/api");
 
 function buildUpstreamUrl(pathSegments: string[] | undefined, search: string) {
+  if (!API_PROXY_TARGET) {
+    return "";
+  }
+
   const target = API_PROXY_TARGET.replace(/\/$/, "");
   const joinedPath = (pathSegments ?? []).join("/");
   return joinedPath ? target + "/" + joinedPath + search : target + search;
@@ -35,6 +39,18 @@ async function forwardRequest(request: Request, context: { params: Promise<{ pat
   const method = request.method.toUpperCase();
   const upstreamUrl = buildUpstreamUrl(params.path, new URL(request.url).search);
   const body = method === "GET" || method === "HEAD" ? undefined : await request.text();
+
+  if (!upstreamUrl) {
+    return Response.json(
+      {
+        success: false,
+        error: {
+          message: "API 服务未配置，请设置 API_BASE_URL 或 NEXT_PUBLIC_API_BASE_URL。"
+        }
+      },
+      { status: 503 }
+    );
+  }
 
   let upstreamResponse: Response;
 

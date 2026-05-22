@@ -29,11 +29,11 @@ function getApiErrorMessage(payload: unknown, fallback: string) {
       : data.error?.message ?? (typeof data.message === "string" ? data.message : "");
 
   if (/application not found/i.test(rawMessage)) {
-    return "API 服务当前不可用：Railway 后端没有运行或已被停用。";
+    return "API 服务当前不可用：后端没有运行或 API 地址未配置。";
   }
 
   if (/trial has expired/i.test(rawMessage)) {
-    return "API 服务当前不可用：Railway 试用期已过期，需要升级或迁移后端。";
+    return "API 服务当前不可用：后端托管服务已过期或被停用。";
   }
 
   return rawMessage || fallback;
