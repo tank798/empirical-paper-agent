@@ -5,6 +5,8 @@ import {
   ProjectStepStatus,
   SkillName,
   WorkflowStep,
+  type AnalysisRoute,
+  type ExportFormat,
   type ProjectDetail
 } from "@empirical/shared";
 import { PrismaService } from "../prisma/prisma.service";
@@ -15,6 +17,16 @@ import {
   safeTitleFromTopic
 } from "../../common/token";
 import { normalizeResearchObject } from "../skills/skill.utils";
+
+const EXPORT_FORMATS = new Set<ExportFormat>(["word", "latex", "excel", "stata_do"]);
+
+function normalizeAnalysisRoute(value?: string | null): AnalysisRoute {
+  return value === "panel_fe" ? value : "panel_fe";
+}
+
+function normalizeExportFormats(values?: string[] | null): ExportFormat[] {
+  return (values ?? []).filter((value): value is ExportFormat => EXPORT_FORMATS.has(value as ExportFormat));
+}
 
 @Injectable()
 export class ProjectsService {
@@ -120,7 +132,7 @@ export class ProjectsService {
             panelId: project.researchProfile.panelId,
             timeVar: project.researchProfile.timeVar,
             sampleScope: project.researchProfile.sampleScope,
-            analysisRoute: project.researchProfile.analysisRoute ?? "panel_fe",
+            analysisRoute: normalizeAnalysisRoute(project.researchProfile.analysisRoute),
             didEnabled: project.researchProfile.didEnabled ?? false,
             psmEnabled: project.researchProfile.psmEnabled ?? false,
             treatmentVar: project.researchProfile.treatmentVar,
@@ -130,7 +142,7 @@ export class ProjectsService {
             psmMatchVars: project.researchProfile.psmMatchVars ?? [],
             mechanismVariables: project.researchProfile.mechanismVariables ?? [],
             heterogeneityVars: project.researchProfile.heterogeneityVars ?? [],
-            exportFormats: project.researchProfile.exportFormats ?? [],
+            exportFormats: normalizeExportFormats(project.researchProfile.exportFormats),
             notes: project.researchProfile.notes,
             dataDictionary: Array.isArray((project.researchProfile as { dataDictionaryJson?: unknown }).dataDictionaryJson)
               ? ((project.researchProfile as { dataDictionaryJson?: unknown }).dataDictionaryJson as never)
