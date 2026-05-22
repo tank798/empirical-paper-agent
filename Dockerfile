@@ -1,12 +1,8 @@
-FROM node:20-bookworm-slim
+FROM node:20-bookworm
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 WORKDIR /app
-
-RUN apt-get update -y \
- && apt-get install -y --no-install-recommends openssl \
- && rm -rf /var/lib/apt/lists/*
 
 RUN corepack enable
 
