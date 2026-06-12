@@ -3,7 +3,8 @@ const SOFT_TRAILING_PUNCTUATION = /[，、；：,.!?;:]+$/;
 
 function normalizeSpeechChunk(value: string) {
   return value
-    .replace(/\s+/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/([\u4e00-\u9fff])\s+([\u4e00-\u9fff])/g, "$1$2")
     .replace(/[，,]+/g, "，")
     .replace(/[。]+/g, "。")
     .replace(/[？?]+/g, "？")
@@ -11,6 +12,12 @@ function normalizeSpeechChunk(value: string) {
     .replace(/[；;]+/g, "；")
     .replace(/[：:]+/g, "：")
     .trim();
+}
+
+export function inferSpeechRecognitionLanguage(seedText: string) {
+  return /[A-Za-z]{2,}|(?:stata|did|psm|iv|roa|esg|year|firm|stock|panel|regression|variable)/i.test(seedText)
+    ? "en-US"
+    : "zh-CN";
 }
 
 function joinSpeechSegments(left: string, right: string) {
@@ -42,7 +49,9 @@ export function appendCommittedSpeech(currentCommitted: string, nextChunk: strin
 
   const punctuatedChunk = SEGMENT_PUNCTUATION.test(normalizedChunk)
     ? normalizedChunk
-    : `${normalizedChunk}，`;
+    : /[A-Za-z0-9]$/.test(normalizedChunk)
+      ? `${normalizedChunk},`
+      : `${normalizedChunk}，`;
 
   return joinSpeechSegments(currentCommitted.trim(), punctuatedChunk);
 }
@@ -68,7 +77,10 @@ export function finalizeSpeechText(baseText: string, committedText: string, inte
   const normalizedInterim = normalizeSpeechChunk(interimText).replace(SOFT_TRAILING_PUNCTUATION, "");
 
   if (normalizedInterim) {
-    nextCommitted = joinSpeechSegments(nextCommitted, `${normalizedInterim}。`);
+    nextCommitted = joinSpeechSegments(
+      nextCommitted,
+      /[A-Za-z0-9]$/.test(normalizedInterim) ? `${normalizedInterim}.` : `${normalizedInterim}。`
+    );
   } else if (nextCommitted) {
     nextCommitted = nextCommitted.replace(SOFT_TRAILING_PUNCTUATION, "。");
   }

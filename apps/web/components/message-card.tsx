@@ -9,7 +9,6 @@ import {
   normalizeRelationshipText,
   normalizeResearchObjectText
 } from "../lib/message-display";
-import { messageTypeMeta, moduleLabelMap, workflowStepMeta } from "../lib/presentation";
 import { StataCodeBlock } from "./stata-code-block";
 
 type TopicConfirmAction = {
@@ -85,6 +84,10 @@ function isDataDictionaryArray(value: unknown): value is DataDictionaryEntry[] {
   return Array.isArray(value) && value.every((item) => item && typeof item === "object" && typeof item.variableName === "string");
 }
 
+function isProfileDiffArray(value: unknown): value is Array<{ field: string; before: unknown; after: unknown }> {
+  return Array.isArray(value) && value.every((item) => item && typeof item === "object" && typeof item.field === "string");
+}
+
 const EXPORT_FORMAT_LABELS: Record<string, string> = {
   word: "Word",
   latex: "LaTeX",
@@ -115,6 +118,65 @@ function renderToggleStatus(value: unknown, enabledLabel: string, disabledLabel:
   return value === true ? enabledLabel : disabledLabel;
 }
 
+const PROFILE_DIFF_LABELS: Record<string, string> = {
+  normalizedTopic: "研究主题",
+  independentVariable: "解释变量",
+  dependentVariable: "被解释变量",
+  researchObject: "研究对象",
+  controls: "控制变量",
+  sampleScope: "样本区间",
+  fixedEffects: "固定效应",
+  panelId: "面板个体变量",
+  timeVar: "时间变量",
+  clusterVar: "聚类变量",
+  didEnabled: "DID 扩展",
+  psmEnabled: "PSM 扩展",
+  treatmentVar: "处理组变量",
+  policyTimeVar: "政策时间变量",
+  policyStartYear: "政策年份",
+  instrumentVariable: "IV 工具变量",
+  psmMatchVars: "PSM 匹配变量",
+  mechanismVariables: "机制变量",
+  heterogeneityVars: "异质性分组",
+  exportFormats: "导出格式",
+  dataDictionary: "数据字典"
+};
+
+function renderDiffValue(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeDisplayText(item)).filter(Boolean).join("、") || "空";
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "是" : "否";
+  }
+
+  return normalizeDisplayText(value) || "空";
+}
+
+function ProfileDiffSection({ diff }: { diff: Array<{ field: string; before: unknown; after: unknown }> }) {
+  if (diff.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-6 rounded-[14px] border border-slate-200 bg-white p-4">
+      <p className="text-sm font-medium text-slate-900">本次变更</p>
+      <div className="mt-3 space-y-2">
+        {diff.slice(0, 8).map((item) => (
+          <div key={item.field} className="rounded-[12px] bg-slate-50 px-3 py-2 text-sm leading-6">
+            <p className="font-medium text-slate-800">{PROFILE_DIFF_LABELS[item.field] ?? item.field}</p>
+            <p className="mt-1 text-slate-500">
+              {renderDiffValue(item.before)} <span className="px-1 text-slate-400">→</span>{" "}
+              <span className="text-slate-800">{renderDiffValue(item.after)}</span>
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TermMappingSection({ mappings }: { mappings: TermMapping[] }) {
   if (mappings.length === 0) {
     return null;
@@ -125,9 +187,6 @@ function TermMappingSection({ mappings }: { mappings: TermMapping[] }) {
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-slate-900">{"\u53d8\u91cf\u540d\u79f0\u4e0e\u82f1\u6587\u7f29\u5199\u5bf9\u7167"}</p>
-          <p className="mt-1 text-xs font-normal leading-6 text-slate-500">
-            {"\u540e\u7eed Stata \u4ee3\u7801\u5c06\u7edf\u4e00\u4f7f\u7528\u8fd9\u4e00\u5957\u7f29\u5199\u3002"}
-          </p>
         </div>
       </div>
       <div className="mt-4 overflow-hidden rounded-[12px] border border-slate-200 bg-white">
@@ -168,9 +227,6 @@ function DataDictionarySection({ entries }: { entries: DataDictionaryEntry[] }) 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-slate-900">{"\u6570\u636e\u5b57\u5178\u7406\u89e3"}</p>
-          <p className="mt-1 text-xs font-normal leading-6 text-slate-500">
-            {"Tank 会优先用这些真实字段名生成后续 Stata 变量映射。"}
-          </p>
         </div>
         <span className="rounded-full bg-white px-2.5 py-1 text-xs font-normal text-slate-500">
           {`\u5df2\u8bc6\u522b ${entries.length} \u4e2a\u5b57\u6bb5`}
@@ -226,28 +282,15 @@ export function MessageCard({
   const isSystemNotice = message.messageType === "system_notice";
   const isTopicConfirm = message.messageType === "topic_confirm";
   const isResearchChat = message.messageType === "research_chat";
-  const meta = !isUser ? messageTypeMeta[message.messageType] : null;
-  const stepLabel = message.step ? workflowStepMeta[message.step]?.short ?? message.step : null;
-  const moduleLabel = typeof json.moduleName === "string" ? moduleLabelMap[json.moduleName] ?? json.moduleName : null;
   const termMappings = isTermMappingArray(json.termMappings) ? json.termMappings : [];
   const dataDictionary = isDataDictionaryArray(json.dataDictionary) ? json.dataDictionary : [];
+  const profileDiff = isProfileDiffArray(json.profileDiff) ? json.profileDiff : [];
   const currentDraft = json.currentDraft && typeof json.currentDraft === "object" ? json.currentDraft as Record<string, unknown> : null;
   const draftDataDictionary = isDataDictionaryArray(currentDraft?.dataDictionary) ? currentDraft.dataDictionary : [];
   const instrumentSelectionCriteria = Array.isArray(json.instrumentSelectionCriteria)
     ? json.instrumentSelectionCriteria
     : [];
   const mechanismPaths = Array.isArray(json.mechanismPaths) ? json.mechanismPaths : [];
-  const chipLabels = Array.from(
-    new Set(
-      [
-        !isSystemNotice && message.messageType !== "skill_output" ? meta?.label ?? message.messageType : null,
-        moduleLabel,
-        stepLabel
-      ]
-        .map((value) => (typeof value === "string" ? normalizeDisplayText(value) : ""))
-        .filter(Boolean)
-    )
-  );
 
   if (isUser) {
     return (
@@ -368,6 +411,8 @@ export function MessageCard({
             ))}
           </div>
 
+          <ProfileDiffSection diff={profileDiff} />
+
           <DataDictionarySection entries={dataDictionary} />
 
           {topicConfirmAction ? (
@@ -394,7 +439,6 @@ export function MessageCard({
                         disabled={topicConfirmAction.disabled || isRefining}
                         onChange={(event) => setRefineValue(event.target.value)}
                         onKeyDown={handleRefineKeyDown}
-                        placeholder={"\u4f8b\u5982\uff1a\u9762\u677f id \u662f stkcd\uff0c\u5e74\u4efd\u53d8\u91cf\u662f year\uff0c\u4e0d\u505a DID\uff0cPSM \u8981\u505a\uff0c\u5de5\u5177\u53d8\u91cf\u662f iv_index"}
                         value={refineValue}
                       />
                       <button
@@ -453,21 +497,8 @@ export function MessageCard({
         </div>
       ) : (
         <>
-          {chipLabels.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              {chipLabels.map((label, index) => (
-                <span
-                  key={`${label}-${index}`}
-                  className="rounded-full bg-slate-100 px-2.5 py-1 font-normal text-slate-600"
-                >
-                  {label}
-                </span>
-              ))}
-            </div>
-          ) : null}
-
           {contentText && !isResearchChat && message.messageType !== "skill_output" && !isSystemNotice ? (
-            <p className="mt-4 whitespace-pre-wrap text-sm font-normal leading-7 text-slate-800">{contentText}</p>
+            <p className="whitespace-pre-wrap text-sm font-normal leading-7 text-slate-800">{contentText}</p>
           ) : null}
 
           {message.messageType === "system_notice" ? (

@@ -90,6 +90,53 @@ function stringArrayField(value: unknown) {
   return value.map((item) => String(item).trim()).filter(Boolean);
 }
 
+function isInvalidProfileString(value: string) {
+  return /^(待补充|默认不做|不做|不需要|无需|默认|无|null|undefined)$/i.test(value.trim());
+}
+
+function cleanProfileUpdatePayload(payload: Partial<ResearchProfile>) {
+  const cleanedPayload: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(payload)) {
+    if (value == null) {
+      continue;
+    }
+
+    if (typeof value === "string") {
+      const normalized = value.trim();
+      if (normalized && !isInvalidProfileString(normalized)) {
+        cleanedPayload[key] = normalized;
+      }
+      continue;
+    }
+
+    if (Array.isArray(value)) {
+      if (key === "dataDictionary" || key === "termMappings") {
+        if (value.length > 0) {
+          cleanedPayload[key] = value;
+        }
+        continue;
+      }
+
+      const cleaned = Array.from(
+        new Set(
+          value
+            .map((item) => String(item).trim())
+            .filter((item) => item && !isInvalidProfileString(item))
+        )
+      );
+      if (cleaned.length > 0) {
+        cleanedPayload[key] = cleaned;
+      }
+      continue;
+    }
+
+    cleanedPayload[key] = value;
+  }
+
+  return cleanedPayload as Partial<ResearchProfile>;
+}
+
 function normalizeDataDictionaryType(value: unknown): DataDictionaryType {
   const normalized = String(value ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
 
@@ -262,39 +309,40 @@ export class ResearchProfileService {
   }
 
   async mergeExplicitUpdates(projectId: string, payload: Partial<ResearchProfile>) {
+    const safePayload = cleanProfileUpdatePayload(payload);
     const existing = await this.prisma.researchProfile.findUnique({ where: { projectId } });
     const mergedCore = {
-      normalizedTopic: payload.normalizedTopic ?? existing?.normalizedTopic ?? "",
-      independentVariable: payload.independentVariable ?? existing?.independentVariable ?? "",
-      dependentVariable: payload.dependentVariable ?? existing?.dependentVariable ?? "",
-      researchObject: payload.researchObject ?? existing?.researchObject ?? "",
-      relationship: payload.relationship ?? existing?.relationship ?? "",
-      controls: payload.controls ?? existing?.controls ?? [],
-      fixedEffects: normalizeFixedEffects(payload.fixedEffects ?? existing?.fixedEffects ?? []),
-      clusterVar: payload.clusterVar ?? existing?.clusterVar ?? null,
-      panelId: payload.panelId ?? existing?.panelId ?? null,
-      timeVar: payload.timeVar ?? existing?.timeVar ?? null,
-      sampleScope: payload.sampleScope ?? existing?.sampleScope ?? null,
-      analysisRoute: payload.analysisRoute ?? existing?.analysisRoute ?? "panel_fe",
-      didEnabled: payload.didEnabled ?? existing?.didEnabled ?? false,
-      psmEnabled: payload.psmEnabled ?? existing?.psmEnabled ?? false,
-      treatmentVar: payload.treatmentVar ?? existing?.treatmentVar ?? null,
-      policyTimeVar: payload.policyTimeVar ?? existing?.policyTimeVar ?? null,
-      policyStartYear: payload.policyStartYear ?? existing?.policyStartYear ?? null,
-      instrumentVariable: payload.instrumentVariable ?? existing?.instrumentVariable ?? null,
-      psmMatchVars: payload.psmMatchVars ?? existing?.psmMatchVars ?? [],
-      mechanismVariables: payload.mechanismVariables ?? existing?.mechanismVariables ?? [],
-      heterogeneityVars: payload.heterogeneityVars ?? existing?.heterogeneityVars ?? [],
-      exportFormats: payload.exportFormats ?? existing?.exportFormats ?? [],
-      notes: payload.notes ?? existing?.notes ?? null,
+      normalizedTopic: safePayload.normalizedTopic ?? existing?.normalizedTopic ?? "",
+      independentVariable: safePayload.independentVariable ?? existing?.independentVariable ?? "",
+      dependentVariable: safePayload.dependentVariable ?? existing?.dependentVariable ?? "",
+      researchObject: safePayload.researchObject ?? existing?.researchObject ?? "",
+      relationship: safePayload.relationship ?? existing?.relationship ?? "",
+      controls: safePayload.controls ?? existing?.controls ?? [],
+      fixedEffects: normalizeFixedEffects(safePayload.fixedEffects ?? existing?.fixedEffects ?? []),
+      clusterVar: safePayload.clusterVar ?? existing?.clusterVar ?? null,
+      panelId: safePayload.panelId ?? existing?.panelId ?? null,
+      timeVar: safePayload.timeVar ?? existing?.timeVar ?? null,
+      sampleScope: safePayload.sampleScope ?? existing?.sampleScope ?? null,
+      analysisRoute: safePayload.analysisRoute ?? existing?.analysisRoute ?? "panel_fe",
+      didEnabled: safePayload.didEnabled ?? existing?.didEnabled ?? false,
+      psmEnabled: safePayload.psmEnabled ?? existing?.psmEnabled ?? false,
+      treatmentVar: safePayload.treatmentVar ?? existing?.treatmentVar ?? null,
+      policyTimeVar: safePayload.policyTimeVar ?? existing?.policyTimeVar ?? null,
+      policyStartYear: safePayload.policyStartYear ?? existing?.policyStartYear ?? null,
+      instrumentVariable: safePayload.instrumentVariable ?? existing?.instrumentVariable ?? null,
+      psmMatchVars: safePayload.psmMatchVars ?? existing?.psmMatchVars ?? [],
+      mechanismVariables: safePayload.mechanismVariables ?? existing?.mechanismVariables ?? [],
+      heterogeneityVars: safePayload.heterogeneityVars ?? existing?.heterogeneityVars ?? [],
+      exportFormats: safePayload.exportFormats ?? existing?.exportFormats ?? [],
+      notes: safePayload.notes ?? existing?.notes ?? null,
       dataDictionary:
-        normalizeDataDictionary(payload.dataDictionary).length > 0
-          ? normalizeDataDictionary(payload.dataDictionary)
+        normalizeDataDictionary(safePayload.dataDictionary).length > 0
+          ? normalizeDataDictionary(safePayload.dataDictionary)
           : normalizeDataDictionary((existing as { dataDictionaryJson?: unknown } | null)?.dataDictionaryJson)
     };
 
-    const termMappings = Array.isArray(payload.termMappings) && payload.termMappings.length > 0
-      ? payload.termMappings
+    const termMappings = Array.isArray(safePayload.termMappings) && safePayload.termMappings.length > 0
+      ? safePayload.termMappings
       : buildTermMappings({
           independentVariable: mergedCore.independentVariable,
           dependentVariable: mergedCore.dependentVariable,
@@ -407,14 +455,14 @@ export class ResearchProfileService {
     const text = recentMessages
       .map((message) => message.contentText || JSON.stringify(message.contentJson ?? {}))
       .join("\n");
-    const didDisabled = /(?:不做|不需要|不用|no)\s*DID/i.test(text);
-    const psmDisabled = /(?:不做|不需要|不用|no)\s*PSM/i.test(text);
+    const didDisabled = /(?:不做|暂时不做|先不做|不需要|不用|不使用|无需|no).{0,12}(?:DID|双重差分)/i.test(text);
+    const psmDisabled = /(?:不做|暂时不做|先不做|不需要|不用|不使用|无需|no).{0,12}(?:PSM|倾向得分匹配)/i.test(text);
 
     const firstMatch = (patterns: RegExp[]) => {
       for (const pattern of patterns) {
         const value = text.match(pattern)?.[1]?.trim();
         if (value) {
-          return value;
+          return value.split(/[。；;，,\n\r]/)[0]?.trim() ?? "";
         }
       }
       return "";
@@ -434,7 +482,10 @@ export class ResearchProfileService {
       clusterVar: firstMatch([/cluster variable[:：]\s*([^\n]+)/i, /聚类变量[:：]\s*([^\n]+)/]) || null,
       panelId: firstMatch([/panel[_\s-]*id[:：]\s*([^\n]+)/i, /面板\s*id[:：]\s*([^\n]+)/i, /个体变量[:：]\s*([^\n]+)/]) || null,
       timeVar: firstMatch([/time[_\s-]*var[:：]\s*([^\n]+)/i, /时间变量[:：]\s*([^\n]+)/, /年份变量[:：]\s*([^\n]+)/]) || null,
-      sampleScope: firstMatch([/sample scope[:：]\s*([^\n]+)/i, /样本范围[:：]\s*([^\n]+)/]) || null,
+      sampleScope:
+        firstMatch([/sample scope[:：]\s*([^\n]+)/i, /样本范围[:：]\s*([^\n]+)/]) ||
+        text.match(/((?:19|20)\d{2})\s*年?\s*(?:-|~|～|〜|–|—|至|到)\s*((?:19|20)\d{2})\s*年?/)?.slice(1, 3).join("–").replace(/–([^–]+)$/, "–$1年") ||
+        null,
       normalizedTopic: firstMatch([/topic[:：]\s*([^\n]+)/i, /题目[:：]\s*([^\n]+)/]),
       didEnabled: didDisabled ? false : /要做\s*DID|做\s*DID|政策冲击|处理组/.test(text),
       psmEnabled: psmDisabled ? false : /要做\s*PSM|做\s*PSM|匹配/.test(text),

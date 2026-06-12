@@ -4,9 +4,8 @@ import clsx from "clsx";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  type ClipboardEvent,
   type ChangeEvent,
-  type KeyboardEvent,
+  type ClipboardEvent,
   type ReactNode,
   useEffect,
   useLayoutEffect,
@@ -15,20 +14,35 @@ import {
   useState
 } from "react";
 import {
+  SkillName,
   WorkflowStep,
   WorkflowStreamPhase,
+  type AgentRunSummary,
   type AssistantMessageEnvelope,
+  type DataDictionaryEntry,
   type ProjectDetail,
+  type ResearchProfile,
+  type TermMapping,
   type WorkflowProgressPayload,
   type WorkflowStreamPhase as WorkflowStreamPhaseValue
 } from "@empirical/shared";
+import {
+  SUPPORTED_ATTACHMENT_ACCEPT,
+  buildComposerSubmission,
+  buildPendingImageAttachment,
+  readComposerAttachment,
+  readImageAttachment,
+  type ComposerAttachment
+} from "../lib/attachments";
 import { apiRequest, streamApiRequest } from "../lib/api";
-import { ensureNamedImageFile, extractImageText } from "../lib/image-ocr";
-import { appendCommittedSpeech, buildSpeechText, finalizeSpeechText } from "../lib/speech";
+import { ensureNamedImageFile } from "../lib/image-ocr";
+import { appendCommittedSpeech, buildSpeechText, finalizeSpeechText, inferSpeechRecognitionLanguage } from "../lib/speech";
 import { normalizeAssistantCopy, normalizeDisplayText, normalizeResearchObjectText } from "../lib/message-display";
 import { clearPendingProjectBootstrap, getPendingProjectBootstrap, getStoredProject, getStoredProjects } from "../lib/storage";
-import { MessageCard } from "./message-card";
+import { ChatComposer } from "./chat-composer";
+import { StataCodeBlock } from "./stata-code-block";
 import { ThinkingBubble } from "./thinking-bubble";
+import { TypingDots } from "./typing-dots";
 
 type StageDefinition = {
   id: "topic" | "data" | "baseline" | "robustness" | "iv" | "mechanism" | "heterogeneity";
@@ -48,15 +62,31 @@ type LiveTurnState = {
   error: string | null;
 };
 
-type ComposerAttachment = {
-  name: string;
-  mimeType: string;
-  size: number;
-  content: string;
-  truncated: boolean;
-  source: "file" | "image";
-  file: File | null;
-  processed: boolean;
+type AssistantPanelMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  status?: "loading" | "streaming" | "done" | "error" | "stopped";
+};
+
+type GeneralResearchChatSkillRun = {
+  messageType: AssistantMessageEnvelope["messageType"];
+  data: {
+    answer?: string;
+    keyPoints?: string[];
+    suggestedNextActions?: string[];
+  };
+};
+
+type AccordionKey = "goal" | "stataCode" | "codeExplanation" | "readingAdvice";
+
+type AccordionState = Record<AccordionKey, boolean>;
+
+type StageSectionContent = {
+  goal: ReactNode;
+  stataCode: ReactNode;
+  codeExplanation: ReactNode;
+  readingAdvice: ReactNode;
 };
 
 type SpeechRecognitionAlternativeLike = {
@@ -78,6 +108,7 @@ type SpeechRecognitionLike = {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
+  maxAlternatives?: number;
   onend: (() => void) | null;
   onerror: ((event: { error?: string }) => void) | null;
   onresult: ((event: SpeechRecognitionEventLike) => void) | null;
@@ -89,13 +120,58 @@ type SpeechRecognitionConstructorLike = new () => SpeechRecognitionLike;
 
 const WORKFLOW_STAGES: StageDefinition[] = [
   { id: "topic", label: "主题确认", steps: [WorkflowStep.TOPIC_DETECT, WorkflowStep.TOPIC_NORMALIZE] },
-  { id: "data", label: "数据处理", steps: [WorkflowStep.SOP_GUIDE, WorkflowStep.DATA_CLEANING, WorkflowStep.DATA_CHECK] },
+  { id: "data", label: "路径与数据", steps: [WorkflowStep.SOP_GUIDE, WorkflowStep.DATA_CLEANING, WorkflowStep.DATA_CHECK] },
   { id: "baseline", label: "基准回归", steps: [WorkflowStep.BASELINE_REGRESSION] },
   { id: "robustness", label: "稳健性检验", steps: [WorkflowStep.ROBUSTNESS] },
   { id: "iv", label: "内生性分析", steps: [WorkflowStep.IV] },
   { id: "mechanism", label: "机制分析", steps: [WorkflowStep.MECHANISM] },
   { id: "heterogeneity", label: "异质性分析", steps: [WorkflowStep.HETEROGENEITY] }
 ];
+
+const DEFAULT_ACCORDION_STATE: AccordionState = {
+  goal: true,
+  stataCode: true,
+  codeExplanation: false,
+  readingAdvice: false
+};
+
+const TERM_CATEGORY_LABELS: Record<TermMapping["category"], string> = {
+  independent: "解释变量",
+  dependent: "被解释变量",
+  control: "控制变量",
+  fixed_effect: "固定效应",
+  cluster: "聚类变量",
+  panel: "面板 id",
+  time: "时间变量"
+};
+
+const MODULE_GOAL_ITEMS: Partial<Record<StageId, string[]>> = {
+  baseline: [
+    "建立论文的主模型，先回答“解释变量是否会影响被解释变量”这个核心问题。",
+    "通过基准回归得到最基础的方向、系数大小和显著性结果，作为后续所有检验的参照。",
+    "后续稳健性检验、内生性分析、机制分析和异质性分析都应围绕这一基准结果展开。"
+  ],
+  robustness: [
+    "基准回归得到的结论可能受到变量口径、样本选择、模型设定或偶然样本波动影响。",
+    "稳健性检验的目的，是用多种替代设定反复验证核心结论是否仍然成立。",
+    "如果换变量、换样本、换模型后结果方向和显著性仍较稳定，就能从统计上增强结论的可信度。"
+  ],
+  iv: [
+    "即使基准回归显著，也不能直接说明因果关系，因为可能存在反向因果、遗漏变量或选择偏误。",
+    "内生性分析的目的，是检查“解释变量影响被解释变量”这个结论是否可能被其他未观察因素干扰。",
+    "如果用户提供了真实工具变量或可用识别策略，本节应生成对应处理方案；如果没有，不编造工具变量，只提示需要补充。"
+  ],
+  mechanism: [
+    "基准回归只能说明 A 与 B 之间存在关系，但还不能解释 A 为什么、通过什么路径影响 B。",
+    "机制分析的目的，是进一步检验 A 是否通过某些中间变量或传导渠道对 B 产生影响。",
+    "如果用户提供了机制变量，本节应围绕这些机制变量设计检验；如果没有，可以提示用户后续补充可能的机制路径。"
+  ],
+  heterogeneity: [
+    "同一个影响关系在不同类型样本中可能并不一样，例如不同地区、行业、产权性质或企业规模下效果可能不同。",
+    "异质性分析的目的，是比较不同分组中核心关系是否存在差异，帮助解释结论适用于哪些场景。",
+    "如果用户提供了分组变量，本节按该变量展开；如果没有，可以提示用户补充行业、地区、产权性质、企业规模等常见分组维度。"
+  ]
+};
 
 const STAGE_ID_BY_STEP: Record<WorkflowStep, StageId> = {
   [WorkflowStep.TOPIC_DETECT]: "topic",
@@ -133,41 +209,14 @@ const REQUESTED_STEP_BY_STAGE: Record<StageId, WorkflowStep> = {
   heterogeneity: WorkflowStep.HETEROGENEITY
 };
 
-const SUPPORTED_ATTACHMENT_EXTENSIONS = new Set([
-  "txt",
-  "md",
-  "csv",
-  "json",
-  "log",
-  "yml",
-  "yaml",
-  "xml",
-  "html",
-  "htm",
-  "js",
-  "ts",
-  "tsx",
-  "jsx",
-  "py",
-  "r",
-  "sql",
-  "tex",
-  "do",
-  "pdf",
-  "docx",
-  "xls",
-  "xlsx"
-]);
-
-const MAX_ATTACHMENT_CHARACTERS = 20000;
-const MAX_SPREADSHEET_ROWS = 80;
-const MAX_SPREADSHEET_SHEETS = 4;
-const SUPPORTED_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "bmp", "gif"]);
-
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 function textValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function isAbortError(value: unknown) {
+  return value instanceof DOMException && value.name === "AbortError";
 }
 
 function listValue(value: unknown) {
@@ -189,323 +238,23 @@ function createLocalUserMessage(message: string, step: WorkflowStep | null | und
   };
 }
 
-function getFileExtension(fileName: string) {
-  const segments = fileName.toLowerCase().split(".");
-  return segments.length > 1 ? segments[segments.length - 1] ?? "" : "";
-}
-
-function normalizeAttachmentText(rawContent: string) {
-  return rawContent
-    .replace(/\u0000/g, "")
-    .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function buildAttachment(file: File, mimeType: string, rawContent: string, truncated = false): ComposerAttachment {
-  const normalized = normalizeAttachmentText(rawContent);
-
-  if (!normalized) {
-    throw new Error("\u6587\u4ef6\u4e2d\u6ca1\u6709\u53ef\u8bfb\u53d6\u7684\u5185\u5bb9\uff0c\u8bf7\u6362\u4e00\u4e2a\u6587\u4ef6\u518d\u8bd5\u3002");
+function getAssistantSkillAnswer(run: GeneralResearchChatSkillRun | null) {
+  if (!run) {
+    return "";
   }
 
-  return {
-    name: file.name,
-    mimeType,
-    size: file.size,
-    content: normalized.slice(0, MAX_ATTACHMENT_CHARACTERS),
-    truncated: truncated || normalized.length > MAX_ATTACHMENT_CHARACTERS,
-    source: mimeType.startsWith("image/") ? "image" : "file",
-    file: null,
-    processed: true
-  };
-}
+  const keyPoints = Array.isArray(run.data.keyPoints) ? run.data.keyPoints.filter(Boolean) : [];
+  const suggestedNextActions = Array.isArray(run.data.suggestedNextActions)
+    ? run.data.suggestedNextActions.filter(Boolean)
+    : [];
 
-function buildPendingImageAttachment(file: File): ComposerAttachment {
-  return {
-    name: file.name,
-    mimeType: file.type || "image/png",
-    size: file.size,
-    content: "",
-    truncated: false,
-    source: "image",
-    file,
-    processed: false
-  };
-}
-
-function canReadAttachment(file: File) {
-  const extension = getFileExtension(file.name);
-  return (
-    file.type.startsWith("text/") ||
-    file.type.startsWith("image/") ||
-    SUPPORTED_ATTACHMENT_EXTENSIONS.has(extension) ||
-    SUPPORTED_IMAGE_EXTENSIONS.has(extension)
-  );
-}
-
-async function readPlainTextAttachment(file: File): Promise<ComposerAttachment> {
-  const rawContent = await file.text();
-  return buildAttachment(file, file.type || "text/plain", rawContent);
-}
-
-async function readPdfAttachment(file: File): Promise<ComposerAttachment> {
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-
-  if (!pdfjs.GlobalWorkerOptions.workerSrc) {
-    pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-      "pdfjs-dist/legacy/build/pdf.worker.mjs",
-      import.meta.url
-    ).toString();
-  }
-
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const document = await pdfjs.getDocument({ data: bytes }).promise;
-  const pageTexts: string[] = [];
-  let totalLength = 0;
-  let truncated = false;
-
-  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-    const page = await document.getPage(pageNumber);
-    const textContent = await page.getTextContent();
-    const pageText = (textContent.items as Array<{ str?: string }>)
-      .map((item) => item.str ?? "")
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    if (!pageText) {
-      continue;
-    }
-
-    const nextChunk = "第" + pageNumber + "页\n" + pageText;
-    totalLength += nextChunk.length;
-    pageTexts.push(nextChunk);
-
-    if (
-      totalLength >= MAX_ATTACHMENT_CHARACTERS ||
-      (pageNumber < document.numPages && totalLength >= MAX_ATTACHMENT_CHARACTERS * 0.9)
-    ) {
-      truncated = pageNumber < document.numPages;
-      break;
-    }
-  }
-
-  return buildAttachment(file, file.type || "application/pdf", pageTexts.join("\n\n"), truncated);
-}
-
-async function readDocxAttachment(file: File): Promise<ComposerAttachment> {
-  const mammoth = (await import("mammoth")) as {
-    extractRawText: (input: { arrayBuffer: ArrayBuffer }) => Promise<{ value: string }>;
-  };
-  const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
-  return buildAttachment(
-    file,
-    file.type || "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    result.value
-  );
-}
-
-async function readSpreadsheetAttachment(file: File): Promise<ComposerAttachment> {
-  const XLSX = await import("xlsx");
-  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", raw: false });
-  const sheetTexts: string[] = [];
-  let truncated = workbook.SheetNames.length > MAX_SPREADSHEET_SHEETS;
-  let totalLength = 0;
-
-  for (const sheetName of workbook.SheetNames.slice(0, MAX_SPREADSHEET_SHEETS)) {
-    const sheet = workbook.Sheets[sheetName];
-    if (!sheet) {
-      continue;
-    }
-
-    const rows = XLSX.utils.sheet_to_json(sheet, {
-      header: 1,
-      blankrows: false,
-      raw: false,
-      defval: ""
-    }) as Array<Array<string | number | boolean | null>>;
-
-    if (rows.length > MAX_SPREADSHEET_ROWS) {
-      truncated = true;
-    }
-
-    const previewRows = rows.slice(0, MAX_SPREADSHEET_ROWS).map((row) =>
-      row
-        .map((cell) => String(cell ?? "").trim())
-        .filter(Boolean)
-        .join(" | ")
-    );
-    const body = previewRows.filter(Boolean).join("\n").trim();
-
-    if (!body) {
-      continue;
-    }
-
-    const nextChunk = "工作表：" + sheetName + "\n" + body;
-    totalLength += nextChunk.length;
-    sheetTexts.push(nextChunk);
-
-    if (totalLength >= MAX_ATTACHMENT_CHARACTERS) {
-      truncated = true;
-      break;
-    }
-  }
-
-  return buildAttachment(
-    file,
-    file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    sheetTexts.join("\n\n"),
-    truncated
-  );
-}
-
-async function readImageAttachment(
-  file: File,
-  onStatus?: (statusText: string) => void
-): Promise<ComposerAttachment> {
-  const rawContent = await extractImageText(file, (status) => onStatus?.(status.text));
-  return buildAttachment(file, file.type || "image/png", rawContent);
-}
-
-async function readComposerAttachment(
-  file: File,
-  options: { onStatus?: (statusText: string) => void } = {}
-): Promise<ComposerAttachment> {
-  if (!canReadAttachment(file)) {
-    throw new Error("\u76ee\u524d\u652f\u6301\u6587\u672c\u6587\u4ef6\u3001\u8868\u683c\u3001PDF\u3001Word\uff0c\u4ee5\u53ca\u76f4\u63a5\u7c98\u8d34\u6216\u4e0a\u4f20\u622a\u56fe\u56fe\u7247\u3002");
-  }
-
-  const extension = getFileExtension(file.name);
-
-  if (file.type.startsWith("image/") || SUPPORTED_IMAGE_EXTENSIONS.has(extension)) {
-    return readImageAttachment(file, options.onStatus);
-  }
-
-  if (extension === "pdf") {
-    return readPdfAttachment(file);
-  }
-
-  if (extension === "docx") {
-    return readDocxAttachment(file);
-  }
-
-  if (extension === "xls" || extension === "xlsx") {
-    return readSpreadsheetAttachment(file);
-  }
-
-  return readPlainTextAttachment(file);
-}
-
-function formatAttachmentSize(size: number) {
-  if (size < 1024) {
-    return size + " B";
-  }
-
-  if (size < 1024 * 1024) {
-    return (size / 1024).toFixed(1) + " KB";
-  }
-
-  return (size / (1024 * 1024)).toFixed(1) + " MB";
-}
-
-function buildComposerSubmission(rawMessage: string, attachment: ComposerAttachment | null) {
-  const attachmentExtension = attachment ? getFileExtension(attachment.name) : "";
-  const looksLikeDictionaryAttachment =
-    attachment?.source === "file" && ["csv", "xls", "xlsx", "json", "txt", "md"].includes(attachmentExtension);
-  const baseMessage =
-    rawMessage.trim() ||
-    (attachment
-      ? attachment.source === "image"
-        ? "请结合截图识别内容继续处理。"
-        : looksLikeDictionaryAttachment
-          ? "请判断这个附件是否是数据字典或字段表；如果是，请识别真实字段名、字段含义和候选变量角色。"
-          : "请结合附件内容继续处理。"
-      : "");
-
-  if (!attachment) {
-    return {
-      userMessage: baseMessage,
-      payload: {} as Record<string, unknown>
-    };
-  }
-
-  const attachmentLines = [
-    "文件名：" + attachment.name,
-    "类型：" + attachment.mimeType,
-    "大小：" + formatAttachmentSize(attachment.size),
-    attachment.source === "image" ? "来源：截图 / 图片 OCR" : "来源：文件解析",
-    attachment.truncated ? "内容较长，已截断展示" : "内容已完整解析",
-    attachment.content
-  ];
-
-  return {
-    userMessage: [baseMessage, "[附件内容]", attachmentLines.join("\n")].filter(Boolean).join("\n\n"),
-    payload: {
-      attachment: {
-        name: attachment.name,
-        mimeType: attachment.mimeType,
-        size: attachment.size,
-        truncated: attachment.truncated
-      }
-    }
-  };
-}
-
-function PlusIcon() {
-  return (
-    <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
-      <path
-        d="M8 3.333v9.334M3.333 8h9.334"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.6"
-      />
-    </svg>
-  );
-}
-
-function MicIcon() {
-  return (
-    <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
-      <path
-        d="M8 2.667A1.833 1.833 0 0 0 6.167 4.5v3A1.833 1.833 0 0 0 8 9.333 1.833 1.833 0 0 0 9.833 7.5v-3A1.833 1.833 0 0 0 8 2.667Z"
-        stroke="currentColor"
-        strokeWidth="1.4"
-      />
-      <path
-        d="M4.833 6.833a3.167 3.167 0 1 0 6.334 0M8 10.667v2.666M5.667 13.333h4.666"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.4"
-      />
-    </svg>
-  );
-}
-
-function FileIcon() {
-  return (
-    <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
-      <path
-        d="M5 2.667h4.333L12.667 6v7.333A1.333 1.333 0 0 1 11.333 14.667H5A1.333 1.333 0 0 1 3.667 13.333V4A1.333 1.333 0 0 1 5 2.667Z"
-        stroke="currentColor"
-        strokeLinejoin="round"
-        strokeWidth="1.3"
-      />
-      <path d="M9.333 2.667V6h3.334" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.3" />
-    </svg>
-  );
-}
-
-function CloseIcon() {
-  return (
-    <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 16 16">
-      <path d="m4 4 8 8M12 4 4 12" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
-    </svg>
-  );
+  return [
+    normalizeAssistantCopy(run.data.answer ?? ""),
+    keyPoints.length > 0 ? keyPoints.map((item) => `- ${item}`).join("\n") : "",
+    suggestedNextActions.length > 0 ? `建议下一步：${suggestedNextActions.join("；")}` : ""
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function buildStreamPreview(message: AssistantMessageEnvelope) {
@@ -631,9 +380,478 @@ function getStageMeta(detail: ProjectDetail | null, activeStageId: StageId) {
   });
 }
 
+function normalizeListItems(value: unknown) {
+  const cleanItem = (item: string) =>
+    item
+      .replace(/；?DID\s*扩展默认不做[，,、；\s]*/gi, "")
+      .replace(/；?PSM\s*扩展默认不做[，,、；\s]*/gi, "")
+      .replace(/工具变量：待补充真实工具变量；?/g, "")
+      .replace(/机制变量：可后续补充；?/g, "")
+      .replace(/异质性分组：可后续补充；?/g, "")
+      .replace(/导出格式：[^；\n。]+[；。]?/g, "")
+      .replace(/系统只给选择标准，不编造\s*\S*/g, "")
+      .trim();
+
+  if (!Array.isArray(value)) {
+    const text = cleanItem(normalizeDisplayText(value));
+    return text && !/默认不做|待补充真实|可后续补充/.test(text) ? [text] : [];
+  }
+
+  return value
+    .map((item) => cleanItem(normalizeDisplayText(item)))
+    .filter((item) => item && !/默认不做|待补充真实|可后续补充|系统只给选择标准|^导出格式/.test(item));
+}
+
+function CompactList({ items, emptyText = "暂无内容。" }: { items: string[]; emptyText?: string }) {
+  if (items.length === 0) {
+    return <p className="text-sm leading-7 text-slate-500">{emptyText}</p>;
+  }
+
+  return (
+    <ul className="space-y-1.5 text-sm leading-7 text-slate-700">
+      {items.map((item, index) => (
+        <li key={`${item}-${index}`} className="flex gap-2">
+          <span className="mt-[0.72em] h-1 w-1 shrink-0 rounded-full bg-slate-300" />
+          <span>{item}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ProfileValue({ value }: { value: unknown }) {
+  const items = normalizeListItems(value);
+  if (items.length === 0) {
+    return null;
+  }
+  return <span>{items.join("、")}</span>;
+}
+
+function isStructuralStageMessage(message: AssistantMessageEnvelope) {
+  return message.messageType === "topic_confirm" || message.messageType === "sop_guide" || message.messageType === "skill_output";
+}
+
+function getLatestStructuralMessages(messages: AssistantMessageEnvelope[], stage: StageDefinition) {
+  return getStageMessages(messages, stage).filter(isStructuralStageMessage);
+}
+
+function collectTermMappings(detail: ProjectDetail | null, messages: AssistantMessageEnvelope[]) {
+  const profileMappings = detail?.researchProfile?.termMappings ?? [];
+  if (profileMappings.length > 0) {
+    return profileMappings;
+  }
+
+  const byKey = new Map<string, TermMapping>();
+  messages.forEach((message) => {
+    const json = message.contentJson as Record<string, unknown>;
+    const mappings = Array.isArray(json.termMappings) ? (json.termMappings as TermMapping[]) : [];
+    mappings.forEach((mapping) => {
+      if (mapping?.alias || mapping?.labelCn) {
+        byKey.set(`${mapping.category}-${mapping.alias}-${mapping.labelCn}`, mapping);
+      }
+    });
+  });
+  return Array.from(byKey.values());
+}
+
+function collectDataDictionary(detail: ProjectDetail | null, messages: AssistantMessageEnvelope[]) {
+  const profileDictionary = detail?.researchProfile?.dataDictionary ?? [];
+  if (profileDictionary.length > 0) {
+    return profileDictionary;
+  }
+
+  const byName = new Map<string, DataDictionaryEntry>();
+  messages.forEach((message) => {
+    const json = message.contentJson as Record<string, unknown>;
+    const entries = Array.isArray(json.dataDictionary) ? (json.dataDictionary as DataDictionaryEntry[]) : [];
+    entries.forEach((entry) => {
+      if (entry?.variableName) {
+        byName.set(entry.variableName, entry);
+      }
+    });
+  });
+  return Array.from(byName.values());
+}
+
+function normalizeMappingCategory(role: DataDictionaryEntry["candidateRole"]): TermMapping["category"] {
+  if (role === "dependent" || role === "independent" || role === "control" || role === "fixed_effect" || role === "cluster" || role === "panel" || role === "time") {
+    return role;
+  }
+
+  return "control";
+}
+
+function buildStageSections(stage: StageDefinition, messages: AssistantMessageEnvelope[]): StageSectionContent {
+  const structuralMessages = getLatestStructuralMessages(messages, stage);
+  const primary = structuralMessages[structuralMessages.length - 1] ?? null;
+  const json = (primary?.contentJson ?? {}) as Record<string, unknown>;
+  const topicDraft = (json.currentDraft && typeof json.currentDraft === "object" ? json.currentDraft : json) as Record<string, unknown>;
+  const stataCodes = structuralMessages
+    .map((message) => normalizeDisplayText((message.contentJson as Record<string, unknown>).stataCode))
+    .filter(Boolean);
+
+  if (stage.id === "topic") {
+    return {
+      goal: (
+        <div className="space-y-3">
+          <p className="text-sm leading-7 text-slate-700">
+            {normalizeDisplayText(topicDraft.normalizedTopic) || "确认研究主题、变量设定和样本范围。"}
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {([
+              ["解释变量", topicDraft.independentVariable],
+              ["被解释变量", topicDraft.dependentVariable],
+              ["研究对象", normalizeResearchObjectText(topicDraft.researchObject)],
+              ["样本区间", topicDraft.sampleScope]
+            ] as Array<[string, unknown]>).map(([label, value]) =>
+              normalizeDisplayText(value) ? (
+                <div key={String(label)} className="rounded-[12px] bg-slate-50 px-3 py-2">
+                  <p className="text-[11px] font-semibold text-slate-500">{label}</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{normalizeDisplayText(value)}</p>
+                </div>
+              ) : null
+            )}
+          </div>
+        </div>
+      ),
+      stataCode: <p className="text-sm leading-7 text-slate-500">主题确认阶段不需要执行 Stata 代码。</p>,
+      codeExplanation: <p className="text-sm leading-7 text-slate-600">这一页用于确认研究设定。确认后，其余模块会基于这些设定生成代码与说明。</p>,
+      readingAdvice: <p className="text-sm leading-7 text-slate-600">重点检查核心解释变量、被解释变量、样本区间、固定效应和控制变量是否符合论文设计。</p>
+    };
+  }
+
+  // 本节目标从这里源头去重：基准回归及后续模块只展示模块目的，不再拼接研究设定摘要或 variableDesign。
+  const moduleGoalItems = MODULE_GOAL_ITEMS[stage.id];
+  const goalItems = moduleGoalItems ?? [
+    normalizeDisplayText(json.purpose) || normalizeAssistantCopy(primary?.contentText) || (primary ? buildStreamPreview(primary) : ""),
+    normalizeDisplayText(json.meaning),
+    ...normalizeListItems(json.variableDesign)
+  ].filter(Boolean);
+  const explanationItems = [
+    normalizeDisplayText(json.modelSpec),
+    ...normalizeListItems(json.codeExplanation),
+    ...normalizeListItems(json.steps)
+  ].filter(Boolean);
+  const adviceItems = [
+    ...normalizeListItems(json.interpretationGuide),
+    ...normalizeListItems(json.checkItems),
+    normalizeDisplayText(json.nextSuggestion)
+  ].filter(Boolean);
+
+  return {
+    goal: <CompactList items={goalItems} emptyText="该模块还没有生成目标说明。" />,
+    stataCode:
+      stataCodes.length > 0 ? (
+        <div className="space-y-3">
+          {stataCodes.map((code, index) => (
+            <StataCodeBlock code={code} key={`${stage.id}-code-${index}`} title="Stata 代码" />
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm leading-7 text-slate-500">该模块暂时没有生成 Stata 代码。</p>
+      ),
+    codeExplanation: <CompactList items={explanationItems} emptyText="该模块还没有生成代码解读。" />,
+    readingAdvice: <CompactList items={adviceItems} emptyText="该模块还没有生成阅读建议。" />
+  };
+}
+
+function AccordionPanel({
+  title,
+  open,
+  onToggle,
+  children
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section className="overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+      <button
+        className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition hover:bg-slate-50"
+        onClick={onToggle}
+        type="button"
+      >
+        <span className="text-[15px] font-semibold text-slate-950">{title}</span>
+        <span
+          aria-hidden="true"
+          className={clsx("text-slate-400 transition-transform duration-200", open ? "rotate-180" : "rotate-0")}
+        >
+          ↓
+        </span>
+      </button>
+      {open ? <div className="border-t border-slate-100 px-5 py-4">{children}</div> : null}
+    </section>
+  );
+}
+
+function WorkspaceSidebar({
+  stages,
+  selectedStageId,
+  confirmProcessing,
+  onSelect
+}: {
+  stages: Array<StageDefinition & { isCompleted: boolean; isActive: boolean }>;
+  selectedStageId: StageId;
+  confirmProcessing: boolean;
+  onSelect: (stageId: StageId) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  return (
+    <aside className="flex min-h-0 flex-col rounded-[28px] border border-slate-200 bg-white px-4 py-5 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+      <div className="px-2">
+        <p className="text-[34px] font-black leading-none tracking-normal text-slate-950 [font-family:Arial_Rounded_MT_Bold,Trebuchet_MS,sans-serif]">
+          Tank
+        </p>
+        <p className="mt-2 text-xs font-medium text-slate-500">你的科研助理</p>
+      </div>
+
+      <nav className="mt-8 flex-1 space-y-1 overflow-y-auto">
+        {stages.map((stage, index) => {
+          const selected = selectedStageId === stage.id;
+          return (
+            <button
+              className={clsx(
+                "flex w-full items-center gap-3 rounded-[16px] px-3 py-3 text-left transition",
+                selected ? "bg-slate-950 text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)]" : "text-slate-600 hover:bg-slate-50 hover:text-slate-950",
+                confirmProcessing ? "cursor-default" : ""
+              )}
+              disabled={confirmProcessing}
+              key={stage.id}
+              onClick={() => onSelect(stage.id)}
+              type="button"
+            >
+              <span className={clsx("text-xs font-semibold", selected ? "text-white/70" : "text-slate-400")}>
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              <span className="text-sm font-semibold">{stage.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      <div className="relative mt-5">
+        {menuOpen ? (
+          <div className="absolute bottom-full left-0 mb-2 w-full rounded-[16px] border border-slate-200 bg-white p-2 text-sm shadow-[0_18px_42px_rgba(15,23,42,0.12)]">
+            <Link className="block rounded-[12px] px-3 py-2 text-slate-700 hover:bg-slate-50" href="/projects">
+              历史项目
+            </Link>
+            <Link className="block rounded-[12px] px-3 py-2 text-slate-700 hover:bg-slate-50" href="/">
+              新建项目
+            </Link>
+          </div>
+        ) : null}
+        <button
+          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
+          onClick={() => setMenuOpen((current) => !current)}
+          type="button"
+        >
+          ···
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function WorkspaceRightPanel({
+  profile,
+  mappings,
+  dictionary,
+  onOpenAssistant
+}: {
+  profile: ResearchProfile | null | undefined;
+  mappings: TermMapping[];
+  dictionary: DataDictionaryEntry[];
+  onOpenAssistant: () => void;
+}) {
+  const profileRows = [
+    ["被解释变量", profile?.dependentVariable],
+    ["核心解释变量", profile?.independentVariable],
+    ["控制变量", profile?.controls],
+    ["固定效应", profile?.fixedEffects],
+    ["样本区间", profile?.sampleScope],
+    ["聚类变量", profile?.clusterVar || profile?.panelId || "stkcd"]
+  ].filter(([, value]) => normalizeListItems(value).length > 0);
+  const mappingRows = mappings.length > 0
+    ? mappings
+    : dictionary.slice(0, 8).map<TermMapping>((entry) => ({
+        category: normalizeMappingCategory(entry.candidateRole),
+        labelCn: normalizeDisplayText(entry.labelCn || entry.description || entry.variableName),
+        alias: entry.variableName
+      }));
+
+  return (
+    <aside className="hidden min-h-0 flex-col gap-4 overflow-y-auto lg:flex">
+      <button
+        aria-label="打开 AI 助手"
+        className="inline-flex h-11 w-full items-center justify-center rounded-[16px] border border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.04)] transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
+        onClick={onOpenAssistant}
+        type="button"
+      >
+        AI 助手
+      </button>
+
+      <section className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-[0_12px_36px_rgba(15,23,42,0.05)]">
+        <h2 className="text-sm font-semibold text-slate-950">研究设定</h2>
+        <div className="mt-4 space-y-3">
+          {profileRows.length > 0 ? (
+            profileRows.map(([label, value]) => (
+              <div key={String(label)} className="border-b border-slate-100 pb-2.5 last:border-b-0 last:pb-0">
+                <p className="text-[11px] font-semibold text-slate-500">{label}</p>
+                <p className="mt-1 text-sm font-semibold leading-6 text-slate-900">
+                  <ProfileValue value={value} />
+                </p>
+              </div>
+            ))
+          ) : (
+            <p className="text-sm leading-7 text-slate-500">暂无研究设定。</p>
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-[0_12px_36px_rgba(15,23,42,0.05)]">
+        <h2 className="text-sm font-semibold text-slate-950">变量映射</h2>
+        <div className="mt-4 overflow-hidden rounded-[14px] border border-slate-200">
+          <div className="grid grid-cols-[1fr_0.9fr_0.8fr] gap-2 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-500">
+            <span>中文名称</span>
+            <span>英文缩写</span>
+            <span>类别</span>
+          </div>
+          {mappingRows.length > 0 ? (
+            <div className="divide-y divide-slate-100">
+              {mappingRows.slice(0, 10).map((mapping, index) => (
+                <div key={`${mapping.alias}-${index}`} className="grid grid-cols-[1fr_0.9fr_0.8fr] gap-2 px-3 py-2.5 text-xs leading-5">
+                  <span className="break-words font-medium text-slate-800">{normalizeDisplayText(mapping.labelCn)}</span>
+                  <code className="break-words font-mono text-slate-700">{normalizeDisplayText(mapping.alias)}</code>
+                  <span className="text-slate-500">{TERM_CATEGORY_LABELS[mapping.category]}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="px-3 py-4 text-sm text-slate-500">暂无变量映射。</p>
+          )}
+        </div>
+      </section>
+    </aside>
+  );
+}
+
+function WorkspaceAssistantDrawer({
+  messages,
+  input,
+  attachment,
+  sending,
+  attachmentProcessing,
+  listening,
+  composerError,
+  confirmProcessing,
+  onChange,
+  onSend,
+  onAttachClick,
+  onMicClick,
+  onPaste,
+  onRemoveAttachment,
+  onStop
+}: {
+  messages: AssistantPanelMessage[];
+  input: string;
+  attachment: ComposerAttachment | null;
+  sending: boolean;
+  attachmentProcessing: boolean;
+  listening: boolean;
+  composerError: string;
+  confirmProcessing: boolean;
+  onChange: (value: string) => void;
+  onSend: () => void | Promise<void>;
+  onAttachClick: () => void;
+  onMicClick: () => void;
+  onPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
+  onRemoveAttachment: () => void;
+  onStop: () => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const stickToBottomRef = useRef(true);
+
+  useEffect(() => {
+    if (!stickToBottomRef.current) {
+      return;
+    }
+
+    bottomRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, sending]);
+
+  const handleScroll = () => {
+    const element = scrollRef.current;
+    if (!element) {
+      return;
+    }
+
+    stickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
+  };
+
+  return (
+    <aside className="hidden h-full min-h-0 flex-col overflow-hidden border-l border-[#E5EAF2] bg-white shadow-[0_12px_40px_rgba(15,23,42,0.08)] transition-[transform,opacity] duration-[180ms] ease-out lg:flex">
+      <div className="hidden-scrollbar flex-1 overflow-y-auto px-5 py-5" onScroll={handleScroll} ref={scrollRef}>
+        {messages.length === 0 ? (
+          <div className="pt-[120px] text-center">
+            <p className="text-[24px] font-semibold italic leading-8 text-slate-950">Hi，我是 Tank</p>
+            <p className="mt-2 text-base leading-7 text-[#4B5563]">有什么我可以帮你的吗？</p>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {messages.map((message) => (
+              <div
+                className={clsx(
+                  "whitespace-pre-wrap break-words text-sm",
+                  message.role === "user"
+                    ? "ml-auto max-w-[78%] rounded-[16px] bg-[#F2F4F7] px-3.5 py-3 leading-6 text-[#111827]"
+                    : "mr-auto max-w-[92%] leading-[1.65] text-[#111827]"
+                )}
+                key={message.id}
+              >
+                {message.role === "assistant" ? (
+                  <p className="mb-1 text-xs font-semibold text-slate-400">Tank</p>
+                ) : null}
+                {message.role === "assistant" && message.status === "loading" && !message.text ? <TypingDots /> : message.text}
+              </div>
+            ))}
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      <div className="border-t border-[#E5EAF2] bg-white p-4">
+        <ChatComposer
+          attachment={attachment}
+          attachmentProcessing={attachmentProcessing}
+          disabled={confirmProcessing}
+          error={composerError}
+          listening={listening}
+          maxHeight={140}
+          minHeight={44}
+          onAttachClick={onAttachClick}
+          onChange={onChange}
+          onMicClick={onMicClick}
+          onPaste={onPaste}
+          onRemoveAttachment={onRemoveAttachment}
+          onSend={onSend}
+          onStop={onStop}
+          placeholder="向 AI 助手提问…"
+          sending={sending}
+          value={input}
+          variant="assistantDrawer"
+        />
+      </div>
+    </aside>
+  );
+}
+
 function WorkspacePlaceholder({ children }: { children: ReactNode }) {
   return (
-    <div className="mx-auto max-w-[1100px] px-6 pb-8 pt-6">
+    <div className="mx-auto max-w-[1680px] px-6 pb-8 pt-6">
       <div className="rounded-[20px] border border-slate-200 bg-white p-6 text-sm font-normal text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
         {children}
       </div>
@@ -648,7 +866,7 @@ function WorkspaceStageLoadingCard({
 }) {
   return (
     <div className="rounded-[20px] border border-slate-200 bg-white p-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-      <p className="text-sm font-normal leading-7 text-slate-600">{description}</p>
+      {description ? <p className="text-sm font-normal leading-7 text-slate-600">{description}</p> : null}
       <div className="mt-5 space-y-3">
         <div className="h-4 w-40 animate-pulse rounded-full bg-slate-100" />
         <div className="h-4 w-full animate-pulse rounded-full bg-slate-100" />
@@ -671,7 +889,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const [composerError, setComposerError] = useState("");
   const [attachment, setAttachment] = useState<ComposerAttachment | null>(null);
   const [attachmentProcessing, setAttachmentProcessing] = useState(false);
-  const [attachmentStatusText, setAttachmentStatusText] = useState("");
   const [listening, setListening] = useState(false);
   const [selectedStageId, setSelectedStageId] = useState<StageId>("topic");
   const [liveTurn, setLiveTurn] = useState<LiveTurnState | null>(null);
@@ -679,6 +896,10 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const [workflowProgress, setWorkflowProgress] = useState<WorkflowProgressPayload | null>(null);
   const [bootstrapResolved, setBootstrapResolved] = useState(false);
   const [pageEntered, setPageEntered] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  // Keep detail assistant messages in the parent so closing the drawer only hides UI and never resets history.
+  const [assistantMessages, setAssistantMessages] = useState<AssistantPanelMessage[]>([]);
+  const [accordionOpenState, setAccordionOpenState] = useState<Partial<Record<StageId, AccordionState>>>({});
 
   const [pendingBootstrapTopic, setPendingBootstrapTopic] = useState<string | null>(null);
   const [initializingProject, setInitializingProject] = useState(false);
@@ -691,37 +912,16 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const speechCommittedTextRef = useRef("");
   const speechInterimTextRef = useRef("");
   const keepListeningRef = useRef(false);
+  const assistantAbortControllerRef = useRef<AbortController | null>(null);
+  const assistantPlaceholderIdRef = useRef<string | null>(null);
   const autoStageRef = useRef<StageId>("topic");
-  const stageRailRef = useRef<HTMLDivElement | null>(null);
-  const stageButtonRefs = useRef<Record<StageId, HTMLButtonElement | null>>({
-    topic: null,
-    data: null,
-    baseline: null,
-    robustness: null,
-    iv: null,
-    mechanism: null,
-    heterogeneity: null
-  });
-  const stageIndicatorPreviousRef = useRef({
-    left: 0,
-    top: 0,
-    width: 0,
-    height: 0,
-    ready: false
-  });
-  const stageIndicatorMotionTimeoutRef = useRef<number | null>(null);
-  const [stageIndicator, setStageIndicator] = useState({
-    left: 0,
-    top: 0,
-    width: 0,
-    height: 0,
-    ready: false
-  });
-  const [stageIndicatorMotion, setStageIndicatorMotion] = useState<"idle" | "forward" | "backward">("idle");
 
   useIsomorphicLayoutEffect(() => {
     const pendingBootstrap = getPendingProjectBootstrap(projectId);
     const hasHydratedBootstrap = Boolean(pendingBootstrap?.detail && pendingBootstrap?.messages);
+    const shouldRunConfirmedBootstrap = Boolean(
+      pendingBootstrap?.topic && /确认|confirm|ok|yes/i.test(pendingBootstrap.topic) && !hasHydratedBootstrap
+    );
 
     setStored(getStoredProject(projectId));
     setAvailableProjects(getStoredProjects());
@@ -734,21 +934,26 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setInput("");
     setAttachment(null);
     setAttachmentProcessing(false);
-    setAttachmentStatusText("");
     setListening(false);
     setSelectedStageId("topic");
     setPendingBootstrapTopic(hasHydratedBootstrap ? null : pendingBootstrap?.topic ?? null);
     setInitializingProject(Boolean(pendingBootstrap?.topic) && !hasHydratedBootstrap);
-    setOptimisticStageId(null);
-    setConfirmProcessing(false);
+    setOptimisticStageId(shouldRunConfirmedBootstrap ? "data" : null);
+    setConfirmProcessing(shouldRunConfirmedBootstrap);
     setWorkflowProgress(null);
     setBootstrapResolved(true);
     setPageEntered(false);
+    setAssistantOpen(false);
+    setAssistantMessages([]);
+    setAccordionOpenState({});
     finalizedTurnIdRef.current = null;
     bootstrapStartedRef.current = false;
     keepListeningRef.current = false;
     speechCommittedTextRef.current = "";
     speechInterimTextRef.current = "";
+    assistantAbortControllerRef.current?.abort();
+    assistantAbortControllerRef.current = null;
+    assistantPlaceholderIdRef.current = null;
     recognitionRef.current?.stop();
     recognitionRef.current = null;
   }, [projectId]);
@@ -785,9 +990,9 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       keepListeningRef.current = false;
       speechCommittedTextRef.current = "";
       speechInterimTextRef.current = "";
-      if (stageIndicatorMotionTimeoutRef.current !== null) {
-        window.clearTimeout(stageIndicatorMotionTimeoutRef.current);
-      }
+      assistantAbortControllerRef.current?.abort();
+      assistantAbortControllerRef.current = null;
+      assistantPlaceholderIdRef.current = null;
       recognitionRef.current?.stop();
       recognitionRef.current = null;
     };
@@ -843,7 +1048,46 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     };
   }, [projectId, stored]);
 
-    const currentStep = detail?.project.currentStep ?? WorkflowStep.TOPIC_DETECT;
+  useEffect(() => {
+    if (!stored || loading) {
+      return;
+    }
+
+    let ignore = false;
+
+    void (async () => {
+      try {
+        const activeRun = await apiRequest<AgentRunSummary | null>(`/projects/${projectId}/harness/runs/active`, {
+          token: stored.token
+        });
+        if (ignore || !activeRun || activeRun.status !== "running") {
+          return;
+        }
+
+        const heartbeatTime = activeRun.lastHeartbeatAt ? Date.parse(activeRun.lastHeartbeatAt) : 0;
+        if (!heartbeatTime || Date.now() - heartbeatTime > 30000) {
+          return;
+        }
+
+        setConfirmProcessing(true);
+        setWorkflowProgress({
+          currentCount: activeRun.currentCount || 1,
+          totalCount: activeRun.totalCount || 7,
+          stageLabel: activeRun.stageLabel || "研究设定",
+          remainingMinutes: 5,
+          percent: activeRun.progressPercent || 8
+        });
+      } catch {
+        // Active run recovery is best effort; normal project rendering still works without it.
+      }
+    })();
+
+    return () => {
+      ignore = true;
+    };
+  }, [loading, projectId, stored]);
+
+  const currentStep = detail?.project.currentStep ?? WorkflowStep.TOPIC_DETECT;
   const activeStageId = STAGE_ID_BY_STEP[currentStep] ?? "topic";
   const progressStageId = workflowProgress?.stageLabel
     ? STAGE_ID_BY_PROGRESS_LABEL[workflowProgress.stageLabel] ?? null
@@ -851,7 +1095,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const currentProcessStageId = confirmProcessing
     ? progressStageId ?? optimisticStageId ?? activeStageId
     : optimisticStageId ?? activeStageId;
-  const highlightedStageId = confirmProcessing ? currentProcessStageId : selectedStageId;
 
   useEffect(() => {
     const nextAutoStageId = confirmProcessing ? currentProcessStageId : activeStageId;
@@ -869,105 +1112,30 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   );
   const stageMeta = useMemo(() => getStageMeta(detail, currentProcessStageId), [detail, currentProcessStageId]);
   const selectedStageMessages = useMemo(() => getStageMessages(messages, selectedStage), [messages, selectedStage]);
-  const selectedStageIsActive = selectedStage.id === currentProcessStageId;
-  const showInitialProjectLoading = Boolean(pendingBootstrapTopic) && (stored === undefined || loading || messages.length === 0);
+  const pendingBootstrapIsConfirmation = Boolean(pendingBootstrapTopic && /确认|confirm|ok|yes/i.test(pendingBootstrapTopic));
+  const showInitialProjectLoading =
+    Boolean(pendingBootstrapTopic) && !pendingBootstrapIsConfirmation && (stored === undefined || loading || messages.length === 0);
   const showStageLoadingState = Boolean(confirmProcessing && selectedStage.id === currentProcessStageId && selectedStageMessages.length === 0);
-  const hasDownstreamMessages = messages.some(
-    (message) =>
-      message.role !== "user" &&
-      Boolean(message.step) &&
-      STAGE_ID_BY_STEP[message.step as WorkflowStep] &&
-      STAGE_ID_BY_STEP[message.step as WorkflowStep] !== "topic"
+  const selectedAccordionState = accordionOpenState[selectedStage.id] ?? DEFAULT_ACCORDION_STATE;
+  const selectedStageSections = useMemo(
+    () => buildStageSections(selectedStage, messages),
+    [messages, selectedStage]
   );
-  const showTopicConfirmBar =
-    selectedStage.id === "topic" &&
-    selectedStageMessages.some((message) => message.messageType === "topic_confirm") &&
-    !hasDownstreamMessages &&
-    !confirmProcessing;
-  const workflowLockActive = confirmProcessing;
-  const workflowLockProgress = workflowProgress ?? {
-    currentCount: 1,
-    totalCount: 7,
-    stageLabel: "\u7814\u7a76\u8bbe\u5b9a",
-    remainingMinutes: 5
-  };
+  const termMappings = useMemo(() => collectTermMappings(detail, messages), [detail, messages]);
+  const dataDictionary = useMemo(() => collectDataDictionary(detail, messages), [detail, messages]);
 
-  useIsomorphicLayoutEffect(() => {
-    const rail = stageRailRef.current;
-    const button = stageButtonRefs.current[highlightedStageId];
-    if (!rail || !button) {
-      return;
-    }
-
-    const nextIndicator = {
-      left: button.offsetLeft,
-      top: button.offsetTop,
-      width: button.offsetWidth,
-      height: button.offsetHeight,
-      ready: true
-    };
-
-    const previousIndicator = stageIndicatorPreviousRef.current;
-    if (
-      previousIndicator.ready &&
-      (previousIndicator.left !== nextIndicator.left || previousIndicator.width !== nextIndicator.width)
-    ) {
-      setStageIndicatorMotion(nextIndicator.left >= previousIndicator.left ? "forward" : "backward");
-      if (stageIndicatorMotionTimeoutRef.current !== null) {
-        window.clearTimeout(stageIndicatorMotionTimeoutRef.current);
-      }
-      stageIndicatorMotionTimeoutRef.current = window.setTimeout(() => {
-        setStageIndicatorMotion("idle");
-      }, 360);
-    }
-
-    stageIndicatorPreviousRef.current = nextIndicator;
-
-    setStageIndicator((current) => {
-      if (
-        current.left === nextIndicator.left &&
-        current.top === nextIndicator.top &&
-        current.width === nextIndicator.width &&
-        current.height === nextIndicator.height &&
-        current.ready === nextIndicator.ready
-      ) {
-        return current;
-      }
-
-      return nextIndicator;
-    });
-  }, [highlightedStageId, pageEntered, stageMeta]);
-
-  useEffect(() => {
-    if (!bootstrapResolved) {
-      return;
-    }
-
-    const syncIndicator = () => {
-      const rail = stageRailRef.current;
-      const button = stageButtonRefs.current[highlightedStageId];
-      if (!rail || !button) {
-        return;
-      }
-
-      const nextIndicator = {
-        left: button.offsetLeft,
-        top: button.offsetTop,
-        width: button.offsetWidth,
-        height: button.offsetHeight,
-        ready: true
+  const toggleAccordion = (key: AccordionKey) => {
+    setAccordionOpenState((current) => {
+      const previous = current[selectedStage.id] ?? DEFAULT_ACCORDION_STATE;
+      return {
+        ...current,
+        [selectedStage.id]: {
+          ...previous,
+          [key]: !previous[key]
+        }
       };
-
-      stageIndicatorPreviousRef.current = nextIndicator;
-      setStageIndicator(nextIndicator);
-    };
-
-    syncIndicator();
-    window.addEventListener("resize", syncIndicator);
-    return () => {
-      window.removeEventListener("resize", syncIndicator);
-    };
-  }, [bootstrapResolved, highlightedStageId]);
+    });
+  };
 
   useEffect(() => {
     if (!liveTurn || !liveTurn.assistantMessage || !stored || finalizedTurnIdRef.current === liveTurn.id) {
@@ -1012,16 +1180,16 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
 
   const streamMessage = async (
     rawMessage: string,
-    options: { attachment?: ComposerAttachment | null; payload?: Record<string, unknown> } = {}
+    options: { attachment?: ComposerAttachment | null; payload?: Record<string, unknown>; requestedStep?: WorkflowStep } = {}
   ) => {
     if (!stored || sending || attachmentProcessing) {
-      return;
+      return null;
     }
 
     let resolvedAttachment = options.attachment ?? null;
 
     if (!rawMessage.trim() && !resolvedAttachment) {
-      return;
+      return null;
     }
 
     try {
@@ -1030,17 +1198,18 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       setComposerError(
         attachmentError instanceof Error ? attachmentError.message : "\u622a\u56fe\u8bc6\u522b\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002"
       );
-      return;
+      return null;
     }
 
     const submission = buildComposerSubmission(rawMessage, resolvedAttachment);
 
     if (!submission.userMessage.trim()) {
       setComposerError("\u622a\u56fe\u4e2d\u6ca1\u6709\u8bc6\u522b\u5230\u53ef\u7528\u6587\u5b57\uff0c\u8bf7\u6362\u4e00\u5f20\u66f4\u6e05\u6670\u7684\u56fe\u7247\u518d\u8bd5\u3002");
-      return;
+      return null;
     }
 
-    const requestedStep = REQUESTED_STEP_BY_STAGE[selectedStageId] ?? detail?.project.currentStep ?? WorkflowStep.TOPIC_NORMALIZE;
+    const requestedStep =
+      options.requestedStep ?? REQUESTED_STEP_BY_STAGE[selectedStageId] ?? detail?.project.currentStep ?? WorkflowStep.TOPIC_NORMALIZE;
     const localUserMessage = createLocalUserMessage(submission.userMessage, requestedStep ?? null);
     const liveTurnId = Date.now() + "-" + Math.random().toString(16).slice(2);
 
@@ -1070,6 +1239,10 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
           }
         },
         onEvent: (event) => {
+          if (event.type === "run") {
+            return;
+          }
+
           if (event.type === "status") {
             setLiveTurn((current) => {
               if (!current || current.id !== liveTurnId) {
@@ -1129,6 +1302,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       setWorkflowProgress(null);
       setInput("");
       setAttachment(null);
+      return nextMessages[nextMessages.length - 1] ?? null;
     } catch (requestError) {
       const messageText = requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。";
 
@@ -1151,6 +1325,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       setOptimisticStageId(null);
       setConfirmProcessing(false);
       setWorkflowProgress(null);
+      return null;
     }
   };
 
@@ -1159,7 +1334,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       return;
     }
 
-    if (messages.length > 0) {
+    if (messages.length > 0 && !pendingBootstrapIsConfirmation) {
       clearPendingProjectBootstrap(projectId);
       setPendingBootstrapTopic(null);
       setInitializingProject(false);
@@ -1171,33 +1346,21 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
 
     void (async () => {
       try {
-        await streamMessage(pendingBootstrapTopic);
+        await streamMessage(pendingBootstrapTopic, {
+          requestedStep: pendingBootstrapIsConfirmation ? WorkflowStep.TOPIC_NORMALIZE : undefined
+        });
       } finally {
         setPendingBootstrapTopic(null);
         setInitializingProject(false);
       }
     })();
-  }, [loading, messages.length, pendingBootstrapTopic, projectId, sending, stored]);
-
-  const confirmTopic = async () => {
-    setConfirmProcessing(true);
-    setWorkflowProgress({
-      currentCount: 1,
-      totalCount: 7,
-      stageLabel: "\u7814\u7a76\u8bbe\u5b9a",
-      remainingMinutes: 5
-    });
-    setOptimisticStageId("data");
-    setSelectedStageId("data");
-    await streamMessage("\u786e\u8ba4\u5e76\u751f\u6210");
-  };
+  }, [loading, messages.length, pendingBootstrapIsConfirmation, pendingBootstrapTopic, projectId, sending, stored]);
 
   const processAttachment = async (file: File) => {
     const normalizedFile = ensureNamedImageFile(file);
 
     if (normalizedFile.type.startsWith("image/")) {
       setComposerError("");
-      setAttachmentStatusText("");
       setAttachment(buildPendingImageAttachment(normalizedFile));
       return;
     }
@@ -1206,9 +1369,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       setComposerError("");
       setAttachment(null);
       setAttachmentProcessing(true);
-      setAttachmentStatusText("正在解析附件...");
       const nextAttachment = await readComposerAttachment(normalizedFile, {
-        onStatus: (statusText) => setAttachmentStatusText(statusText)
+        onStatus: () => {}
       });
       setAttachment(nextAttachment);
     } catch (attachmentError) {
@@ -1218,7 +1380,6 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       );
     } finally {
       setAttachmentProcessing(false);
-      setAttachmentStatusText("");
     }
   };
 
@@ -1241,11 +1402,9 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     try {
       setComposerError("");
       setAttachmentProcessing(true);
-      setAttachmentStatusText("\u6b63\u5728\u8bc6\u522b\u622a\u56fe\u6587\u5b57...");
-      return await readImageAttachment(nextAttachment.file, (statusText) => setAttachmentStatusText(statusText));
+      return await readImageAttachment(nextAttachment.file, () => {});
     } finally {
       setAttachmentProcessing(false);
-      setAttachmentStatusText("");
     }
   };
 
@@ -1295,9 +1454,10 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setListening(true);
     keepListeningRef.current = true;
     recognitionRef.current = recognition;
-    recognition.lang = "zh-CN";
+    recognition.lang = inferSpeechRecognitionLanguage(input);
     recognition.continuous = true;
     recognition.interimResults = true;
+    recognition.maxAlternatives = 3;
 
     recognition.onresult = (event) => {
       let nextCommitted = speechCommittedTextRef.current;
@@ -1375,25 +1535,132 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     recognition.start();
   };
 
-  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (
-      event.key === "Enter" &&
-      !event.ctrlKey &&
-      !event.metaKey &&
-      !event.shiftKey &&
-      !event.altKey
-    ) {
-      event.preventDefault();
-      void streamMessage(input, { attachment });
+  const stopAssistantMessage = () => {
+    assistantAbortControllerRef.current?.abort();
+    assistantAbortControllerRef.current = null;
+
+    const placeholderId = assistantPlaceholderIdRef.current;
+    if (placeholderId) {
+      setAssistantMessages((current) =>
+        current.flatMap((message) => {
+          if (message.id !== placeholderId) {
+            return [message];
+          }
+
+          return message.text.trim() ? [{ ...message, status: "stopped" as const }] : [];
+        })
+      );
+      assistantPlaceholderIdRef.current = null;
     }
+
+    setSending(false);
   };
 
-  const helperText = showTopicConfirmBar
-    ? "如需调整研究设定，可直接补充；也可以上传数据字典表，Tank 会识别真实字段名并判断候选变量角色。"
-    : "可以继续追问当前模块，也可以直接修改研究设定或上传数据字典；语音输入发送后同样会先由 Tank 判断意图。";
-  const placeholderText = showTopicConfirmBar
-    ? "例如：面板 id 是 stkcd，年份变量是 year，聚类变量按企业\n例如：不做 DID；PSM 要做，匹配变量用企业规模、资产负债率和 ROA\n例如：工具变量是 iv_index，机制变量是融资约束，异质性按产权性质分组"
-    : "例如：请解释一下 M1-M6 递进规格是什么意思\n例如：把控制变量再补充完整一点\n例如：这是我的数据字典，帮我识别字段含义和变量角色";
+  const sendAssistantMessage = async () => {
+    const question = input.trim();
+    if (!stored || (!question && !attachment) || sending || confirmProcessing || attachmentProcessing) {
+      return;
+    }
+
+    const localId = Date.now().toString(16);
+    const assistantMessageId = `${localId}-assistant`;
+    const currentAttachment = attachment;
+    const userDisplayText = question || currentAttachment?.name || "";
+    const requestedStep = REQUESTED_STEP_BY_STAGE[selectedStageId] ?? detail?.project.currentStep ?? WorkflowStep.TOPIC_NORMALIZE;
+    const controller = new AbortController();
+    let assistantPlaceholderInserted = false;
+
+    try {
+      setSending(true);
+      setComposerError("");
+      setInput("");
+      setAttachment(null);
+      assistantAbortControllerRef.current = controller;
+      assistantPlaceholderIdRef.current = assistantMessageId;
+
+      const resolvedAttachment = await resolveAttachmentForSubmission(currentAttachment);
+      const submission = buildComposerSubmission(question, resolvedAttachment);
+      const submittedQuestion = submission.userMessage.trim();
+
+      if (!submittedQuestion) {
+        throw new Error("附件中没有识别到可用文字，请换一个更清晰的文件再试。");
+      }
+
+      setAssistantMessages((current) => [
+        ...current,
+        {
+          id: `${localId}-user`,
+          role: "user",
+          text: userDisplayText || submittedQuestion
+        },
+        {
+          id: assistantMessageId,
+          role: "assistant",
+          text: "",
+          status: "loading"
+        }
+      ]);
+      assistantPlaceholderInserted = true;
+
+      // Detail assistant chat is intentionally local to the drawer: this direct skill call
+      // returns an answer without creating workflow messages or changing middle-page content.
+      const run = await apiRequest<GeneralResearchChatSkillRun>(`/projects/${projectId}/skills/${SkillName.GENERAL_RESEARCH_CHAT}`, {
+        method: "POST",
+        token: stored.token,
+        signal: controller.signal,
+        body: JSON.stringify({
+          step: requestedStep,
+          payload: {
+            userQuestion: submittedQuestion,
+            currentModule: requestedStep,
+            topic: detail?.researchProfile?.normalizedTopic ?? detail?.project.topicNormalized ?? detail?.project.topicRaw ?? ""
+          }
+        })
+      });
+
+      const answerText = getAssistantSkillAnswer(run) || "我已经收到你的问题，但这次没有生成可展示的回答。";
+      setAssistantMessages((current) =>
+        current.map((message) =>
+          message.id === assistantMessageId
+            ? {
+                ...message,
+                text: answerText,
+                status: "done"
+              }
+            : message
+        )
+      );
+    } catch (requestError) {
+      if (!isAbortError(requestError)) {
+        const messageText = requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。";
+        if (assistantPlaceholderInserted) {
+          setAssistantMessages((current) =>
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? {
+                    ...message,
+                    text: messageText,
+                    status: "error"
+                  }
+                : message
+            )
+          );
+        } else {
+          setComposerError(messageText);
+        }
+        setInput(question);
+        setAttachment(currentAttachment);
+      }
+    } finally {
+      if (assistantAbortControllerRef.current === controller) {
+        assistantAbortControllerRef.current = null;
+      }
+      if (assistantPlaceholderIdRef.current === assistantMessageId) {
+        assistantPlaceholderIdRef.current = null;
+      }
+      setSending(false);
+    }
+  };
 
   if (!bootstrapResolved) {
     return <section aria-hidden="true" className="mx-auto max-w-[1100px] px-6 pb-8 pt-6 opacity-0" />;
@@ -1402,30 +1669,30 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   if (showInitialProjectLoading) {
     return (
       <WorkspacePlaceholder>
-        <ThinkingBubble className="w-fit" />
+        <ThinkingBubble bare className="w-fit" />
       </WorkspacePlaceholder>
     );
   }
 
-  if (stored === undefined || loading) {
+  if ((stored === undefined || loading) && !pendingBootstrapIsConfirmation) {
     return (
       <WorkspacePlaceholder>
-        <ThinkingBubble className="w-fit" />
+        <ThinkingBubble bare className="w-fit" />
       </WorkspacePlaceholder>
     );
   }
 
-  if (!stored && availableProjects.length === 1) {
+  if (stored !== undefined && !stored && availableProjects.length === 1) {
     return (
       <WorkspacePlaceholder>
-        <ThinkingBubble className="w-fit" />
+        <ThinkingBubble bare className="w-fit" />
       </WorkspacePlaceholder>
     );
   }
 
-  if (!stored) {
+  if (stored !== undefined && !stored) {
     return (
-      <div className="mx-auto max-w-[1100px] px-6 pb-8 pt-6">
+      <div className="mx-auto max-w-[1680px] px-6 pb-8 pt-6">
         <div className="rounded-[20px] border border-dashed border-slate-300 bg-white p-6 text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
           <p className="text-base font-semibold text-slate-950">这个链接不在当前浏览器保存的项目列表里。</p>
           <div className="mt-5 flex flex-wrap gap-3">
@@ -1449,282 +1716,117 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
 
   return (
     <>
-      {workflowLockActive ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-slate-950/18 backdrop-blur-[12px]">
-          <div className="workflow-lock-edge absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(96,165,250,0.75),rgba(196,181,253,0.9),transparent)]" />
-          <div className="workflow-lock-edge absolute inset-x-0 bottom-0 h-px bg-[linear-gradient(90deg,transparent,rgba(125,211,252,0.8),rgba(165,180,252,0.92),transparent)]" style={{ animationDelay: "-1.6s" }} />
-          <div className="workflow-lock-aura absolute left-[14%] top-[18%] h-72 w-72 rounded-full bg-[radial-gradient(circle,rgba(99,102,241,0.26),transparent_68%)] blur-3xl" />
-          <div className="workflow-lock-aura absolute bottom-[14%] right-[12%] h-80 w-80 rounded-full bg-[radial-gradient(circle,rgba(168,85,247,0.18),transparent_70%)] blur-3xl" style={{ animationDelay: "-1.8s" }} />
-          <div className="workflow-lock-panel relative mx-6 w-full max-w-xl rounded-[28px] border border-white/70 bg-white/82 px-8 py-8 text-center shadow-[0_30px_80px_rgba(15,23,42,0.16)] backdrop-blur-xl">
-            <div className="mx-auto flex justify-center">
-              <ThinkingBubble label={"Tank 正在处理中，请稍等片刻"} />
-            </div>
-            <p className="mt-4 text-sm font-medium leading-7 text-slate-700">
-              {`共 ${workflowLockProgress.totalCount} 个模块，当前已处理 ${workflowLockProgress.currentCount}/${workflowLockProgress.totalCount} 个，预计还需 ${workflowLockProgress.remainingMinutes} 分钟。`}
-            </p>
-            <p className="mt-2 text-xs font-normal tracking-[0.08em] text-slate-500">
-              {`当前正在生成：${workflowLockProgress.stageLabel}`}
-            </p>
-          </div>
-        </div>
-      ) : null}
+      <section
+        className={clsx(
+          "mx-auto grid h-[calc(100vh-6.5rem)] max-w-[1760px] grid-cols-1 gap-5 overflow-hidden px-2 pb-3 transition-[opacity,transform] duration-200 md:grid-cols-[220px_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)_340px] xl:grid-cols-[260px_minmax(0,1fr)_380px]",
+          pageEntered ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
+        )}
+      >
+        <WorkspaceSidebar
+          confirmProcessing={confirmProcessing}
+          onSelect={setSelectedStageId}
+          selectedStageId={selectedStage.id}
+          stages={stageMeta}
+        />
 
-      <section className={clsx(
-        "mx-auto max-w-[1100px] space-y-6 px-6 pb-8 pt-6 transition-[opacity,transform] duration-200",
-        pageEntered ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
-      )}>
-      <div className="border-b border-slate-200 pb-4">
-        <div className="overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div
-            ref={stageRailRef}
-            className="stage-rail-track relative inline-flex min-w-max items-stretch rounded-[30px] border border-slate-200/80 bg-white/88 p-1.5 backdrop-blur-sm"
-          >
-            {stageIndicator.ready ? (
-              <div
-                className={clsx(
-                  "stage-rail-indicator pointer-events-none absolute rounded-full transition-[transform,width,height] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                  stageIndicatorMotion === "forward" && "stage-rail-indicator-forward",
-                  stageIndicatorMotion === "backward" && "stage-rail-indicator-backward"
-                )}
-                style={{
-                  width:
-                    stageIndicator.width +
-                    (stageIndicatorMotion === "forward" ? 28 : stageIndicatorMotion === "backward" ? 16 : 0),
-                  height: stageIndicator.height,
-                  transform: `translate(${stageIndicator.left - (stageIndicatorMotion === "backward" ? 16 : 0)}px, ${stageIndicator.top}px)`
-                }}
-              >
-                <div className="absolute inset-0 rounded-full bg-[#050918] shadow-[0_18px_34px_rgba(2,6,23,0.18),0_0_34px_rgba(15,23,42,0.16)]" />
-                <div className="absolute inset-y-1 -left-2 w-7 rounded-full bg-[radial-gradient(circle_at_right,rgba(15,23,42,0.18),transparent_72%)] blur-lg opacity-70" />
-                <div className="absolute inset-y-0 -right-5 w-14 rounded-full bg-[radial-gradient(circle_at_left,rgba(15,23,42,0.42),transparent_76%)] blur-xl opacity-85" />
+        <div className="relative min-h-0">
+          <main className="hidden-scrollbar h-full min-h-0 overflow-y-auto rounded-[28px] border border-slate-200 bg-white/78 p-5 shadow-[0_18px_55px_rgba(15,23,42,0.06)] md:p-7">
+            {error ? (
+              <div className="mb-5 rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-7 text-rose-700">
+                {error}
               </div>
             ) : null}
 
-            {stageMeta.map((stage, index) => {
-              const isHighlighted = highlightedStageId === stage.id;
-              const previousStageId = index > 0 ? stageMeta[index - 1]?.id : null;
-              const hideSeparator = previousStageId === highlightedStageId || stage.id === highlightedStageId;
-
-              return (
-                <button
-                  key={stage.id}
-                  ref={(node) => {
-                    stageButtonRefs.current[stage.id] = node;
-                  }}
-                  className={clsx(
-                    "relative z-10 inline-flex h-[46px] items-center rounded-[24px] px-5 text-[14px] font-medium whitespace-nowrap tracking-[0.01em] transition-[color,transform,filter] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus:ring-2 focus:ring-slate-200",
-                    isHighlighted
-                      ? "text-white [text-shadow:0_1px_10px_rgba(255,255,255,0.12)]"
-                      : stage.isCompleted
-                        ? "text-[#4d78ad] hover:text-slate-900"
-                        : "text-slate-600 hover:text-slate-900",
-                    confirmProcessing ? "cursor-default" : ""
-                  )}
-                  disabled={confirmProcessing}
-                  onClick={() => {
-                    if (!confirmProcessing) {
-                      setSelectedStageId(stage.id);
-                    }
-                  }}
-                  type="button"
-                >
-                  {index > 0 ? (
-                    <span
-                      aria-hidden="true"
-                      className={clsx(
-                        "pointer-events-none absolute left-0 top-1/2 h-[18px] w-px -translate-y-1/2 bg-[linear-gradient(180deg,rgba(226,232,240,0.02),rgba(203,213,225,0.9),rgba(226,232,240,0.02))] transition-opacity duration-300",
-                        hideSeparator ? "opacity-0" : "opacity-100"
-                      )}
-                    />
-                  ) : null}
-                  <span className={clsx("relative", isHighlighted && stageIndicatorMotion !== "idle" ? "blur-[0.2px]" : "")}>{`0${index + 1} ${stage.label}`}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      <div className="space-y-6">
-        {error ? (
-          <div className="rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-normal leading-7 text-rose-700">
-            {error}
-          </div>
-        ) : null}
-
-        {selectedStageMessages.length > 0 ? (
-          <div className="space-y-0">
-            <div className="space-y-6">
-              {selectedStageMessages.map((message, index) => (
-                <MessageCard
-                  key={message.id ?? `${message.messageType}-${message.createdAt ?? index}`}
-                  fullWidth
-                  message={message}
-                  topicConfirmAction={
-                    selectedStage.id === "topic" && message.messageType === "topic_confirm" && showTopicConfirmBar
-                      ? {
-                          hint: "如无问题，请确认主题；如需修改，请点击下方微调。",
-                          label: "确认主题",
-                          disabled: sending || confirmProcessing,
-                          locked: confirmProcessing,
-                          onConfirm: () => {
-                            void confirmTopic();
-                          },
-                          onRefineSubmit: async (value: string) => {
-                            await streamMessage(value);
-                          }
-                        }
-                      : null
-                  }
-                />
-              ))}
+            <div className="mb-6">
+              <p className="text-xs font-semibold tracking-[0.18em] text-slate-400">
+                {String(WORKFLOW_STAGES.findIndex((stage) => stage.id === selectedStage.id) + 1).padStart(2, "0")}
+              </p>
+              <h1 className="mt-2 text-[28px] font-semibold leading-tight text-slate-950">{selectedStage.label}</h1>
             </div>
-          </div>
-        ) : showStageLoadingState ? (
-          <WorkspaceStageLoadingCard
-            description={normalizeDisplayText("已收到确认，Tank 正在生成整套 Stata 工作流，并把结果分别写入上方各个模块。")}
+
+            {showStageLoadingState ? (
+              <WorkspaceStageLoadingCard description="" />
+            ) : (
+              <div className="space-y-3">
+                <AccordionPanel
+                  onToggle={() => toggleAccordion("goal")}
+                  open={selectedAccordionState.goal}
+                  title="本节目标"
+                >
+                  {selectedStageSections.goal}
+                </AccordionPanel>
+                <AccordionPanel
+                  onToggle={() => toggleAccordion("stataCode")}
+                  open={selectedAccordionState.stataCode}
+                  title="Stata 代码"
+                >
+                  {selectedStageSections.stataCode}
+                </AccordionPanel>
+                <AccordionPanel
+                  onToggle={() => toggleAccordion("codeExplanation")}
+                  open={selectedAccordionState.codeExplanation}
+                  title="代码解读"
+                >
+                  {selectedStageSections.codeExplanation}
+                </AccordionPanel>
+                <AccordionPanel
+                  onToggle={() => toggleAccordion("readingAdvice")}
+                  open={selectedAccordionState.readingAdvice}
+                  title="阅读建议"
+                >
+                  {selectedStageSections.readingAdvice}
+                </AccordionPanel>
+              </div>
+            )}
+          </main>
+
+          {assistantOpen ? (
+            <button
+              aria-label="关闭 AI 助手蒙版"
+              className="assistant-page-mask absolute inset-0 z-20 rounded-[28px]"
+              onClick={() => setAssistantOpen(false)}
+              type="button"
+            />
+          ) : null}
+        </div>
+
+        {assistantOpen ? (
+          <WorkspaceAssistantDrawer
+            attachment={attachment}
+            attachmentProcessing={attachmentProcessing}
+            composerError={composerError}
+            confirmProcessing={confirmProcessing}
+            input={input}
+            listening={listening}
+            messages={assistantMessages}
+            onAttachClick={() => fileInputRef.current?.click()}
+            onChange={setInput}
+            onMicClick={handleMicClick}
+            onPaste={handleComposerPaste}
+            onRemoveAttachment={() => setAttachment(null)}
+            onSend={sendAssistantMessage}
+            onStop={stopAssistantMessage}
+            sending={sending}
           />
         ) : (
-          <div className="rounded-[20px] border border-slate-200 bg-white p-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-            <p className="text-base font-semibold text-slate-950">
-              {selectedStageIsActive ? "这个环节还没有产出内容" : "这个环节暂时没有历史内容"}
-            </p>
-            <p className="mt-2 text-sm font-normal leading-7 text-slate-600">
-              {selectedStageIsActive
-                ? "Tank 进入这个环节后，会在这里显示结构化结果。"
-                : "点击其他流程块，可以继续回看已经完成的研究环节。"}
-            </p>
-          </div>
+          <WorkspaceRightPanel
+            dictionary={dataDictionary}
+            mappings={termMappings}
+            onOpenAssistant={() => setAssistantOpen(true)}
+            profile={detail?.researchProfile}
+          />
         )}
-      </div>
-
-      {showTopicConfirmBar ? null : (
-        <div className="surface-hover-lift rounded-[20px] border border-[#e5e7eb] bg-white p-6 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-
-        <p className="mb-3.5 text-sm font-normal leading-[1.6] text-slate-600">{helperText}</p>
-
-        {attachment ? (
-          <div className="mb-3 flex items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <div className="flex min-w-0 items-start gap-3">
-              <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.06)]">
-                <FileIcon />
-              </span>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-slate-900">{attachment.name}</p>
-                <p className="mt-1 text-xs font-normal text-slate-500">
-                  {formatAttachmentSize(attachment.size)}
-                  {attachment.source === "image"
-                    ? attachment.processed
-                      ? " \u00b7 \u56fe\u7247\u6587\u5b57\u5df2\u8bc6\u522b"
-                      : " \u00b7 \u53d1\u9001\u540e\u81ea\u52a8\u8bc6\u522b"
-                    : attachment.truncated
-                      ? " \u00b7 \u5185\u5bb9\u5df2\u622a\u65ad"
-                      : " \u00b7 \u5185\u5bb9\u5df2\u5b8c\u6210\u89e3\u6790"}
-                </p>
-              </div>
-            </div>
-            <button
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
-              onClick={() => setAttachment(null)}
-              type="button"
-            >
-              <CloseIcon />
-            </button>
-          </div>
-        ) : null}
-
-        <textarea
-          className="min-h-[120px] w-full resize-y rounded-[14px] border border-slate-200 bg-white px-4 py-3.5 text-sm font-normal leading-[1.7] text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-300 focus:ring-4 focus:ring-slate-200/60 disabled:cursor-not-allowed disabled:bg-slate-50"
-          disabled={sending || confirmProcessing || attachmentProcessing}
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={handleComposerKeyDown}
-          onPaste={handleComposerPaste}
-          placeholder={placeholderText}
-          value={input}
-        />
-
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <input
-              accept=".txt,.md,.csv,.json,.log,.yml,.yaml,.xml,.html,.htm,.js,.ts,.tsx,.jsx,.py,.r,.sql,.tex,.do,.pdf,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.bmp,.gif,text/*,image/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              className="hidden"
-              onChange={handleAttachmentPick}
-              ref={fileInputRef}
-              type="file"
-            />
-            <button
-              className="interactive-round inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={sending || confirmProcessing || attachmentProcessing}
-              onClick={() => fileInputRef.current?.click()}
-              type="button"
-            >
-              <PlusIcon />
-            </button>
-            <div className="min-w-0">
-              <p className="text-xs font-normal text-slate-400">{"Enter发送，Ctrl+Enter换行；可上传 Excel/CSV 数据字典或用语音补充字段含义"}</p>
-              {composerError ? (
-                <p className="mt-1 text-xs font-normal text-rose-500">{composerError}</p>
-              ) : attachmentProcessing ? (
-                <p className="mt-1 text-xs font-normal text-slate-500">{attachmentStatusText || "正在解析附件..."}</p>
-              ) : attachment ? (
-                <p className="mt-1 truncate text-xs font-normal text-slate-500">
-                  {attachment.source === "image"
-                    ? `已附加截图 ${attachment.name}`
-                    : `已附加 ${attachment.name}，发送后 Tank 会一起读取。`}
-                </p>
-              ) : listening ? (
-                <p className="mt-1 text-xs font-normal text-slate-500">{"正在监听语音输入，发送后会自动理解这段话对应的研究设定。"}</p>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              className={clsx(
-                "interactive-round inline-flex h-10 w-10 items-center justify-center rounded-full border text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-                listening
-                  ? "border-slate-900 bg-slate-900 text-white shadow-[0_8px_18px_rgba(15,23,42,0.18)]"
-                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
-              )}
-              disabled={sending || confirmProcessing || attachmentProcessing}
-              onClick={handleMicClick}
-              type="button"
-            >
-              <MicIcon />
-            </button>
-            <button
-              className={clsx(
-                "interactive-chip inline-flex h-10 items-center justify-center rounded-[10px] px-[18px] text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-60",
-                sending ? "bg-slate-950 hover:bg-slate-950" : "bg-slate-950 hover:bg-[#111827]"
-              )}
-              disabled={sending || confirmProcessing || attachmentProcessing || (!input.trim() && !attachment)}
-              onClick={() => void streamMessage(input, { attachment })}
-              type="button"
-            >
-              {sending ? <ThinkingBubble bare className="text-white" /> : "发送"}
-            </button>
-          </div>
-        </div>
-        </div>
-      )}
       </section>
+
+      <input
+        accept={SUPPORTED_ATTACHMENT_ACCEPT}
+        className="hidden"
+        onChange={handleAttachmentPick}
+        ref={fileInputRef}
+        type="file"
+      />
+
+      {/* 旧的确认主题居中蒙版和生成进度弹窗已移除；详情页只保留 AI Drawer 的正文蒙版。 */}
     </>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

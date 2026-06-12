@@ -11,6 +11,7 @@
     mechanism: { file: "skills/mechanism/template.md", version: "1.0.0" },
     heterogeneity: { file: "skills/heterogeneity/template.md", version: "1.0.0" },
     iv: { file: "skills/iv/template.md", version: "1.0.0" },
+    research_setup_interpreter: { file: "skills/research-setup-interpreter/template.md", version: "1.0.0" },
     workflow_input_interpreter: { file: "skills/workflow-input-interpreter/template.md", version: "1.0.0" },
     general_research_chat: { file: "skills/general-research-chat/template.md", version: "1.0.0" },
     result_interpret: { file: "skills/result-interpret/template.md", version: "1.0.0" },

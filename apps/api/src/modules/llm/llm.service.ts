@@ -145,7 +145,7 @@ function supportsThinkingControl(baseURL: string, model: string) {
     return false;
   }
 
-  return model.startsWith("Qwen/") || model.includes("GLM-5");
+  return model.startsWith("Qwen/");
 }
 
 @Injectable()

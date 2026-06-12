@@ -8,6 +8,7 @@ type ThinkingBubbleProps = {
   state?: ThinkingBubbleState;
   label?: string;
   bare?: boolean;
+  showBareLabel?: boolean;
   className?: string;
 };
 
@@ -21,6 +22,7 @@ export function ThinkingBubble({
   state = "thinking",
   label,
   bare = false,
+  showBareLabel = false,
   className
 }: ThinkingBubbleProps) {
   const resolvedLabel = label ?? STATE_LABELS[state];
@@ -32,7 +34,7 @@ export function ThinkingBubble({
         "inline-flex items-center gap-3 align-middle",
         isThinking ? "thinking-bubble-motion" : "",
         bare
-          ? "min-w-[15ch] justify-start text-inherit"
+          ? "justify-start text-inherit"
           : "min-w-[16.5rem] rounded-[18px] bg-[#111111] px-4 py-3 text-white shadow-[0_14px_32px_rgba(15,23,42,0.18)]",
         className
       )}
@@ -45,7 +47,11 @@ export function ThinkingBubble({
           state === "error" ? "bg-rose-400" : ""
         )}
       />
-      <span className="min-w-0 text-[15px] font-medium tracking-[0.01em]">{resolvedLabel}</span>
+      {bare && showBareLabel ? (
+        <span className="min-w-0 text-sm font-semibold tracking-[0.01em]">{resolvedLabel}</span>
+      ) : !bare ? (
+        <span className="min-w-0 text-[15px] font-medium tracking-[0.01em]">{resolvedLabel}</span>
+      ) : null}
       {isThinking ? (
         <span aria-hidden="true" className="inline-flex w-[1.8em] shrink-0 justify-start text-left">
           <span className="thinking-bubble-dot" style={{ animationDelay: "0s" }}>

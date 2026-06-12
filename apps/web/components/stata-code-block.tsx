@@ -28,6 +28,14 @@ function ClipboardIcon() {
   );
 }
 
+function CheckIcon() {
+  return (
+    <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
+      <path d="m3.5 8.2 2.7 2.7 6.3-6.3" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.6" />
+    </svg>
+  );
+}
+
 async function copyText(text: string) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -44,6 +52,82 @@ async function copyText(text: string) {
   textarea.select();
   document.execCommand("copy");
   document.body.removeChild(textarea);
+}
+
+const STATA_KEYWORDS = new Set([
+  "areg",
+  "bysort",
+  "collapse",
+  "drop",
+  "encode",
+  "esttab",
+  "eststo",
+  "foreach",
+  "gen",
+  "global",
+  "if",
+  "import",
+  "in",
+  "keep",
+  "local",
+  "merge",
+  "outreg2",
+  "reghdfe",
+  "reg",
+  "replace",
+  "sort",
+  "summarize",
+  "winsor2",
+  "xtreg"
+]);
+
+function renderHighlightedLine(line: string, lineIndex: number) {
+  const parts = line.split(/(\s+|\/\/.*$|"[^"]*"|'[^']*'|\b[0-9]+(?:\.[0-9]+)?\b|\b[a-zA-Z_][\w.]*\b)/g);
+
+  return (
+    <span key={`line-${lineIndex}`}>
+      {parts.map((part, index) => {
+        if (!part) {
+          return null;
+        }
+
+        if (/^\/\/.*$/.test(part) || /^\*/.test(part.trim())) {
+          return (
+            <span key={index} className="text-slate-500">
+              {part}
+            </span>
+          );
+        }
+
+        if (/^["'].*["']$/.test(part)) {
+          return (
+            <span key={index} className="text-emerald-200">
+              {part}
+            </span>
+          );
+        }
+
+        if (/^[0-9]+(?:\.[0-9]+)?$/.test(part)) {
+          return (
+            <span key={index} className="text-sky-200">
+              {part}
+            </span>
+          );
+        }
+
+        if (STATA_KEYWORDS.has(part.toLowerCase())) {
+          return (
+            <span key={index} className="font-semibold text-indigo-200">
+              {part}
+            </span>
+          );
+        }
+
+        return <span key={index}>{part}</span>;
+      })}
+      {"\n"}
+    </span>
+  );
 }
 
 export function StataCodeBlock({
@@ -65,28 +149,29 @@ export function StataCodeBlock({
   return (
     <div
       className={clsx(
-        "rounded-[14px] bg-slate-950 p-4 text-sm text-slate-100 shadow-[0_10px_30px_rgba(15,23,42,0.18)]",
+        "rounded-[16px] border border-slate-800 bg-slate-950 p-4 text-sm text-slate-100 shadow-[0_12px_34px_rgba(15,23,42,0.18)]",
         className
       )}
     >
       <div className="mb-3 flex items-start justify-between gap-3">
-        <p className="text-xs font-normal uppercase tracking-[0.18em] text-slate-400">{title}</p>
-        <div className="relative group/copy">
-          <button
-            aria-label={copied ? "\u5df2\u590d\u5236" : "\u4e00\u952e\u590d\u5236"}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/12 bg-white/8 text-xs font-medium text-white transition hover:bg-white/12 focus:outline-none focus:ring-2 focus:ring-white/20"
-            onClick={() => void copyText(code).then(() => setCopied(true))}
-            type="button"
-          >
-            <ClipboardIcon />
-            <span className="sr-only">{copied ? "\u5df2\u590d\u5236" : "\u4e00\u952e\u590d\u5236"}</span>
-          </button>
-          <div className="pointer-events-none absolute right-0 top-full z-10 mt-2 -translate-y-1 rounded-md bg-slate-900 px-2 py-1 text-[11px] font-medium text-white opacity-0 shadow-[0_8px_20px_rgba(15,23,42,0.28)] transition-all duration-200 group-hover/copy:translate-y-0 group-hover/copy:opacity-100">
-            {copied ? "\u5df2\u590d\u5236" : "\u4e00\u952e\u590d\u5236"}
-          </div>
-        </div>
+        <p className="text-xs font-medium tracking-[0.08em] text-slate-400">{title}</p>
+        <button
+          aria-label={copied ? "已复制" : "复制代码"}
+          className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/12 bg-white/8 px-3 text-xs font-medium text-white transition hover:bg-white/12 focus:outline-none focus:ring-2 focus:ring-white/20"
+          onClick={() =>
+            void copyText(code)
+              .then(() => setCopied(true))
+              .catch(() => setCopied(false))
+          }
+          type="button"
+        >
+          {copied ? <CheckIcon /> : <ClipboardIcon />}
+          <span>{copied ? "已复制" : "复制代码"}</span>
+        </button>
       </div>
-      <pre className="overflow-x-auto whitespace-pre-wrap leading-7">{code}</pre>
+      <pre className="hidden-scrollbar max-h-[360px] overflow-auto whitespace-pre-wrap font-mono text-[13px] leading-6 text-slate-100">
+        <code>{code.split("\n").map(renderHighlightedLine)}</code>
+      </pre>
     </div>
   );
 }

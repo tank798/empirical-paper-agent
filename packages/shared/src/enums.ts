@@ -70,6 +70,7 @@ export const SkillName = {
   MECHANISM: "mechanism",
   HETEROGENEITY: "heterogeneity",
   IV: "iv",
+  RESEARCH_SETUP_INTERPRETER: "research_setup_interpreter",
   WORKFLOW_INPUT_INTERPRETER: "workflow_input_interpreter",
   GENERAL_RESEARCH_CHAT: "general_research_chat",
   RESULT_INTERPRET: "result_interpret",

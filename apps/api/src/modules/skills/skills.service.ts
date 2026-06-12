@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable } from "@nestjs/common";
 import { RegressionSkillNames, SkillName, WorkflowStep, type ResearchProfile } from "@empirical/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { PromptService } from "../prompt/prompt.service";
 import { LlmService, type LlmFunctionTool, type LlmProfileName, type LlmToolCall } from "../llm/llm.service";
 import { ExportStateService } from "../export-state/export-state.service";
+import { HarnessService } from "../harness/harness.service";
 import { ResearchProfileService } from "../research-profile/research-profile.service";
 import { MessagesService } from "../messages/messages.service";
 import { ProjectsService } from "../projects/projects.service";
@@ -262,7 +263,8 @@ export class SkillsService {
     private readonly exportStateService: ExportStateService,
     private readonly researchProfileService: ResearchProfileService,
     private readonly messagesService: MessagesService,
-    private readonly projectsService: ProjectsService
+    private readonly projectsService: ProjectsService,
+    private readonly harnessService: HarnessService
   ) {}
 
   async executeSkill(params: {
@@ -270,12 +272,33 @@ export class SkillsService {
     skillName: SkillName;
     step: WorkflowStep;
     payload?: Record<string, unknown>;
+    agentRunId?: string | null;
   }): Promise<SkillRunResult<any>> {
     const definition = skillRegistry[params.skillName];
     if (!definition) {
       throw new BadRequestException(`Unknown skill: ${params.skillName}`);
     }
 
+    const startedAt = Date.now();
+    const permission = this.harnessService.authorizeTool(params.skillName, params.payload ?? {});
+    if (permission.decision !== "allow") {
+      await this.harnessService.recordToolResult({
+        projectId: params.projectId,
+        runId: params.agentRunId ?? null,
+        toolUseId: null,
+        toolName: params.skillName,
+        step: params.step,
+        status: permission.decision === "approve" ? "needs_approval" : "denied",
+        permissionDecision: permission.decision,
+        inputJson: (params.payload ?? {}) as Record<string, unknown>,
+        errorJson: {
+          type: "permission",
+          message: permission.reason
+        },
+        durationMs: Date.now() - startedAt
+      });
+      throw new ForbiddenException(permission.reason);
+    }
     const executionProfile = skillExecutionProfiles[params.skillName];
     const projectRecord = await this.prisma.project.findUniqueOrThrow({ where: { id: params.projectId } });
     const profile = await this.researchProfileService.getByProjectId(params.projectId);
@@ -300,7 +323,10 @@ export class SkillsService {
       input,
       executionProfile.includeResearchProfileInPrompt ? profile : null,
       executionProfile.promptMessageLimit > 0
-        ? this.compactMessages(recentMessages.slice(-executionProfile.promptMessageLimit))
+        ? this.harnessService.buildSkillContext({
+            recentMessages: recentMessages.slice(-executionProfile.promptMessageLimit),
+            messageBudget: 280
+          })
         : []
     );
     const userPrompt = this.promptService.renderPrompt(prompt.template, promptPayload);
@@ -309,7 +335,8 @@ export class SkillsService {
     let fallbackUsed = false;
     let error: { type: string; message: string } | null = null;
     let resolvedModel = this.llmService.modelName;
-    const shouldUseDeterministicFallback = params.skillName === SkillName.TOPIC_DETECT;
+    const shouldUseDeterministicFallback =
+      params.skillName === SkillName.TOPIC_DETECT || params.skillName === SkillName.SOP_GUIDE;
 
     if (shouldUseDeterministicFallback) {
       fallbackUsed = true;
@@ -384,6 +411,20 @@ export class SkillsService {
         filePath: output.export.filePath
       });
     }
+
+    await this.harnessService.recordToolResult({
+      projectId: params.projectId,
+      runId: params.agentRunId ?? null,
+      toolUseId: run.id,
+      toolName: params.skillName,
+      step: params.step,
+      status: fallbackUsed ? "fallback" : "success",
+      permissionDecision: permission.decision,
+      inputJson: input as Record<string, unknown>,
+      outputJson: output as Record<string, unknown>,
+      errorJson: error,
+      durationMs: Date.now() - startedAt
+    });
 
     return {
       success: true,
@@ -644,6 +685,27 @@ export class SkillsService {
     return error instanceof Error ? error.message : String(error);
   }
 
+  private resolveResearchTopic(
+    profile: ResearchProfile | null,
+    project: { topicRaw: string; topicNormalized: string | null }
+  ) {
+    const topic = profile?.normalizedTopic || project.topicNormalized || project.topicRaw || "";
+    const trimmed = topic.trim();
+    if (!trimmed) {
+      return "";
+    }
+
+    if (/^(hi|hello|hey|ok|okay|yes|no|你好|您好|在吗|哈喽|嗨)$/i.test(trimmed)) {
+      return "";
+    }
+
+    if (trimmed.length <= 4 && !/(研究|影响|效应|关系|变量|样本|回归)/.test(trimmed)) {
+      return "";
+    }
+
+    return trimmed;
+  }
+
   private async prepareInput(
     skillName: SkillName,
     payload: Record<string, unknown>,
@@ -742,7 +804,21 @@ export class SkillsService {
         userMessage: payload.userMessage ?? "",
         currentStep: payload.currentStep ?? project.currentStep,
         currentModule: payload.currentModule ?? project.currentStep,
-        topic: profile?.normalizedTopic ?? project.topicNormalized ?? project.topicRaw,
+        topic: this.resolveResearchTopic(profile, project),
+        recentAssistantMessages: recentMessages
+          .filter((message) => message.role !== "user")
+          .map((message) => message.contentText ?? JSON.stringify(message.contentJson ?? {}))
+          .filter(Boolean)
+          .slice(-4)
+      };
+    }
+
+    if (skillName === SkillName.RESEARCH_SETUP_INTERPRETER) {
+      return {
+        userMessage: payload.userMessage ?? "",
+        currentStep: payload.currentStep ?? project.currentStep,
+        currentModule: payload.currentModule ?? project.currentStep,
+        topic: this.resolveResearchTopic(profile, project),
         recentAssistantMessages: recentMessages
           .filter((message) => message.role !== "user")
           .map((message) => message.contentText ?? JSON.stringify(message.contentJson ?? {}))
@@ -755,7 +831,7 @@ export class SkillsService {
       return {
         userQuestion: payload.userQuestion ?? payload.userMessage ?? "",
         currentModule: payload.currentModule ?? project.currentStep,
-        topic: profile?.normalizedTopic ?? project.topicNormalized ?? project.topicRaw
+        topic: this.resolveResearchTopic(profile, project)
       };
     }
 
@@ -763,7 +839,7 @@ export class SkillsService {
       return {
         resultText: payload.resultText ?? payload.userMessage ?? "",
         currentModule: payload.currentModule ?? project.currentStep,
-        topic: profile?.normalizedTopic ?? project.topicNormalized ?? project.topicRaw
+        topic: this.resolveResearchTopic(profile, project)
       };
     }
 

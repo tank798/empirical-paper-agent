@@ -10,6 +10,7 @@ import { LlmModule } from "./modules/llm/llm.module";
 import { SkillsModule } from "./modules/skills/skills.module";
 import { WorkflowModule } from "./modules/workflow/workflow.module";
 import { ExportsModule } from "./modules/exports/exports.module";
+import { HarnessModule } from "./modules/harness/harness.module";
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { ExportsModule } from "./modules/exports/exports.module";
     ExportStateModule,
     PromptModule,
     LlmModule,
+    HarnessModule,
     SkillsModule,
     WorkflowModule,
     ExportsModule

@@ -23,6 +23,10 @@ model Project {
   messages        Message[]
   researchProfile ResearchProfile?
   skillRuns       SkillRun[]
+  agentRuns       AgentRun[]
+  agentEvents     AgentEvent[]
+  agentToolResults AgentToolResult[]
+  agentArtifacts  AgentArtifact[]
   codeBlocks      CodeBlock[]
   exportState     ProjectExportState?
   exports         Export[]
@@ -106,6 +110,96 @@ model SkillRun {
   project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@map("skill_runs")
+}
+
+model AgentRun {
+  id               String            @id @default(uuid())
+  projectId         String            @map("project_id")
+  kind             String
+  status           String
+  requestedStep    String?           @map("requested_step")
+  currentStep      String?           @map("current_step")
+  phase            String?
+  userMessagePreview String?         @map("user_message_preview")
+  progressPercent  Int               @default(0) @map("progress_percent")
+  currentCount     Int               @default(0) @map("current_count")
+  totalCount       Int               @default(0) @map("total_count")
+  stageLabel       String?           @map("stage_label")
+  inputJson        Json              @default("{}") @map("input_json")
+  outputJson       Json?             @map("output_json")
+  errorJson        Json?             @map("error_json")
+  startedAt        DateTime?         @map("started_at")
+  completedAt      DateTime?         @map("completed_at")
+  lastHeartbeatAt  DateTime?         @map("last_heartbeat_at")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  project          Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  events           AgentEvent[]
+  toolResults      AgentToolResult[]
+  artifacts        AgentArtifact[]
+
+  @@index([projectId, createdAt])
+  @@map("agent_runs")
+}
+
+model AgentEvent {
+  id          String    @id @default(uuid())
+  projectId   String    @map("project_id")
+  runId       String?   @map("run_id")
+  type        String
+  phase       String?
+  message     String?
+  progressJson Json?    @map("progress_json")
+  metadataJson Json     @default("{}") @map("metadata_json")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  run         AgentRun? @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@index([runId, createdAt])
+  @@map("agent_events")
+}
+
+model AgentToolResult {
+  id                 String    @id @default(uuid())
+  projectId           String    @map("project_id")
+  runId              String?   @map("run_id")
+  toolUseId          String?   @map("tool_use_id")
+  toolName           String    @map("tool_name")
+  step               String?
+  status             String
+  permissionDecision String    @map("permission_decision")
+  inputJson          Json      @default("{}") @map("input_json")
+  outputJson         Json?     @map("output_json")
+  errorJson          Json?     @map("error_json")
+  durationMs         Int?      @map("duration_ms")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  project            Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  run                AgentRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, createdAt])
+  @@index([runId, createdAt])
+  @@map("agent_tool_results")
+}
+
+model AgentArtifact {
+  id             String    @id @default(uuid())
+  projectId      String    @map("project_id")
+  runId          String?   @map("run_id")
+  kind           String
+  name           String
+  mimeType       String?   @map("mime_type")
+  sizeBytes      Int?      @map("size_bytes")
+  contentPreview String    @default("") @map("content_preview")
+  contentText    String?   @map("content_text")
+  metadataJson   Json      @default("{}") @map("metadata_json")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  run            AgentRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, createdAt])
+  @@index([runId, createdAt])
+  @@map("agent_artifacts")
 }
 
 model CodeBlock {

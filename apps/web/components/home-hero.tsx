@@ -1,22 +1,42 @@
 "use client";
 
+import clsx from "clsx";
 import { startTransition, type ChangeEvent, type ClipboardEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { type AssistantMessageEnvelope, type ProjectDetail } from "@empirical/shared";
+import { WorkflowStep, type AssistantMessageEnvelope, type ProjectDetail } from "@empirical/shared";
 import {
   SUPPORTED_ATTACHMENT_ACCEPT,
   buildComposerSubmission,
   buildPendingImageAttachment,
-  formatAttachmentSize,
   readComposerAttachment,
   readImageAttachment,
   type ComposerAttachment
 } from "../lib/attachments";
 import { apiRequest, streamApiRequest } from "../lib/api";
 import { ensureNamedImageFile } from "../lib/image-ocr";
-import { appendCommittedSpeech, buildSpeechText, finalizeSpeechText } from "../lib/speech";
+import { appendCommittedSpeech, buildSpeechText, finalizeSpeechText, inferSpeechRecognitionLanguage } from "../lib/speech";
 import { saveStoredProject, setPendingProjectBootstrap } from "../lib/storage";
-import { ThinkingBubble } from "./thinking-bubble";
+import { ChatComposer } from "./chat-composer";
+import { ResearchSetupPanel } from "./research-setup-panel";
+import { TypingDots } from "./typing-dots";
+
+type HomeSetupSession = {
+  projectId: string;
+  token: string;
+  title: string;
+  topic: string;
+  detail: ProjectDetail;
+  messages: AssistantMessageEnvelope[];
+};
+
+type LocalChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  status?: "loading" | "streaming" | "done" | "error" | "stopped";
+  messageType?: AssistantMessageEnvelope["messageType"];
+  contentJson?: Record<string, unknown>;
+};
 
 type SpeechRecognitionAlternativeLike = {
   transcript: string;
@@ -37,6 +57,7 @@ type SpeechRecognitionLike = {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
+  maxAlternatives?: number;
   onend: (() => void) | null;
   onerror: ((event: { error?: string }) => void) | null;
   onresult: ((event: SpeechRecognitionEventLike) => void) | null;
@@ -65,11 +86,11 @@ function MicIcon() {
   );
 }
 
-function UploadIcon() {
+function PlusIcon() {
   return (
     <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
       <path
-        d="M8 11.333V3.667M4.667 7 8 3.667 11.333 7M3.333 12.333h9.334"
+        d="M8 3.333v9.334M3.333 8h9.334"
         stroke="currentColor"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -92,6 +113,138 @@ function CloseIcon() {
   );
 }
 
+function StopIcon() {
+  return <span aria-hidden="true" className="h-3 w-3 rounded-[3px] bg-slate-950" />;
+}
+
+const SETUP_STEPS = new Set<string>([WorkflowStep.TOPIC_DETECT, WorkflowStep.TOPIC_NORMALIZE]);
+
+function isSetupAssistantMessage(message: AssistantMessageEnvelope) {
+  return (
+    message.role !== "user" &&
+    SETUP_STEPS.has(String(message.step ?? "")) &&
+    (message.messageType === "topic_confirm" || message.messageType === "system_notice")
+  );
+}
+
+function hasGeneratedWorkflowMessages(messages: AssistantMessageEnvelope[]) {
+  return messages.some((message) => message.role !== "user" && !SETUP_STEPS.has(String(message.step ?? "")));
+}
+
+const GENERATION_PROGRESS_GROUPS: WorkflowStep[][] = [
+  [WorkflowStep.TOPIC_NORMALIZE],
+  [WorkflowStep.SOP_GUIDE, WorkflowStep.DATA_CLEANING, WorkflowStep.DATA_CHECK],
+  [WorkflowStep.BASELINE_REGRESSION],
+  [WorkflowStep.ROBUSTNESS],
+  [WorkflowStep.IV],
+  [WorkflowStep.MECHANISM],
+  [WorkflowStep.HETEROGENEITY]
+];
+
+function computeFinalGenerationProgress(detail: ProjectDetail) {
+  const statusByStep = new Map(detail.steps.map((step) => [step.step, step.status]));
+  const completedCount = GENERATION_PROGRESS_GROUPS.filter((group) => {
+    const statuses = group.map((step) => statusByStep.get(step)).filter(Boolean);
+    const hasBlockedStep = statuses.some((status) => status === "BLOCKED");
+
+    if (hasBlockedStep) {
+      return false;
+    }
+
+    if (group.includes(WorkflowStep.SOP_GUIDE)) {
+      return statuses.some((status) => status === "COMPLETED");
+    }
+
+    return statuses.length === group.length && statuses.every((status) => status === "COMPLETED");
+  }).length;
+
+  return Math.round((completedCount / GENERATION_PROGRESS_GROUPS.length) * 100);
+}
+
+function hasSetupConversationMessages(messages: AssistantMessageEnvelope[]) {
+  return messages.some(
+    (message) =>
+      message.role !== "user" &&
+      SETUP_STEPS.has(String(message.step ?? "")) &&
+      (message.messageType === "topic_confirm" || message.messageType === "system_notice" || message.messageType === "research_chat")
+  );
+}
+
+function getLatestSetupMessage(messages: AssistantMessageEnvelope[]) {
+  return [...messages].reverse().find(isSetupAssistantMessage) ?? null;
+}
+
+function compactUserMessage(value?: string | null) {
+  const text = value?.trim() ?? "";
+  if (!text) {
+    return "";
+  }
+
+  const [head] = text.split("\n\n[附件内容]");
+  return (head || text).trim();
+}
+
+function assistantMessageText(message: AssistantMessageEnvelope) {
+  const json = (message.contentJson ?? {}) as Record<string, unknown>;
+
+  if (message.messageType === "topic_confirm") {
+    return (
+      message.contentText ||
+      (typeof json.assistantMessage === "string" ? json.assistantMessage : "") ||
+      "我已整理出完整研究设定，请确认以下内容是否正确。"
+    );
+  }
+
+  const guidanceOptions = Array.isArray(json.guidanceOptions)
+    ? json.guidanceOptions.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+  const body =
+    message.contentText ||
+    (typeof json.message === "string" ? json.message : "") ||
+    (typeof json.answer === "string" ? json.answer : "");
+
+  return [body, guidanceOptions.length > 0 ? guidanceOptions.map((item) => `- ${item}`).join("\n") : ""]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function buildPersistedChatMessages(messages: AssistantMessageEnvelope[]) {
+  return messages
+    .filter((message) => SETUP_STEPS.has(String(message.step ?? "")))
+    .map<LocalChatMessage | null>((message, index) => {
+      if (message.role === "user") {
+        const text = compactUserMessage(message.contentText);
+        return text
+          ? {
+              id: message.id ?? `user-${index}`,
+              role: "user",
+              text
+            }
+          : null;
+      }
+
+      const text = assistantMessageText(message);
+      return text
+        ? {
+            id: message.id ?? `assistant-${index}`,
+            role: "assistant",
+            text,
+            messageType: message.messageType,
+            contentJson: (message.contentJson ?? {}) as Record<string, unknown>
+          }
+        : null;
+    })
+    .filter((message): message is LocalChatMessage => Boolean(message));
+}
+
+function shouldStayOnHome(detail: ProjectDetail, messages: AssistantMessageEnvelope[]) {
+  return (
+    SETUP_STEPS.has(detail.project.currentStep) &&
+    hasSetupConversationMessages(messages) &&
+    !hasGeneratedWorkflowMessages(messages)
+  );
+}
+
 async function fetchHydratedProjectSnapshot(projectId: string, token: string) {
   let lastDetail: ProjectDetail | null = null;
   let lastMessages: AssistantMessageEnvelope[] = [];
@@ -105,11 +258,7 @@ async function fetchHydratedProjectSnapshot(projectId: string, token: string) {
     lastDetail = detail;
     lastMessages = messages;
 
-    const hasRenderableSetup = messages.some(
-      (message) =>
-        message.role !== "user" &&
-        (message.messageType === "topic_confirm" || message.messageType === "system_notice")
-    );
+    const hasRenderableSetup = hasSetupConversationMessages(messages) || hasGeneratedWorkflowMessages(messages);
 
     if (hasRenderableSetup) {
       return { detail, messages };
@@ -124,40 +273,212 @@ async function fetchHydratedProjectSnapshot(projectId: string, token: string) {
   };
 }
 
+function displaySetupValue(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean).join("、");
+  }
+
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function getSetupCardRows(contentJson: Record<string, unknown> | undefined): Array<[string, string]> {
+  const json = contentJson ?? {};
+  const rows: Array<[string, unknown]> = [
+    ["研究主题", json.normalizedTopic],
+    ["解释变量", json.independentVariable],
+    ["被解释变量", json.dependentVariable],
+    ["研究对象", json.researchObject],
+    ["样本区间", json.sampleScope],
+    ["控制变量", json.controls],
+    ["固定效应", json.fixedEffects],
+    ["聚类变量", json.clusterVar]
+  ];
+
+  return rows
+    .map(([label, value]): [string, string] => [label, displaySetupValue(value)])
+    .filter(([, value]) => value);
+}
+
+function SetupConfirmationCard({
+  contentJson,
+  secondsRemaining,
+  autoStartCancelled,
+  disabled,
+  onEdit,
+  onCancel,
+  onStart
+}: {
+  contentJson?: Record<string, unknown>;
+  secondsRemaining: number;
+  autoStartCancelled: boolean;
+  disabled: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onStart: () => void;
+}) {
+  const rows = getSetupCardRows(contentJson);
+
+  return (
+    <div className="setup-confirm-card mt-4 w-full max-w-[640px] rounded-[16px] border border-[#E5EAF2] bg-white p-6 shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
+      <h2 className="text-lg font-semibold text-slate-950">研究设定</h2>
+      <div className="mt-5 divide-y divide-slate-100">
+        {rows.map(([label, value]) => (
+          <div className="grid gap-1 py-3 first:pt-0 last:pb-0 sm:grid-cols-[120px_minmax(0,1fr)] sm:gap-4" key={label}>
+            <p className="text-[13px] font-semibold leading-6 text-[#64748B]">{label}</p>
+            <p className="break-words text-sm font-medium leading-6 text-[#111827]">{value}</p>
+          </div>
+        ))}
+      </div>
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-[13px] leading-5 text-[#64748B]">
+          {autoStartCancelled ? "已取消自动开始" : `${secondsRemaining}s 后自动开始`}
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            className="inline-flex h-9 items-center rounded-[10px] border border-[#D8DEE9] bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={disabled}
+            onClick={onEdit}
+            type="button"
+          >
+            编辑
+          </button>
+          <button
+            className="inline-flex h-9 items-center rounded-[10px] border border-[#D8DEE9] bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={disabled}
+            onClick={onCancel}
+            type="button"
+          >
+            取消
+          </button>
+          <button
+            className="inline-flex h-9 items-center rounded-[10px] bg-[#0F172A] px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={disabled}
+            onClick={onStart}
+            type="button"
+          >
+            开始
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GenerationStatusMessage({ progress }: { progress: number }) {
+  return (
+    <div className="flex justify-start">
+      <div className="w-full max-w-[640px] text-[#111827]">
+        <p className="mb-1 text-xs font-semibold text-slate-400">Tank</p>
+        <div className="flex items-center justify-between gap-5 text-[15px] leading-7">
+          <span className="inline-flex items-center gap-1">
+            正在生成中
+            <span className="thinking-bubble-dot">.</span>
+            <span className="thinking-bubble-dot" style={{ animationDelay: "0.18s" }}>
+              .
+            </span>
+            <span className="thinking-bubble-dot" style={{ animationDelay: "0.36s" }}>
+              .
+            </span>
+          </span>
+          <span className="text-[13px] font-medium text-[#64748B]">{progress}%</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function HomeHero() {
   const router = useRouter();
   const [topic, setTopic] = useState("");
-  const [focused, setFocused] = useState(false);
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
   const [attachmentProcessing, setAttachmentProcessing] = useState(false);
   const [attachment, setAttachment] = useState<ComposerAttachment | null>(null);
-  const [statusText, setStatusText] = useState("");
   const [error, setError] = useState("");
   const [handoffReady, setHandoffReady] = useState(false);
+  const [setupSession, setSetupSession] = useState<HomeSetupSession | null>(null);
+  const [localChatMessages, setLocalChatMessages] = useState<LocalChatMessage[]>([]);
+  const [setupEditMode, setSetupEditMode] = useState(false);
+  const [researchConfirmCardVisible, setResearchConfirmCardVisible] = useState(true);
+  const [autoStartRemaining, setAutoStartRemaining] = useState(5);
+  const [autoStartCancelled, setAutoStartCancelled] = useState(false);
+  const [generationInProgress, setGenerationInProgress] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
+  const setupScrollRef = useRef<HTMLDivElement | null>(null);
+  const setupBottomRef = useRef<HTMLDivElement | null>(null);
+  const setupStickToBottomRef = useRef(true);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const speechBaseTextRef = useRef("");
   const speechCommittedTextRef = useRef("");
   const speechInterimTextRef = useRef("");
   const keepListeningRef = useRef(false);
+  const setupAssistantPlaceholderIdRef = useRef<string | null>(null);
 
-  const showGhostText = !focused && !topic.trim() && !attachment;
+  const latestSetupMessage = setupSession ? getLatestSetupMessage(setupSession.messages) : null;
+  const latestSetupMessageId = latestSetupMessage?.id ?? "";
+  const researchSettingComplete = latestSetupMessage?.messageType === "topic_confirm";
+  const showResearchConfirmCard = Boolean(
+    researchSettingComplete &&
+      researchConfirmCardVisible &&
+      !setupEditMode &&
+      !generationInProgress
+  );
+  // 研究设定完成后关闭右侧卡片，让聊天区通过 setup-chat-grid 自动拉宽。
+  const showRightSetupPanel = !researchSettingComplete || setupEditMode;
+  const setupChatWide = Boolean(researchSettingComplete && !setupEditMode);
+  const setupChatMessages = setupSession
+    ? [...buildPersistedChatMessages(setupSession.messages), ...localChatMessages]
+    : localChatMessages;
+  const setupChatActive = Boolean(setupSession || localChatMessages.length > 0);
 
   useEffect(() => {
     return () => {
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
       keepListeningRef.current = false;
       recognitionRef.current?.stop();
       recognitionRef.current = null;
     };
   }, []);
 
+  useEffect(() => {
+    if (!setupChatActive || !setupStickToBottomRef.current) {
+      return;
+    }
+
+    setupBottomRef.current?.scrollIntoView({ block: "end" });
+  }, [generationInProgress, generationProgress, loading, setupChatActive, setupChatMessages]);
+
+  useEffect(() => {
+    if (!researchSettingComplete || !latestSetupMessageId) {
+      return;
+    }
+
+    setSetupEditMode(false);
+    setResearchConfirmCardVisible(true);
+    setAutoStartRemaining(5);
+    setAutoStartCancelled(false);
+    setGenerationInProgress(false);
+    setGenerationProgress(0);
+  }, [latestSetupMessageId, researchSettingComplete]);
+
+  const handleSetupScroll = () => {
+    const element = setupScrollRef.current;
+    if (!element) {
+      return;
+    }
+
+    setupStickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
+  };
+
   const processAttachment = async (file: File) => {
     const normalizedFile = ensureNamedImageFile(file);
 
     if (normalizedFile.type.startsWith("image/")) {
       setError("");
-      setStatusText("");
       setAttachment(buildPendingImageAttachment(normalizedFile));
       return;
     }
@@ -166,9 +487,8 @@ export function HomeHero() {
       setError("");
       setAttachment(null);
       setAttachmentProcessing(true);
-      setStatusText("正在解析附件...");
       const nextAttachment = await readComposerAttachment(normalizedFile, {
-        onStatus: (status) => setStatusText(status)
+        onStatus: () => {}
       });
       setAttachment(nextAttachment);
     } catch (attachmentError) {
@@ -176,7 +496,6 @@ export function HomeHero() {
       setError(attachmentError instanceof Error ? attachmentError.message : "文件读取失败，请稍后重试。");
     } finally {
       setAttachmentProcessing(false);
-      setStatusText("");
     }
   };
 
@@ -199,90 +518,342 @@ export function HomeHero() {
     try {
       setError("");
       setAttachmentProcessing(true);
-      setStatusText("正在识别截图文字...");
-      const resolved = await readImageAttachment(nextAttachment.file, (status) => setStatusText(status));
-      setAttachment(resolved);
-      return resolved;
+      return await readImageAttachment(nextAttachment.file, () => {});
     } finally {
       setAttachmentProcessing(false);
-      setStatusText("");
     }
   };
 
-  const createProject = async () => {
-    const nextTopic = topic.trim();
-    if ((!nextTopic && !attachment) || attachmentProcessing) {
+  const isAbortError = (value: unknown) => value instanceof DOMException && value.name === "AbortError";
+
+  const stopCurrentRequest = () => {
+    // GPT 风格停止按钮直接中止当前 fetch/SSE 请求，finally 中会恢复为发送箭头。
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    const placeholderId = setupAssistantPlaceholderIdRef.current;
+    if (placeholderId) {
+      setLocalChatMessages((current) =>
+        current.flatMap((message) => {
+          if (message.id !== placeholderId) {
+            return [message];
+          }
+
+          return message.text.trim() ? [{ ...message, status: "stopped" as const }] : [];
+        })
+      );
+      setupAssistantPlaceholderIdRef.current = null;
+    }
+    setLoading(false);
+    setGenerationInProgress(false);
+  };
+
+  const updateSetupAssistantPlaceholder = (
+    assistantMessageId: string | null,
+    patch: Partial<Pick<LocalChatMessage, "text" | "status">>
+  ) => {
+    if (!assistantMessageId) {
       return;
     }
 
-    try {
-      setLoading(true);
-      setError("");
-      setHandoffReady(false);
+    setLocalChatMessages((current) =>
+      current.map((message) =>
+        message.id === assistantMessageId
+          ? {
+              ...message,
+              ...patch
+            }
+          : message
+      )
+    );
+  };
 
-      const resolvedAttachment = await resolveAttachmentForSubmission(attachment);
-      const submission = buildComposerSubmission(nextTopic, resolvedAttachment);
-      const submittedTopic = submission.userMessage.trim();
-      const projectTopic = nextTopic || (resolvedAttachment ? `识别数据文件 ${resolvedAttachment.name}` : submittedTopic);
+  const finishAndOpenProject = (
+    projectId: string,
+    token: string,
+    title: string,
+    submittedTopic: string,
+    detail: ProjectDetail,
+    messages: AssistantMessageEnvelope[]
+  ) => {
+    setPendingProjectBootstrap({
+      projectId,
+      topic: submittedTopic,
+      createdAt: Date.now(),
+      detail,
+      messages
+    });
 
-      if (!submittedTopic) {
-        throw new Error("附件中没有识别到可用文字，请换一个更清晰的文件再试。");
-      }
-
-      const data = await apiRequest<{ project: { id: string; title: string }; resumeToken: string }>("/projects", {
-        method: "POST",
-        body: JSON.stringify({ topicRaw: projectTopic })
+    saveStoredProject({ id: projectId, token, title });
+    setAttachment(null);
+    setSetupSession(null);
+    setLocalChatMessages([]);
+    setupAssistantPlaceholderIdRef.current = null;
+    setHandoffReady(true);
+    window.setTimeout(() => {
+      startTransition(() => {
+        router.push(`/projects/${projectId}`);
       });
+    }, 180);
+  };
 
-      saveStoredProject({ id: data.project.id, token: data.resumeToken, title: data.project.title });
-      router.prefetch(`/projects/${data.project.id}`);
+  // 新生成流程留在首页聊天流中，替代旧的详情页全屏蒙版进度条。
+  const startSetupGeneration = async () => {
+    if (!setupSession || generationInProgress) {
+      return;
+    }
 
-      await streamApiRequest(`/projects/${data.project.id}/workflow/stream`, {
-        token: data.resumeToken,
+    setAutoStartCancelled(true);
+    setResearchConfirmCardVisible(false);
+    setSetupEditMode(false);
+    setGenerationInProgress(true);
+    setGenerationProgress(0);
+    setLoading(true);
+    setError("");
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      await streamApiRequest(`/projects/${setupSession.projectId}/workflow/stream`, {
+        token: setupSession.token,
+        signal: controller.signal,
         body: {
-          userMessage: submittedTopic,
-          payload: submission.payload
+          userMessage: "确认并生成",
+          requestedStep: WorkflowStep.TOPIC_NORMALIZE,
+          payload: {}
         },
         onEvent: (event) => {
+          if (event.type === "progress") {
+            const total = Math.max(1, event.progress.totalCount);
+            // 百分比绑定后端真实 completedCount / totalCount；失败或重试模块不会被前端假算完成。
+            const percent = Math.round((event.progress.currentCount / total) * 100);
+            setGenerationProgress(Math.min(100, Math.max(0, percent)));
+            return;
+          }
+
           if (event.type === "error") {
             throw new Error(event.message);
           }
         }
       });
 
-      const { detail, messages } = await fetchHydratedProjectSnapshot(data.project.id, data.resumeToken);
+      const { detail, messages } = await fetchHydratedProjectSnapshot(setupSession.projectId, setupSession.token);
+      const finalProgress = computeFinalGenerationProgress(detail);
+      setGenerationProgress(finalProgress);
 
-      setPendingProjectBootstrap({
-        projectId: data.project.id,
+      if (finalProgress < 100) {
+        throw new Error("部分模块生成失败，未达到 100%，请稍后在对应模块中重新生成。");
+      }
+
+      // 只有项目步骤状态确认 100% 后才把完整快照交给详情页，避免详情页出现旧生成蒙版。
+      window.setTimeout(() => {
+        finishAndOpenProject(setupSession.projectId, setupSession.token, setupSession.title, "确认并生成", detail, messages);
+      }, 220);
+    } catch (requestError) {
+      if (!isAbortError(requestError)) {
+        setError(requestError instanceof Error ? requestError.message : "生成失败，请稍后重试。");
+      }
+      setGenerationInProgress(false);
+      setResearchConfirmCardVisible(true);
+      setLoading(false);
+    } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!showResearchConfirmCard || autoStartCancelled || generationInProgress || loading) {
+      return;
+    }
+
+    if (autoStartRemaining <= 0) {
+      void startSetupGeneration();
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setAutoStartRemaining((current) => Math.max(0, current - 1));
+    }, 1000);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [autoStartCancelled, autoStartRemaining, generationInProgress, loading, showResearchConfirmCard]);
+
+  const streamSetupMessage = async (
+    session: Pick<HomeSetupSession, "projectId" | "token" | "title">,
+    submittedTopic: string,
+    submission: ReturnType<typeof buildComposerSubmission>,
+    assistantMessageId: string | null,
+    signal?: AbortSignal
+  ) => {
+    await streamApiRequest(`/projects/${session.projectId}/workflow/stream`, {
+      token: session.token,
+      signal,
+      body: {
+        userMessage: submittedTopic,
+        requestedStep: WorkflowStep.TOPIC_NORMALIZE,
+        payload: submission.payload
+      },
+      onEvent: (event) => {
+        if (event.type === "status") {
+          return;
+        }
+
+        if (event.type === "progress") {
+          return;
+        }
+
+        if (event.type === "message") {
+          updateSetupAssistantPlaceholder(assistantMessageId, {
+            text: assistantMessageText(event.response.assistantMessage),
+            status: "streaming"
+          });
+          return;
+        }
+
+        if (event.type === "error") {
+          throw new Error(event.message);
+        }
+      }
+    });
+
+    const { detail, messages } = await fetchHydratedProjectSnapshot(session.projectId, session.token);
+
+    if (shouldStayOnHome(detail, messages)) {
+      setSetupSession({
+        projectId: session.projectId,
+        token: session.token,
+        title: session.title,
         topic: submittedTopic,
-        createdAt: Date.now(),
         detail,
         messages
       });
-
+      setLocalChatMessages([]);
+      setupAssistantPlaceholderIdRef.current = null;
+      setTopic("");
       setAttachment(null);
-      setHandoffReady(true);
-      window.setTimeout(() => {
-        startTransition(() => {
-          router.push(`/projects/${data.project.id}`);
-        });
-      }, 180);
+      setLoading(false);
+      return;
+    }
+
+    finishAndOpenProject(session.projectId, session.token, session.title, submittedTopic, detail, messages);
+  };
+
+  const submitHomeMessage = async (rawMessage = topic, nextAttachment = attachment) => {
+    const nextTopic = rawMessage.trim();
+    if ((!nextTopic && !nextAttachment) || attachmentProcessing) {
+      return;
+    }
+
+    const userVisibleText = nextTopic || (nextAttachment ? `已上传 ${nextAttachment.name}` : "");
+    setTopic("");
+    setAttachment(null);
+    setupStickToBottomRef.current = true;
+    if (researchSettingComplete) {
+      setResearchConfirmCardVisible(false);
+      setAutoStartCancelled(true);
+      setGenerationInProgress(false);
+      setGenerationProgress(0);
+    }
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    let assistantPlaceholderInserted = false;
+
+    try {
+      setLoading(true);
+      setError("");
+      setHandoffReady(false);
+
+      const resolvedAttachment = await resolveAttachmentForSubmission(nextAttachment);
+      const submission = buildComposerSubmission(nextTopic, resolvedAttachment);
+      const submittedTopic = submission.userMessage.trim();
+
+      if (!submittedTopic) {
+        throw new Error("附件中没有识别到可用文字，请换一个更清晰的文件再试。");
+      }
+
+      const localId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const assistantMessageId = `${localId}-assistant`;
+      setupAssistantPlaceholderIdRef.current = assistantMessageId;
+      setLocalChatMessages((current) => [
+        ...current,
+        {
+          id: `${localId}-user`,
+          role: "user",
+          text: userVisibleText || submittedTopic
+        },
+        {
+          id: assistantMessageId,
+          role: "assistant",
+          text: "",
+          status: "loading"
+        }
+      ]);
+      assistantPlaceholderInserted = true;
+
+      if (setupSession) {
+        await streamSetupMessage(setupSession, submittedTopic, submission, assistantMessageId, controller.signal);
+        return;
+      }
+
+      const projectTopic = nextTopic || (resolvedAttachment ? `识别数据字典 ${resolvedAttachment.name}` : submittedTopic);
+      const data = await apiRequest<{ project: { id: string; title: string }; resumeToken: string }>("/projects", {
+        method: "POST",
+        signal: controller.signal,
+        body: JSON.stringify({ topicRaw: projectTopic })
+      });
+
+      saveStoredProject({ id: data.project.id, token: data.resumeToken, title: data.project.title });
+      router.prefetch(`/projects/${data.project.id}`);
+      await streamSetupMessage(
+        { projectId: data.project.id, token: data.resumeToken, title: data.project.title },
+        submittedTopic,
+        submission,
+        assistantMessageId,
+        controller.signal
+      );
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "\u521b\u5efa\u9879\u76ee\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002");
+      if (!isAbortError(requestError)) {
+        const messageText = requestError instanceof Error ? requestError.message : "生成失败，请稍后重试。";
+        if (assistantPlaceholderInserted) {
+          updateSetupAssistantPlaceholder(setupAssistantPlaceholderIdRef.current, {
+            text: messageText,
+            status: "error"
+          });
+          setupAssistantPlaceholderIdRef.current = null;
+        } else {
+          setError(messageText);
+        }
+      }
       setLoading(false);
       setHandoffReady(false);
       setAttachmentProcessing(false);
-      setStatusText("");
+    } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
     }
   };
 
   const handleTopicKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (attachmentProcessing || event.key !== "Enter" || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+    if (
+      attachmentProcessing ||
+      event.nativeEvent.isComposing ||
+      event.key !== "Enter" ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
       return;
     }
 
     event.preventDefault();
-    void createProject();
+    void submitHomeMessage();
   };
 
   const handleTopicPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -331,9 +902,10 @@ export function HomeHero() {
     setListening(true);
     keepListeningRef.current = true;
     recognitionRef.current = recognition;
-    recognition.lang = "zh-CN";
+    recognition.lang = inferSpeechRecognitionLanguage(topic);
     recognition.continuous = true;
     recognition.interimResults = true;
+    recognition.maxAlternatives = 3;
 
     recognition.onresult = (event) => {
       let nextCommitted = speechCommittedTextRef.current;
@@ -411,19 +983,145 @@ export function HomeHero() {
     recognition.start();
   };
 
+  if (setupChatActive) {
+    return (
+      <section
+        className={`h-[calc(100vh-5.25rem)] overflow-hidden transition-[opacity,transform,filter] duration-200 ${
+          handoffReady ? "translate-y-1 scale-[0.995] opacity-0 blur-[2px]" : "translate-y-0 scale-100 opacity-100 blur-0"
+        }`}
+      >
+        <input
+          accept={SUPPORTED_ATTACHMENT_ACCEPT}
+          className="hidden"
+          onChange={handleAttachmentPick}
+          ref={fileInputRef}
+          type="file"
+        />
+
+        <div className="setup-chat-grid h-full min-h-0" data-side-panel={showRightSetupPanel ? "open" : "closed"}>
+          <div className="flex min-h-0 flex-col">
+              <div
+                className="hidden-scrollbar flex-1 overflow-y-auto px-2 pb-6 pt-3 sm:px-5 lg:px-9"
+                onScroll={handleSetupScroll}
+                ref={setupScrollRef}
+              >
+              <div
+                className={clsx(
+                  "mx-auto flex w-full flex-col gap-7 transition-[max-width] duration-[220ms] ease-out",
+                  setupChatWide ? "max-w-[1120px]" : "max-w-[980px]"
+                )}
+              >
+                {setupChatMessages.map((message) => {
+                  if (message.messageType === "topic_confirm") {
+                    if (!showResearchConfirmCard) {
+                      return null;
+                    }
+
+                    return (
+                      <div className="flex justify-start" key={message.id}>
+                        <div className="assistant-message max-w-[760px] whitespace-pre-wrap break-words text-[15px] leading-7 text-slate-900">
+                          <p>{message.text}</p>
+                          <SetupConfirmationCard
+                            autoStartCancelled={autoStartCancelled}
+                            contentJson={message.contentJson}
+                            disabled={loading || generationInProgress}
+                            onCancel={() => setAutoStartCancelled(true)}
+                            onEdit={() => {
+                              setAutoStartCancelled(true);
+                              setSetupEditMode(true);
+                              setResearchConfirmCardVisible(false);
+                            }}
+                            onStart={() => {
+                              void startSetupGeneration();
+                            }}
+                            secondsRemaining={autoStartRemaining}
+                          />
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return message.role === "user" ? (
+                    <div key={message.id} className="flex justify-end">
+                      <div className="max-w-[78%] whitespace-pre-wrap break-words rounded-[22px] bg-slate-100 px-5 py-3 text-[15px] leading-7 text-slate-950">
+                        {message.text}
+                      </div>
+                    </div>
+                  ) : (
+                    <div key={message.id} className="flex justify-start">
+                      <div className="assistant-message max-w-[760px] whitespace-pre-wrap break-words text-[15px] leading-7 text-slate-900">
+                        {message.status === "loading" && !message.text ? <TypingDots /> : message.text}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {generationInProgress ? <GenerationStatusMessage progress={generationProgress} /> : null}
+
+                <div ref={setupBottomRef} />
+              </div>
+            </div>
+
+            <div
+              className={clsx(
+                "mx-auto w-full px-2 pb-3 transition-[max-width] duration-[220ms] ease-out sm:px-5 lg:px-9",
+                setupChatWide ? "max-w-[1120px]" : "max-w-[980px]"
+              )}
+            >
+              <ChatComposer
+                attachment={attachment}
+                attachmentProcessing={attachmentProcessing}
+                disabled={attachmentProcessing}
+                error={error}
+                listening={listening}
+                onAttachClick={() => fileInputRef.current?.click()}
+                onChange={setTopic}
+                onMicClick={handleMicClick}
+                onPaste={handleTopicPaste}
+                onRemoveAttachment={() => setAttachment(null)}
+                onSend={() => submitHomeMessage()}
+                onStop={stopCurrentRequest}
+                sending={loading}
+                value={topic}
+              />
+            </div>
+          </div>
+
+          <div
+            className={clsx(
+              "min-w-0 overflow-hidden transition-[opacity,transform] duration-200 ease-out",
+              showRightSetupPanel ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-4 opacity-0"
+            )}
+          >
+            {showRightSetupPanel ? (
+              <ResearchSetupPanel
+                className="self-start"
+                confirmDisabled={loading || generationInProgress}
+                confirmLoading={false}
+                message={latestSetupMessage}
+                onConfirm={latestSetupMessage?.messageType === "topic_confirm" ? startSetupGeneration : undefined}
+              />
+            ) : null}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
+    <>
     <section
-      className={`relative overflow-hidden rounded-[40px] border border-white/70 px-5 py-8 transition-[opacity,transform,filter] duration-200 sm:px-8 sm:py-10 lg:px-12 lg:py-12 ${
+      className={`relative min-h-[calc(100vh-5.25rem)] overflow-hidden rounded-[40px] border border-white/70 px-5 py-8 transition-[opacity,transform,filter] duration-200 sm:px-8 sm:py-10 lg:px-12 lg:py-12 ${
         handoffReady ? "translate-y-1 scale-[0.995] opacity-0 blur-[2px]" : "translate-y-0 scale-100 opacity-100 blur-0"
       }`}
     >
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(150,193,255,0.28),transparent_24%),radial-gradient(circle_at_84%_16%,rgba(225,240,167,0.34),transparent_22%),radial-gradient(circle_at_50%_68%,rgba(255,255,255,0.92),transparent_38%)]" />
       <div className="pointer-events-none absolute inset-x-[14%] top-10 h-52 rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.84),transparent_72%)] blur-3xl" />
 
-      <div className="relative mx-auto flex min-h-[calc(100vh-12rem)] max-w-5xl flex-col items-center justify-center">
+      <div className="relative mx-auto flex min-h-[calc(100vh-12rem)] max-w-[1480px] flex-col items-center justify-center">
         <div className="text-center">
           <h1
-            className="mx-auto whitespace-nowrap text-[1.65rem] font-black leading-none tracking-[-0.05em] text-slate-950 sm:text-[2.15rem] lg:text-[2.85rem]"
+            className="mx-auto max-w-full break-words text-[1.65rem] font-black leading-tight text-slate-950 sm:text-[2.15rem] lg:text-[2.85rem]"
             style={{
               fontFamily: `"Arial Rounded MT Bold", "Trebuchet MS", "Aptos", "PingFang SC", "Microsoft YaHei", sans-serif`
             }}
@@ -432,29 +1130,13 @@ export function HomeHero() {
           </h1>
         </div>
 
-        <div className="mt-10 w-full max-w-4xl rounded-[36px] border border-white/80 bg-white/78 p-4 shadow-[0_30px_90px_rgba(31,41,69,0.12)] backdrop-blur sm:p-5">
-          <div className="relative rounded-[30px] border border-slate-200/80 bg-white/90 px-4 py-4 sm:px-6 sm:py-5">
-            {showGhostText ? (
-              <div className="pointer-events-none absolute inset-0 z-10 px-4 py-4 sm:px-6 sm:py-5">
-                <p className="max-w-3xl text-lg leading-8 text-slate-500 sm:text-[1.06rem]">
-                  {
-                    "请输入面板数据论文的研究主题、研究对象、解释变量、被解释变量、控制变量、样本区间、个体变量、时间变量和固定效应。DID 和 PSM 可以明确说做或不做；IV 需要你提供真实工具变量。你可以写得很乱，我会先整理成结构化研究设定。"
-                  }
-                </p>
-                <p className="mt-4 max-w-3xl text-base leading-8 text-slate-400 sm:text-[1rem]">
-                  {
-                    "例如：研究数字金融对企业创新的影响；样本是2011-2022年中国A股上市公司；面板 id 是 stkcd，时间变量是 year；控制变量包括企业规模、资产负债率、ROA；固定效应为企业和年份；不做 DID，PSM 要做；工具变量是 iv_index。"
-                  }
-                </p>
-              </div>
-            ) : null}
-
+        <div className="mt-10 w-full max-w-[1180px] rounded-[36px] border border-white/80 bg-white/78 p-4 shadow-[0_30px_90px_rgba(31,41,69,0.12)] backdrop-blur sm:p-5">
+          <div className="relative overflow-hidden rounded-[30px] border border-slate-200/80 bg-white/90 px-4 py-4 sm:px-6 sm:py-5">
             <textarea
               className="relative z-20 h-56 w-full resize-none bg-transparent text-lg leading-8 text-slate-900 outline-none sm:h-60 sm:text-[1.06rem]"
+              ref={textAreaRef}
               value={topic}
-              onBlur={() => setFocused(false)}
               onChange={(event) => setTopic(event.target.value)}
-              onFocus={() => setFocused(true)}
               onKeyDown={handleTopicKeyDown}
               onPaste={handleTopicPaste}
             />
@@ -464,13 +1146,6 @@ export function HomeHero() {
             <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-slate-800">{attachment.name}</p>
-                <p className="mt-0.5 truncate text-xs text-slate-500">
-                  {attachment.source === "image" && !attachment.processed
-                    ? "截图将在发送时 OCR 识别"
-                    : `${formatAttachmentSize(attachment.size)} · ${
-                        attachment.truncated ? "已解析前部内容" : "内容已完成解析"
-                      }`}
-                </p>
               </div>
               <button
                 className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
@@ -483,17 +1158,7 @@ export function HomeHero() {
             </div>
           ) : null}
 
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-4 px-1">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-500 transition">
-                {attachmentProcessing
-                  ? statusText || "正在解析附件..."
-                  : attachment
-                    ? `已附加 ${attachment.name}，确认后会一起识别数据结构。`
-                    : "Enter发送，Ctrl+Enter换行；也可以上传文件或语音输入"}
-              </p>
-            </div>
-
+          <div className="mt-4 flex flex-wrap items-center justify-end gap-4 px-1">
             <div className="flex items-center gap-2.5">
               <input
                 accept={SUPPORTED_ATTACHMENT_ACCEPT}
@@ -503,16 +1168,17 @@ export function HomeHero() {
                 type="file"
               />
               <button
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="上传数据字典或字段表"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={loading || attachmentProcessing}
                 onClick={() => fileInputRef.current?.click()}
                 type="button"
               >
-                <UploadIcon />
-                <span className="hidden sm:inline">上传数据/字典</span>
+                <PlusIcon />
               </button>
 
               <button
+                aria-label={listening ? "停止语音输入" : "开始语音输入"}
                 className={`inline-flex h-11 w-11 items-center justify-center rounded-full border text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
                   listening
                     ? "border-slate-950 bg-slate-950 text-white shadow-[0_10px_24px_rgba(15,23,42,0.18)]"
@@ -526,12 +1192,23 @@ export function HomeHero() {
               </button>
 
               <button
-                className="inline-flex min-w-[132px] items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-base font-semibold text-white shadow-floating transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-55"
-                disabled={loading || attachmentProcessing || (!topic.trim() && !attachment)}
-                onClick={() => void createProject()}
+                aria-label={loading ? "停止生成" : "确认"}
+                className={`inline-flex h-11 items-center justify-center rounded-full text-base font-semibold shadow-floating transition disabled:cursor-not-allowed disabled:opacity-55 ${
+                  loading
+                    ? "w-11 bg-slate-200 text-slate-950 hover:bg-slate-300"
+                    : "min-w-[112px] bg-slate-950 px-5 text-white hover:bg-slate-800"
+                }`}
+                disabled={attachmentProcessing || (!loading && !topic.trim() && !attachment)}
+                onClick={() => {
+                  if (loading) {
+                    stopCurrentRequest();
+                    return;
+                  }
+                  void submitHomeMessage();
+                }}
                 type="button"
               >
-                {loading ? <ThinkingBubble bare className="text-white" /> : <span className="w-full text-center">{"\u786e\u8ba4"}</span>}
+                {loading ? <StopIcon /> : <span className="w-full text-center">确认</span>}
               </button>
             </div>
           </div>
@@ -540,5 +1217,6 @@ export function HomeHero() {
         {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}
       </div>
     </section>
+    </>
   );
 }

@@ -5,6 +5,9 @@ import {
   type GeneralResearchChatInput,
   type GeneralResearchChatOutput,
   type PlaceholderSkillOutput,
+  type ResearchSetupInterpreterInput,
+  type ResearchSetupInterpreterOutput,
+  type ResearchSetupInterpreterProfilePatch,
   type RegressionSkillInput,
   type RegressionSkillOutput,
   type ResultInterpretInput,
@@ -28,14 +31,29 @@ const CHINESE_AND = "\\u4e0e";
 const CHINESE_AND_ALT = "\\u8207";
 
 export const DEFAULT_RESEARCH_OBJECT = "中国A股上市公司";
+export const DEFAULT_SETUP_EXAMPLE_MESSAGE = [
+  "你可以像下面这样一次性告诉我你的研究设定：",
+  "",
+  "我想研究企业数字化转型对绿色创新的影响。",
+  "",
+  "本文选择2009到2025年沪深A股上市公司为研究样本，删除金融类企业、ST类企业以及主要变量缺失的样本。被解释变量为企业绿色创新水平，采用绿色专利申请数量加1后取自然对数作为代理变量。核心解释变量为企业数字化转型水平，采用年报文本中数字化相关词频加1后取自然对数作为代理变量。",
+  "",
+  "机制变量方面，我想检验企业数字化转型是否通过缓解融资约束和提高信息透明度影响绿色创新。其中，融资约束可以用SA指数或KZ指数衡量，信息透明度可以用分析师关注度或盈余管理程度衡量。",
+  "",
+  "控制变量包括企业年龄的对数 Age、企业规模 Size、资产负债率 Lev、营业收入增长率 Growth、现金比率 Cash、固定资产比率 Fixed、董事会规模 Board、独立董事比例 Indep、第一大股东持股比例 Top1、企业所在地区市场化程度 Market。",
+  "",
+  "固定效应采用企业固定效应和年份固定效应。面板个体变量为 stkcd，时间变量为 year。标准误按公司个体层面聚类，也就是按 stkcd 聚类。暂时不做DID、PSM和工具变量法。"
+].join("\n");
 
 const GENERIC_RESEARCH_OBJECTS = new Set([
   "中国企业",
   "企业",
   "上市公司",
   "中国上市公司",
+  "中国A股上市公司",
   "A 股上市公司",
   "A股上市公司",
+  "China A-share listed firms",
   "A-share listed firms"
 ]);
 
@@ -145,6 +163,36 @@ export function buildGeneralResearchChatOutput(input: GeneralResearchChatInput):
   const question = input.userQuestion.trim();
   const topicLead = input.topic ? `结合你当前的题目“${input.topic}”，` : "";
 
+  if (looksLikePromptOnlyPunctuation(question)) {
+    return {
+      answer:
+        "你想问什么？可以直接问我科研概念、变量设定、模型选择，也可以继续补充你的研究主题、研究对象、变量和样本区间。",
+      keyPoints: [
+        "如果是研究设定信息，我会帮你整理到当前项目里。",
+        "如果是科研概念问题，我会先解释清楚，再提示下一步怎么用。"
+      ],
+      suggestedNextActions: [
+        "例如：什么是研究对象？",
+        "例如：研究主题是数字金融对企业创新的影响。"
+      ]
+    };
+  }
+
+  if (looksLikeSmallTalkOrOffTopic(question)) {
+    return {
+      answer:
+        "我是经管实证论文助手，主要帮你梳理研究设定、变量口径、模型选择和后续 Stata 工作流。天气、闲聊这类问题我不展开回答。你可以告诉我研究主题、研究对象、解释变量、被解释变量、控制变量和样本区间，我会继续帮你整理。",
+      keyPoints: [
+        "我会优先处理和科研论文、实证研究、变量设定、数据字段相关的问题。",
+        "如果你只是还没想好题目，可以先说一个大概方向，我会继续追问。"
+      ],
+      suggestedNextActions: [
+        "先告诉我你想研究什么变量之间的关系。",
+        "也可以问：什么叫研究对象？"
+      ]
+    };
+  }
+
   if (/固定效应/.test(question)) {
     return {
       answer:
@@ -157,6 +205,21 @@ export function buildGeneralResearchChatOutput(input: GeneralResearchChatInput):
       suggestedNextActions: [
         "明确个体维度和时间维度分别是什么。",
         "确认是否需要行业、地区等更细粒度固定效应。"
+      ]
+    };
+  }
+
+  if (/个体变量|面板.*id|panel\s*id|时间变量|年份变量|time\s*var|year/i.test(question)) {
+    return {
+      answer:
+        `${topicLead}个体变量是面板数据里用来区分研究对象的字段，常见就是企业代码、股票代码或公司 id；时间变量是区分年份或季度的字段，常见就是 year。没有特别说明时，可以先把个体变量理解为 stkcd，时间变量理解为 year，后续再按数据字段映射调整。`,
+      keyPoints: [
+        "个体变量回答“是哪一个企业/样本主体”。",
+        "时间变量回答“是哪一年或哪一期”。",
+        "二者一起决定一条面板观测，例如 stkcd-year。"
+      ],
+      suggestedNextActions: [
+        "如果你的数据字段里有股票代码和年份，可以先分别映射为 stkcd 和 year。"
       ]
     };
   }
@@ -271,6 +334,24 @@ function splitItems(value: string) {
     .filter(Boolean);
 }
 
+const METHOD_NEGATION = {
+  did: /(?:不做|暂时不做|先不做|不使用|不用|不需要|无需|没有计划做|暂不考虑).{0,12}(?:DID|双重差分)/i,
+  psm: /(?:不做|暂时不做|先不做|不使用|不用|不需要|无需|没有计划做|暂不考虑).{0,12}(?:PSM|倾向得分匹配)/i,
+  iv: /(?:不做|暂时不做|先不做|不使用|不用|不需要|无需|没有计划做|暂不考虑).{0,12}(?:IV|工具变量|工具变量法)/i
+};
+
+export function wantsSetupExampleInput(text: string) {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+
+  return (
+    /不知道.*(主题|开始|输入|怎么用|做什么)|没想好|还没想好|随便.*(例子|示例|主题)|给我.*(例子|示例)|举个例子|怎么输入|这个怎么用|如何使用/.test(text) ||
+    /^(你好|您好|在吗|哈喽|嗨|hi|hello|hey|随便|随便聊|闲聊|ok|okay)$/.test(normalized)
+  );
+}
+
 function normalizeExportFormats(value: string) {
   const normalized = new Set<string>();
   for (const item of splitItems(value)) {
@@ -382,9 +463,132 @@ function firstMatch(text: string, patterns: RegExp[]) {
 function buildFieldPattern(labels: string[]) {
   const joined = labels.join("|");
   return new RegExp(
-    String.raw`(?:${joined})(?:\s*(?::|\uFF1A|=)\s*|\s*(?:\u662f|\u4e3a|\u6539\u6210|\u6539\u4e3a|\u6362\u6210)\s*)([^\n\r,\uFF0C;\uFF1B]+)`,
+    // 中文句号、问号和感叹号都作为字段边界，避免“时间变量为 year。标准误...”吞并后续句子。
+    String.raw`(?:${joined})(?:\s*(?::|\uFF1A|=)\s*|\s*(?:\u662f|\u4e3a|\u6539\u6210|\u6539\u4e3a|\u6362\u6210)\s*)([^\n\r,\uFF0C;\uFF1B\u3002.!?\uFF01\uFF1F]+)`,
     "i"
   );
+}
+
+function inferYearRange(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const match = trimmed.match(
+    /(?:^|(?:\u6837\u672c|\u7814\u7a76|\u6570\u636e|\u65f6\u95f4|\u5e74\u4efd|\u9009\u62e9).{0,24})((?:19|20)\d{2})\s*\u5e74?\s*(?:-|~|\uFF5E|\u301C|\u2013|\u2014|\u81F3|\u5230)\s*((?:19|20)\d{2})\s*\u5e74?/i
+  );
+  if (!match) {
+    return "";
+  }
+
+  return `${match[1]}\u2013${match[2]}\u5e74`;
+}
+
+function uniqueStrings(values: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function cleanVariableName(value: string) {
+  return value
+    .replace(/^(?:以及|和|与|其中)\s*/u, "")
+    .replace(/(?:作为.*|衡量.*|可以.*|采用.*)$/u, "")
+    .replace(/[。；;,，、\s]+$/u, "")
+    .trim();
+}
+
+function parseVariableList(value: string) {
+  const segments = value
+    .replace(/以及|和|与/g, "、")
+    .split(/[、，,；;]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return uniqueStrings(
+    segments.map((segment) => {
+      const codes = segment.match(/\b[A-Za-z][A-Za-z0-9_]*\b/g);
+      if (codes?.length) {
+        return codes[codes.length - 1];
+      }
+      return cleanVariableName(segment);
+    })
+  );
+}
+
+function inferShortTopicTitle(text: string, updates: WorkflowInputInterpreterProfilePatch) {
+  const firstSentence = text.split(/[。.!?\n]/)[0]?.trim() ?? "";
+  const topicPhrase = firstSentence.match(/(?:我想研究|研究主题(?:是|为|：|:)?|题目(?:是|为|：|:)?)(.+)$/)?.[1]?.trim() ?? "";
+  const candidate = cleanTerm(topicPhrase || firstSentence)
+    .replace(/^本文(?:选择|研究)/, "")
+    .replace(/^(我想|想)?研究/, "")
+    .replace(/(?:的)?影响$/, "的影响研究")
+    .replace(/(?:的)?效应$/, "的效应研究")
+    .replace(/(?:的)?关系$/, "的关系研究")
+    .trim();
+
+  if (candidate && /对|影响|效应|关系/.test(candidate) && candidate.length <= 40) {
+    return candidate.endsWith("研究") ? candidate : `${candidate}研究`;
+  }
+
+  if (updates.independentVariable && updates.dependentVariable) {
+    const x = updates.independentVariable.replace(/水平$/u, "");
+    const y = updates.dependentVariable.replace(/^企业/u, "");
+    return `${x}对${y}的影响研究`;
+  }
+
+  return "";
+}
+
+function inferResearchObjectFromText(text: string) {
+  const yearPrefix = /(?:19|20)\d{2}\s*\u5e74?\s*(?:-|~|\uFF5E|\u301C|\u2013|\u2014|\u81F3|\u5230)\s*(?:19|20)\d{2}\s*\u5e74?/;
+  const sampleMatch = text.match(new RegExp(`${yearPrefix.source}\\s*([^。；;，,]+?)(?:为研究样本|作为研究样本|为样本|样本)`, "i"));
+  const sample = sampleMatch?.[1]?.trim() ?? "";
+  const exclusions = text.match(/(?:删除|剔除)([^。；;]+?)(?:的)?样本/)?.[1]?.trim() ?? "";
+  const normalizedSample = sample.replace(/^的?/, "").replace(/本文选择|选择/g, "").trim();
+  const normalizedExclusions = exclusions.replace(/以及/g, "、").replace(/的$/u, "").trim();
+
+  if (normalizedSample && normalizedExclusions) {
+    return `${normalizedSample}，剔除${normalizedExclusions}样本`;
+  }
+
+  if (normalizedSample) {
+    return normalizeResearchObject(normalizedSample);
+  }
+
+  return "";
+}
+
+function inferControlsFromText(text: string) {
+  const raw = text.match(/控制变量(?:包括|有|就|是|为|：|:)\s*([^。；;\n]+)/)?.[1]?.trim() ?? "";
+  return raw ? parseVariableList(raw.replace(/这些$/u, "")) : [];
+}
+
+function inferMechanismVariablesFromText(text: string) {
+  const section = text.match(/机制变量方面([\s\S]+?)(?=控制变量|固定效应|异质性|样本|$)/)?.[1] ?? "";
+  if (!section) {
+    return [];
+  }
+
+  const values: string[] = [];
+  for (const pattern of [/\b([A-Za-z][A-Za-z0-9_]*)\b\s*的代理变量/g, /得到\s*\b([A-Za-z][A-Za-z0-9_]*)\b/g]) {
+    for (const match of section.matchAll(pattern)) {
+      if (match[1]) {
+        values.push(match[1]);
+      }
+    }
+  }
+
+  return uniqueStrings(values);
 }
 
 function looksLikeWorkflowQuestion(text: string) {
@@ -395,13 +599,32 @@ function looksLikeWorkflowQuestion(text: string) {
   return /^(what|why|how|can|could|would|should|is|are|do|does|did|\u4ec0\u4e48|\u4e3a\u4ec0\u4e48|\u600e\u4e48|\u5982\u4f55|\u4e3a\u5565|\u80fd\u4e0d\u80fd|\u53ef\u4e0d\u53ef\u4ee5|\u662f\u5426|\u6709\u6ca1\u6709|\u8bf7\u95ee)/i.test(text.trim());
 }
 
-function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch {
+function looksLikePromptOnlyPunctuation(text: string) {
+  const trimmed = text.trim();
+  return Boolean(trimmed) && /^[\p{P}\p{S}]+$/u.test(trimmed);
+}
+
+function looksLikeSmallTalkOrOffTopic(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (looksLikePromptOnlyPunctuation(trimmed)) {
+    return true;
+  }
+
+  return /^(\u4f60\u597d|\u55e8|hi|hello|hey|\u5728\u5417|\u8c22\u8c22|\u8c22\u4e86|\u65e9\u4e0a\u597d|\u665a\u4e0a\u597d)$/i.test(trimmed)
+    || /(\u4eca\u5929|\u660e\u5929|\u6628\u5929).{0,6}(\u5929\u6c14|\u51e0\u70b9|\u65f6\u95f4|\u661f\u671f)|\u8bb2\u4e2a\u7b11\u8bdd|\u5531\u9996\u6b4c|\u4f60\u662f\u8c01/i.test(trimmed);
+}
+
+export function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch {
   const updates: WorkflowInputInterpreterProfilePatch = {};
 
   const independentVariable = firstMatch(text, [
-    buildFieldPattern(["\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf", "\u89e3\u91ca\u53d8\u91cf", "\u81ea\u53d8\u91cf"]),
+    buildFieldPattern(["\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf", "\u81ea\u53d8\u91cf"]),
     buildFieldPattern(["independent variable", "x variable"])
-  ]);
+  ]) || text.match(/(?:^|[。；;\n\r])\s*解释变量(?:\s*(?::|\uFF1A|=)\s*|\s*(?:是|为)\s*)([^\n\r,\uFF0C;\uFF1B\u3002.!?\uFF01\uFF1F]+)/)?.[1]?.trim() || "";
   if (independentVariable) {
     updates.independentVariable = independentVariable;
   }
@@ -421,6 +644,7 @@ function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch
   if (researchObject) {
     updates.researchObject = normalizeResearchObject(researchObject);
   }
+  updates.researchObject ||= inferResearchObjectFromText(text);
 
   const relationship = firstMatch(text, [
     buildFieldPattern(["\u5173\u7cfb\u7c7b\u578b", "\u4f5c\u7528\u65b9\u5411", "\u5047\u8bbe\u65b9\u5411"]),
@@ -437,19 +661,20 @@ function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch
   if (normalizedTopic && normalizedTopic.length >= 4) {
     updates.normalizedTopic = normalizedTopic;
   }
+  updates.normalizedTopic ||= inferShortTopicTitle(text, updates);
 
   const controlsRaw = firstMatch(text, [
     buildFieldPattern(["\u63a7\u5236\u53d8\u91cf", "\u63a7\u5236\u53d8\u91cf\u5217\u8868"]),
     buildFieldPattern(["controls", "control variables"])
-  ]);
+  ]) || inferControlsFromText(text).join("、");
   if (controlsRaw) {
-    updates.controls = splitItems(controlsRaw);
+    updates.controls = parseVariableList(controlsRaw);
   }
 
   const fixedEffectsRaw = firstMatch(text, [
     buildFieldPattern(["\u56fa\u5b9a\u6548\u5e94", "\u56fa\u5b9a\u6548\u5e94\u8bbe\u5b9a"]),
     buildFieldPattern(["fixed effects", "fe"])
-  ]);
+  ]) || text.match(/固定效应(?:采用|加入|控制)?\s*([^。；;\n]+)/)?.[1]?.trim() || "";
   if (fixedEffectsRaw) {
     updates.fixedEffects = normalizeFixedEffects(fixedEffectsRaw);
   }
@@ -457,13 +682,13 @@ function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch
   const clusterVar = firstMatch(text, [
     buildFieldPattern(["\u805a\u7c7b\u53d8\u91cf", "\u805a\u7c7b\u6807\u51c6\u8bef"]),
     buildFieldPattern(["cluster variable", "cluster var"])
-  ]);
+  ]) || text.match(/按\s*([A-Za-z_][A-Za-z0-9_]*)\s*聚类/i)?.[1] || "";
   if (clusterVar) {
     updates.clusterVar = clusterVar;
   }
 
   const panelId = firstMatch(text, [
-    buildFieldPattern(["\u9762\u677f\u4e3b\u4f53", "\u9762\u677fid", "\u9762\u677f id", "\u4e2a\u4f53id", "\u4e2a\u4f53 id", "\u4f01\u4e1aid", "\u4f01\u4e1a id"]),
+    buildFieldPattern(["\u9762\u677f\u4e2a\u4f53\u53d8\u91cf", "\u9762\u677f\u4e3b\u4f53", "\u9762\u677fid", "\u9762\u677f id", "\u4e2a\u4f53\u53d8\u91cf", "\u4e2a\u4f53id", "\u4e2a\u4f53 id", "\u4f01\u4e1aid", "\u4f01\u4e1a id", "\u516c\u53f8\u4ee3\u7801"]),
     buildFieldPattern(["panel id", "entity id", "firm id"])
   ]);
   if (panelId) {
@@ -479,20 +704,38 @@ function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch
   }
 
   const sampleScope = firstMatch(text, [
-    buildFieldPattern(["\u6837\u672c\u8303\u56f4", "\u6570\u636e\u65f6\u95f4\u8303\u56f4", "\u65f6\u95f4\u8303\u56f4"]),
-    buildFieldPattern(["sample scope", "time range", "sample range"])
-  ]);
+    buildFieldPattern([
+      "\u6837\u672c\u8303\u56f4",
+      "\u6837\u672c\u533a\u95f4",
+      "\u6837\u672c\u671f\u95f4",
+      "\u6837\u672c\u5e74\u4efd",
+      "\u7814\u7a76\u533a\u95f4",
+      "\u7814\u7a76\u671f\u95f4",
+      "\u7814\u7a76\u5e74\u4efd",
+      "\u6570\u636e\u533a\u95f4",
+      "\u6570\u636e\u5e74\u4efd",
+      "\u6570\u636e\u65f6\u95f4\u8303\u56f4",
+      "\u65f6\u95f4\u8303\u56f4",
+      "\u65f6\u95f4\u533a\u95f4",
+      "\u5e74\u4efd\u8303\u56f4"
+    ]),
+    buildFieldPattern(["sample scope", "time range", "sample range", "research period", "sample period"])
+  ]) || inferYearRange(text);
   if (sampleScope) {
     updates.sampleScope = sampleScope;
   }
 
-  if (/(?:\u4e0d\u505a|\u4e0d\u9700\u8981|\u4e0d\u7528|no)\s*DID/i.test(text)) {
+  const didDisabled = METHOD_NEGATION.did.test(text);
+  const psmDisabled = METHOD_NEGATION.psm.test(text);
+  const ivDisabled = METHOD_NEGATION.iv.test(text);
+
+  if (didDisabled) {
     updates.didEnabled = false;
   } else if (/\bDID\b|\u653f\u7b56\u51b2\u51fb|\u5904\u7406\u7ec4|\u5bf9\u7167\u7ec4|\u653f\u7b56\u5e74\u4efd/i.test(text)) {
     updates.didEnabled = true;
   }
 
-  if (/(?:\u4e0d\u505a|\u4e0d\u9700\u8981|\u4e0d\u7528|no)\s*PSM/i.test(text)) {
+  if (psmDisabled) {
     updates.psmEnabled = false;
   } else if (/\bPSM\b|\u503e\u5411\u5f97\u5206|\u5339\u914d/i.test(text)) {
     updates.psmEnabled = true;
@@ -504,6 +747,9 @@ function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch
   ]);
   if (treatmentVar) {
     updates.treatmentVar = treatmentVar;
+  }
+  if (didDisabled && psmDisabled) {
+    delete updates.treatmentVar;
   }
 
   const policyTimeVar = firstMatch(text, [
@@ -529,6 +775,9 @@ function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch
   if (instrumentVariable) {
     updates.instrumentVariable = instrumentVariable;
   }
+  if (ivDisabled) {
+    updates.instrumentVariable = null;
+  }
 
   const psmMatchVars = firstMatch(text, [
     buildFieldPattern(["PSM\u5339\u914d\u53d8\u91cf", "\u5339\u914d\u53d8\u91cf"]),
@@ -537,13 +786,16 @@ function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch
   if (psmMatchVars) {
     updates.psmMatchVars = splitItems(psmMatchVars);
   }
+  if (psmDisabled) {
+    delete updates.psmMatchVars;
+  }
 
   const mechanismVariables = firstMatch(text, [
     buildFieldPattern(["\u673a\u5236\u53d8\u91cf", "\u4e2d\u4ecb\u53d8\u91cf"]),
     buildFieldPattern(["mechanism variables", "mediator variables"])
-  ]);
+  ]) || inferMechanismVariablesFromText(text).join("、");
   if (mechanismVariables) {
-    updates.mechanismVariables = splitItems(mechanismVariables);
+    updates.mechanismVariables = parseVariableList(mechanismVariables);
   }
 
   const heterogeneityVars = firstMatch(text, [
@@ -564,7 +816,11 @@ function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch
   }
 
   return Object.fromEntries(
-    Object.entries(updates).filter(([, value]) => {
+    Object.entries(updates).filter(([key, value]) => {
+      if (key === "instrumentVariable" && value === null) {
+        // “不做 IV / 工具变量”是明确指令，保留 null 让后续流程清空历史工具变量。
+        return true;
+      }
       if (value == null) {
         return false;
       }
@@ -644,6 +900,167 @@ function buildClarificationForStep(step: WorkflowStep) {
   };
 }
 
+const researchSetupRequiredFields: Array<keyof ResearchSetupInterpreterProfilePatch> = [
+  "normalizedTopic",
+  "researchObject",
+  "independentVariable",
+  "dependentVariable",
+  "controls",
+  "sampleScope",
+  "fixedEffects"
+];
+
+function cleanResearchSetupPatch(updates: ResearchSetupInterpreterProfilePatch): ResearchSetupInterpreterProfilePatch {
+  return Object.fromEntries(
+    Object.entries(updates).filter(([key, value]) => {
+      if (key === "instrumentVariable" && value === null) {
+        // 明确“不做工具变量”需要保留清空信号；其他空值仍不能覆盖已有 researchProfile。
+        return true;
+      }
+      if (value == null) {
+        return false;
+      }
+      if (typeof value === "string") {
+        const normalized = value.trim();
+        return normalized.length > 0 && !/^(待补充|默认不做|不做|不需要|无需)$/i.test(normalized);
+      }
+      if (Array.isArray(value)) {
+        return value.some((item) => {
+          const normalized = String(item).trim();
+          return normalized && !/^(待补充|默认不做|不做|不需要|无需)$/i.test(normalized);
+        });
+      }
+      return true;
+    })
+  ) as ResearchSetupInterpreterProfilePatch;
+}
+
+function inferResearchSetupFallbackUpdates(message: string): ResearchSetupInterpreterProfilePatch {
+  const updates = inferProfileUpdates(message) as ResearchSetupInterpreterProfilePatch;
+  const text = message.trim();
+
+  updates.normalizedTopic ||= inferShortTopicTitle(text, updates);
+
+  if (looksLikeTopicCandidateText(text) && (!updates.normalizedTopic || !updates.independentVariable || !updates.dependentVariable)) {
+    const topicSeed = text.split(/[。.!?\n]/)[0] || text;
+    const normalized = normalizeTopic(topicSeed);
+    updates.normalizedTopic ||= normalized.normalizedTopic;
+    updates.independentVariable ||= normalized.independentVariable;
+    updates.dependentVariable ||= normalized.dependentVariable;
+  }
+
+  if (!updates.researchObject && /A\s*股|上市公司|企业/i.test(text)) {
+    updates.researchObject = DEFAULT_RESEARCH_OBJECT;
+  }
+
+  if (!updates.sampleScope) {
+    const sampleScope = inferYearRange(text);
+    if (sampleScope) {
+      updates.sampleScope = sampleScope;
+    }
+  }
+
+  if (!updates.fixedEffects && /(固定|FE|fixed).{0,12}(企业|公司|年份|年|时间)|(?:企业|公司).{0,4}(?:和|与|、).{0,4}(?:年份|年).{0,4}固定/i.test(text)) {
+    updates.fixedEffects = normalizeFixedEffects(text);
+  }
+
+  const controls =
+    text.match(/控制(?:变量)?(?:包括|有|就|是|为)?\s*([^。；;]+?)(?:固定|样本|研究对象|$)/)?.[1]?.trim() ?? "";
+  if (!updates.controls && controls) {
+    updates.controls = splitItems(controls.replace(/这些$/, ""));
+  }
+
+  return cleanResearchSetupPatch(updates);
+}
+
+function buildResearchSetupMissingFields(
+  updates: ResearchSetupInterpreterProfilePatch,
+  hasExistingTopic: boolean
+) {
+  return researchSetupRequiredFields.filter((field) => {
+    if (field === "normalizedTopic" && hasExistingTopic) {
+      return false;
+    }
+
+    const value = updates[field];
+    if (Array.isArray(value)) {
+      return value.length === 0;
+    }
+    return !String(value ?? "").trim();
+  }) as string[];
+}
+
+function buildFallbackSetupAssistantMessage(updates: ResearchSetupInterpreterProfilePatch, missingFields: string[]) {
+  const recognized: string[] = [];
+  if (updates.normalizedTopic || updates.independentVariable || updates.dependentVariable) {
+    recognized.push("研究主题和核心变量");
+  }
+  if (updates.researchObject) {
+    recognized.push("研究对象");
+  }
+  if (updates.controls?.length) {
+    recognized.push("控制变量");
+  }
+  if (updates.sampleScope) {
+    recognized.push("样本区间");
+  }
+  if (updates.fixedEffects?.length) {
+    recognized.push("固定效应");
+  }
+
+  if (missingFields.length === 0) {
+    return recognized.length > 0
+      ? `我已经整理好${recognized.join("、")}。请确认是否基于这套设定生成完整 Stata 工作流。`
+      : "我已经收到您的研究设定。请继续补充研究对象、变量、样本区间和固定效应，或确认是否进入下一步。";
+  }
+
+  return `我已经识别到${recognized.length ? recognized.join("、") : "部分研究设定"}，还需要您补充 ${missingFields.join("、")}。`;
+}
+
+export function buildResearchSetupInterpreterOutput(
+  input: ResearchSetupInterpreterInput
+): ResearchSetupInterpreterOutput {
+  const message = input.userMessage.trim();
+
+  if (wantsSetupExampleInput(message) || looksLikeSmallTalkOrOffTopic(message)) {
+    return {
+      intent: "research_question",
+      profileUpdates: {},
+      missingFields: [],
+      // 示例只作为引导回答，profileUpdates 必须保持为空，避免示例污染 researchProfile。
+      assistantMessage: DEFAULT_SETUP_EXAMPLE_MESSAGE,
+      confidence: "high"
+    };
+  }
+
+  if (looksLikeWorkflowQuestion(message)) {
+    const chat = buildGeneralResearchChatOutput({
+      userQuestion: message,
+      currentModule: input.currentModule || input.currentStep,
+      topic: input.topic
+    });
+
+    return {
+      intent: "research_question",
+      profileUpdates: {},
+      missingFields: [],
+      assistantMessage: chat.answer,
+      confidence: "high"
+    };
+  }
+
+  const profileUpdates = inferResearchSetupFallbackUpdates(message);
+  const missingFields = buildResearchSetupMissingFields(profileUpdates, Boolean(input.topic));
+
+  return {
+    intent: "research_setup",
+    profileUpdates,
+    missingFields,
+    assistantMessage: buildFallbackSetupAssistantMessage(profileUpdates, missingFields),
+    confidence: Object.keys(profileUpdates).length > 0 ? "medium" : "low"
+  };
+}
+
 export function buildWorkflowInputInterpreterOutput(
   input: WorkflowInputInterpreterInput
 ): WorkflowInputInterpreterOutput {
@@ -692,6 +1109,20 @@ export function buildWorkflowInputInterpreterOutput(
       guidanceTitle: "",
       guidanceOptions: [],
       reason: "\u7528\u6237\u5728\u63d0\u51fa\u7814\u7a76\u65b9\u6cd5\u6216\u6982\u5ff5\u95ee\u9898",
+      confidence: "high",
+      profileUpdates: {}
+    };
+  }
+
+  if (looksLikeSmallTalkOrOffTopic(message)) {
+    return {
+      route: "general_research_chat",
+      interpretedIntent: "small_talk_or_off_topic",
+      normalizedUserMessage: message,
+      clarificationQuestion: "",
+      guidanceTitle: "",
+      guidanceOptions: [],
+      reason: "\u7528\u6237\u6b63\u5728\u5bd2\u6684\u3001\u8f93\u5165\u6807\u70b9\u6216\u63d0\u51fa\u975e\u79d1\u7814\u95ee\u9898",
       confidence: "high",
       profileUpdates: {}
     };
@@ -826,6 +1257,7 @@ export function detectTopic(raw: string): TopicDetectOutput {
 function normalizeTopicFragment(value: string, role: "x" | "y") {
   let cleaned = cleanTerm(value)
     .replace(/\s+/g, " ")
+    .replace(/^(?:我想|想)?研究/u, "")
     .replace(/^[“”"'`\s]+|[“”"'`\s]+$/gu, "")
     .trim();
 

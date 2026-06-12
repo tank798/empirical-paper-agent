@@ -9,6 +9,7 @@ import { heterogeneitySkill } from "./heterogeneity/definition";
 import { ivSkill } from "./iv/definition";
 import { mechanismSkill } from "./mechanism/definition";
 import { resultInterpretSkill } from "./result-interpret/definition";
+import { researchSetupInterpreterSkill } from "./research-setup-interpreter/definition";
 import { robustnessSkill } from "./robustness/definition";
 import { sopGuideSkill } from "./sop-guide/definition";
 import { stataErrorDebugSkill } from "./stata-error-debug/definition";
@@ -26,6 +27,7 @@ export const skillRegistry = {
   [SkillName.MECHANISM]: mechanismSkill,
   [SkillName.HETEROGENEITY]: heterogeneitySkill,
   [SkillName.IV]: ivSkill,
+  [SkillName.RESEARCH_SETUP_INTERPRETER]: researchSetupInterpreterSkill,
   [SkillName.WORKFLOW_INPUT_INTERPRETER]: workflowInputInterpreterSkill,
   [SkillName.GENERAL_RESEARCH_CHAT]: generalResearchChatSkill,
   [SkillName.RESULT_INTERPRET]: resultInterpretSkill,

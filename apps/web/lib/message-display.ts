@@ -6,8 +6,10 @@ const GENERIC_RESEARCH_OBJECTS = new Set([
   "企业",
   "上市公司",
   "中国上市公司",
+  "中国A股上市公司",
   "A 股上市公司",
   "A股上市公司",
+  "China A-share listed firms",
   "A-share listed firms"
 ]);
 

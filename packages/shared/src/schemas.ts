@@ -43,6 +43,7 @@ export const skillNameSchema = z.enum([
   SkillName.MECHANISM,
   SkillName.HETEROGENEITY,
   SkillName.IV,
+  SkillName.RESEARCH_SETUP_INTERPRETER,
   SkillName.WORKFLOW_INPUT_INTERPRETER,
   SkillName.GENERAL_RESEARCH_CHAT,
   SkillName.RESULT_INTERPRET,
@@ -383,6 +384,51 @@ export const workflowInputInterpreterOutputSchema = z.object({
     .optional()
 });
 
+export const researchSetupInterpreterProfilePatchSchema = researchProfileSchema
+  .pick({
+    normalizedTopic: true,
+    independentVariable: true,
+    dependentVariable: true,
+    researchObject: true,
+    relationship: true,
+    controls: true,
+    fixedEffects: true,
+    clusterVar: true,
+    panelId: true,
+    timeVar: true,
+    sampleScope: true,
+    analysisRoute: true,
+    didEnabled: true,
+    psmEnabled: true,
+    treatmentVar: true,
+    policyTimeVar: true,
+    policyStartYear: true,
+    instrumentVariable: true,
+    psmMatchVars: true,
+    mechanismVariables: true,
+    heterogeneityVars: true,
+    exportFormats: true,
+    notes: true,
+    dataDictionary: true
+  })
+  .partial();
+
+export const researchSetupInterpreterInputSchema = z.object({
+  userMessage: z.string().min(1),
+  currentStep: workflowStepSchema,
+  currentModule: z.string().optional().default(""),
+  topic: z.string().optional().default(""),
+  recentAssistantMessages: z.array(z.string()).optional().default([])
+});
+
+export const researchSetupInterpreterOutputSchema = z.object({
+  intent: z.enum(["research_setup", "research_question", "irrelevant"]),
+  profileUpdates: researchSetupInterpreterProfilePatchSchema.optional().default({}),
+  missingFields: z.array(z.string()).optional().default([]),
+  assistantMessage: z.string(),
+  confidence: z.enum(["high", "medium", "low"]).optional().default("medium")
+});
+
 export const resultInterpretInputSchema = z.object({
   resultText: z.string().min(1),
   currentModule: z.string(),
@@ -461,6 +507,9 @@ export type GeneralResearchChatOutput = z.infer<typeof generalResearchChatOutput
 export type WorkflowInputInterpreterProfilePatch = z.infer<typeof workflowInputInterpreterProfilePatchSchema>;
 export type WorkflowInputInterpreterInput = z.infer<typeof workflowInputInterpreterInputSchema>;
 export type WorkflowInputInterpreterOutput = z.infer<typeof workflowInputInterpreterOutputSchema>;
+export type ResearchSetupInterpreterProfilePatch = z.infer<typeof researchSetupInterpreterProfilePatchSchema>;
+export type ResearchSetupInterpreterInput = z.infer<typeof researchSetupInterpreterInputSchema>;
+export type ResearchSetupInterpreterOutput = z.infer<typeof researchSetupInterpreterOutputSchema>;
 export type ResultInterpretInput = z.infer<typeof resultInterpretInputSchema>;
 export type ResultInterpretOutput = z.infer<typeof resultInterpretOutputSchema>;
 export type StataErrorDebugInput = z.infer<typeof stataErrorDebugInputSchema>;

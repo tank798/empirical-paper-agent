@@ -70,6 +70,13 @@ export const skillExecutionProfiles: Record<SkillName, SkillExecutionProfile> = 
     includeResearchProfileInPrompt: false,
     timeoutMs: 20_000
   },
+  [SkillName.RESEARCH_SETUP_INTERPRETER]: {
+    llmProfile: "fast",
+    inferenceMessageLimit: 6,
+    promptMessageLimit: 6,
+    includeResearchProfileInPrompt: true,
+    timeoutMs: 15_000
+  },
   [SkillName.WORKFLOW_INPUT_INTERPRETER]: {
     llmProfile: "fast",
     inferenceMessageLimit: 6,

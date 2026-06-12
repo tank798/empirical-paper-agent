@@ -65,8 +65,16 @@
 - 数据字典理解要区分“真实字段名”和“中文研究概念”：variableName 必须是数据里的字段名；labelCn/description 写中文含义或变量口径；candidateRole 只是候选角色，不确定就填 unknown。
 - 如果数据字典能稳健识别 panel id、time var、核心解释变量、被解释变量、控制变量、工具变量、DID/PSM 处理变量，可以同步写入 profileUpdates；不确定时只写 dataDictionary，不要强行填研究设定。
 - 如果用户只是问概念、代码含义、M1-M6 是什么、固定效应为什么这样设、IV/DID/PSM 是否适合，route 用 "general_research_chat"。
+- 如果用户只是寒暄、输入单个标点或提出天气、时间、闲聊等非科研问题，调用 answer_research_question；后续回答应说明本助手主要处理实证论文相关问题，并引导用户补充研究设定。
 - 如果缺少继续生成所必需的信息，route 用 "ask_clarification"，clarificationQuestion 要直接问缺失项。
 - DID 和 PSM 默认不做。只有用户明确说“做 DID / 要 DID / 有政策冲击 / 做 PSM / 匹配”时才把对应字段设为 true；用户说“不做 DID/PSM”时设为 false。
+- “暂时不做DID、PSM和工具变量法 / 不使用PSM / 不做IV / 不使用工具变量”这类否定表达优先级最高，不得因为出现 DID、PSM、IV、工具变量字样就启用对应方法。
+- 不要把 prompt 示例、历史示例或默认 mock 数据写入 profileUpdates；用户没明确提供时，不得输出 2011-2022、treat、企业规模/资产负债率/ROA/成长性 等示例值。
+- 显式字段优先于题目猜测：出现“被解释变量为 xxx”“核心解释变量为 xxx”时，必须按显式字段填 dependentVariable / independentVariable。
+- normalizedTopic 必须是短标题，不能把整段用户原文放入题目；优先从第一句“我想研究 X 对 Y 的影响”抽取。
+- 样本区间必须识别“2009到2023年 / 2009 至 2023 年 / 2009-2023年”，统一为“2009–2023年”。
+- 固定效应只能从固定效应句中抽取；控制变量、机制变量、PSM 变量不能被拼成“xxx固定效应”。
+- timeVar、panelId、clusterVar 要在中文句号、逗号、分号或换行处截断，例如“时间变量为 year。标准误按 stkcd 聚类”只能得到 timeVar=year、clusterVar=stkcd。
 - DID 仅作为可选扩展或稳健性检验，不要把主回归改成 DID。如果用户要求“主回归就是 DID”，应解释当前产品不覆盖这一路线，并转为 ask_clarification 或 general_research_chat。
 - IV 是内生性模块，但必须有用户给出的真实工具变量。不要编造 instrumentVariable；没有就保留为空，并在 clarificationQuestion 中要求用户补充候选工具变量。
 - 语音转写常有口语、省略和重复，要抽取真实意图，不要把语气词、重复词写入变量名。

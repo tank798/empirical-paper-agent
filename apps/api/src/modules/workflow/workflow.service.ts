@@ -6,6 +6,7 @@ import {
   WorkflowStep,
   type DataDictionaryEntry,
   type ExportFormat,
+  type ResearchSetupInterpreterOutput,
   type ResearchProfile,
   type WorkflowProgressPayload
 } from "@empirical/shared";
@@ -13,7 +14,13 @@ import { MessagesService } from "../messages/messages.service";
 import { ProjectsService } from "../projects/projects.service";
 import { ResearchProfileService } from "../research-profile/research-profile.service";
 import { SkillsService } from "../skills/skills.service";
-import { normalizeFixedEffects } from "../skills/skill.utils";
+import { HarnessService } from "../harness/harness.service";
+import {
+  DEFAULT_SETUP_EXAMPLE_MESSAGE,
+  inferProfileUpdates,
+  normalizeFixedEffects,
+  wantsSetupExampleInput
+} from "../skills/skill.utils";
 
 type SetupDraft = {
   normalizedTopic: string;
@@ -63,6 +70,12 @@ type WorkflowRunEntry = {
   contentText: string;
 };
 
+type WorkflowModuleTask = {
+  id: "data" | "baseline" | "robustness" | "iv" | "mechanism" | "heterogeneity";
+  label: string;
+  entries: WorkflowRunEntry[];
+};
+
 const DEFAULT_RELATIONSHIP_LABEL = "正向、负向和不显著";
 const DEFAULT_RESEARCH_OBJECT = "中国A股上市公司";
 const EXPORT_FORMATS = new Set<ExportFormat>(["word", "latex", "excel", "stata_do"]);
@@ -78,10 +91,7 @@ const REQUIRED_SETUP_FIELDS: Array<{ key: SetupFieldKey; label: string; example:
     example: "控制变量：企业规模、资产负债率、ROA、现金流、股权集中度"
   },
   { key: "sampleScope", label: "样本区间", example: "样本区间：2011-2022年" },
-  { key: "fixedEffects", label: "固定效应", example: "固定效应：企业固定效应、年份固定效应" },
-  { key: "panelId", label: "个体变量", example: "个体变量：firm_id 或 stkcd" },
-  { key: "timeVar", label: "时间变量", example: "时间变量：year" },
-  { key: "instrumentVariable", label: "工具变量", example: "工具变量：iv_index（必须是真实变量名或候选变量名）" }
+  { key: "fixedEffects", label: "固定效应", example: "固定效应：企业固定效应、年份固定效应" }
 ];
 
 const GENERATED_WORKFLOW: WorkflowRunEntry[] = [
@@ -127,37 +137,48 @@ const GENERATED_WORKFLOW: WorkflowRunEntry[] = [
   }
 ];
 
+const DATA_WORKFLOW_STEPS = new Set<WorkflowStep>([
+  WorkflowStep.SOP_GUIDE,
+  WorkflowStep.DATA_CLEANING,
+  WorkflowStep.DATA_CHECK
+]);
 
-const WORKFLOW_PROGRESS_BY_STEP: Partial<
-  Record<WorkflowStep, { currentCount: number; stageLabel: string }>
-> = {
-  [WorkflowStep.DATA_CHECK]: {
-    currentCount: 2,
-    stageLabel: "数据处理"
+const GENERATED_WORKFLOW_MODULES: WorkflowModuleTask[] = [
+  {
+    id: "data",
+    label: "路径与数据",
+    entries: GENERATED_WORKFLOW.filter((entry) => DATA_WORKFLOW_STEPS.has(entry.step))
   },
-  [WorkflowStep.BASELINE_REGRESSION]: {
-    currentCount: 3,
-    stageLabel: "基准回归"
+  {
+    id: "baseline",
+    label: "基准回归",
+    entries: GENERATED_WORKFLOW.filter((entry) => entry.step === WorkflowStep.BASELINE_REGRESSION)
   },
-  [WorkflowStep.ROBUSTNESS]: {
-    currentCount: 4,
-    stageLabel: "稳健性检验"
+  {
+    id: "robustness",
+    label: "稳健性检验",
+    entries: GENERATED_WORKFLOW.filter((entry) => entry.step === WorkflowStep.ROBUSTNESS)
   },
-  [WorkflowStep.IV]: {
-    currentCount: 5,
-    stageLabel: "内生性分析"
+  {
+    id: "iv",
+    label: "内生性分析",
+    entries: GENERATED_WORKFLOW.filter((entry) => entry.step === WorkflowStep.IV)
   },
-  [WorkflowStep.MECHANISM]: {
-    currentCount: 6,
-    stageLabel: "机制分析"
+  {
+    id: "mechanism",
+    label: "机制分析",
+    entries: GENERATED_WORKFLOW.filter((entry) => entry.step === WorkflowStep.MECHANISM)
   },
-  [WorkflowStep.HETEROGENEITY]: {
-    currentCount: 7,
-    stageLabel: "异质性分析"
+  {
+    id: "heterogeneity",
+    label: "异质性分析",
+    entries: GENERATED_WORKFLOW.filter((entry) => entry.step === WorkflowStep.HETEROGENEITY)
   }
-};
+];
 
 const TOTAL_WORKFLOW_STAGE_COUNT = 7;
+const WORKFLOW_GENERATION_CONCURRENCY = 3;
+const WORKFLOW_GENERATION_RETRIES = 2;
 
 @Injectable()
 export class WorkflowService {
@@ -165,7 +186,8 @@ export class WorkflowService {
     private readonly projectsService: ProjectsService,
     private readonly messagesService: MessagesService,
     private readonly researchProfileService: ResearchProfileService,
-    private readonly skillsService: SkillsService
+    private readonly skillsService: SkillsService,
+    private readonly harnessService: HarnessService
   ) {}
 
   async handleNext(params: {
@@ -174,6 +196,7 @@ export class WorkflowService {
     userMessage: string;
     requestedStep?: WorkflowStep;
     payload?: Record<string, unknown>;
+    agentRunId?: string | null;
     onProgress?: (progress: WorkflowProgressPayload) => void | Promise<void>;
   }) {
     const project = await this.projectsService.assertProjectAccess(
@@ -182,45 +205,109 @@ export class WorkflowService {
     );
 
     const requestedStep = (params.requestedStep ?? project.currentStep) as WorkflowStep;
+    const budgetedMessage = await this.harnessService.budgetUserMessage({
+      projectId: params.projectId,
+      runId: params.agentRunId ?? null,
+      userMessage: params.userMessage
+    });
+    const userMessage = budgetedMessage.userMessage;
 
     await this.messagesService.createMessage({
       projectId: params.projectId,
       role: "user",
       messageType: AssistantMessageType.SYSTEM_NOTICE,
       step: requestedStep,
-      contentText: params.userMessage,
+      contentText: userMessage,
       contentJson: {
-        userMessage: params.userMessage,
+        userMessage,
+        artifactIds: budgetedMessage.artifactIds,
         payload: params.payload ?? {},
         requestedStep
       }
     });
 
-    if (Object.keys(params.payload ?? {}).length > 0) {
-      await this.researchProfileService.mergeExplicitUpdates(params.projectId, params.payload ?? {});
-    }
-
-    if (this.looksLikeStataError(params.userMessage)) {
+    if (this.looksLikeStataError(userMessage)) {
       return this.runSideSkill(
         params.projectId,
         requestedStep,
         SkillName.STATA_ERROR_DEBUG,
-        { userMessage: params.userMessage, ...params.payload },
-        project.currentStep as WorkflowStep
+        { userMessage, ...params.payload },
+        project.currentStep as WorkflowStep,
+        params.agentRunId
       );
     }
 
-    if (this.looksLikeRegressionResult(params.userMessage)) {
+    if (this.looksLikeRegressionResult(userMessage)) {
       return this.runSideSkill(
         params.projectId,
         requestedStep,
         SkillName.RESULT_INTERPRET,
         {
-          userMessage: params.userMessage,
+          userMessage,
           currentModule: requestedStep,
           ...params.payload
         },
-        project.currentStep as WorkflowStep
+        project.currentStep as WorkflowStep,
+        params.agentRunId
+      );
+    }
+
+    if (this.isSetupStep(requestedStep)) {
+      if (wantsSetupExampleInput(userMessage)) {
+        return this.runSetupInterpreterMessage(params.projectId, requestedStep, {
+          intent: "research_question",
+          profileUpdates: {},
+          missingFields: [],
+          // 示例请求直接回答，不进入 handleSetupCollection，因此不会写入 researchProfile。
+          assistantMessage: DEFAULT_SETUP_EXAMPLE_MESSAGE,
+          confidence: "high"
+        });
+      }
+
+      if (this.isConfirmation(userMessage)) {
+        return this.handleSetupCollection(
+          params.projectId,
+          userMessage,
+          params.payload ?? {},
+          true,
+          params.agentRunId,
+          params.onProgress
+        );
+      }
+
+      const setupInterpreter = await this.skillsService.executeSkill({
+        projectId: params.projectId,
+        skillName: SkillName.RESEARCH_SETUP_INTERPRETER,
+        step: requestedStep,
+        payload: {
+          userMessage,
+          currentStep: requestedStep,
+          currentModule: requestedStep
+        },
+        agentRunId: params.agentRunId
+      });
+      const setupData = setupInterpreter.data as ResearchSetupInterpreterOutput;
+
+      if (setupData.intent === "research_question" || setupData.intent === "irrelevant") {
+        return this.runSetupInterpreterMessage(params.projectId, requestedStep, setupData);
+      }
+
+      const interpretedUpdates = this.cleanProfileUpdatePayload(setupData.profileUpdates ?? {});
+      const deterministicUpdates = this.cleanProfileUpdatePayload(inferProfileUpdates(userMessage) as Record<string, unknown>);
+      const effectivePayload = this.applyMethodNegationCleanup(userMessage, {
+        ...(params.payload ?? {}),
+        ...interpretedUpdates,
+        ...deterministicUpdates
+      });
+
+      return this.handleSetupCollection(
+        params.projectId,
+        userMessage,
+        effectivePayload,
+        false,
+        params.agentRunId,
+        params.onProgress,
+        setupData
       );
     }
 
@@ -229,33 +316,33 @@ export class WorkflowService {
       skillName: SkillName.WORKFLOW_INPUT_INTERPRETER,
       step: requestedStep,
       payload: {
-        userMessage: params.userMessage,
+        userMessage,
         currentStep: requestedStep,
         currentModule: requestedStep
-      }
+      },
+      agentRunId: params.agentRunId
     });
 
     const interpretedUpdates = this.cleanProfileUpdatePayload(
       (interpreter.data.profileUpdates as Record<string, unknown> | undefined) ?? {}
     );
-    if (Object.keys(interpretedUpdates).length > 0) {
-      await this.researchProfileService.mergeExplicitUpdates(params.projectId, interpretedUpdates);
-    }
-
-    const effectivePayload = {
+    const deterministicUpdates = this.cleanProfileUpdatePayload(inferProfileUpdates(userMessage) as Record<string, unknown>);
+    const effectivePayload = this.applyMethodNegationCleanup(userMessage, {
       ...(params.payload ?? {}),
-      ...interpretedUpdates
-    };
+      ...interpretedUpdates,
+      ...deterministicUpdates
+    });
     const effectiveUserMessage =
       (typeof interpreter.data.normalizedUserMessage === "string" &&
-        interpreter.data.normalizedUserMessage.trim()) || params.userMessage;
+        interpreter.data.normalizedUserMessage.trim()) || userMessage;
 
-    if (!this.isSetupStep(requestedStep) && this.hasSetupUpdates(effectivePayload)) {
+    if (this.hasSetupUpdates(effectivePayload)) {
       return this.resetToSetupConfirmation(
         params.projectId,
         effectiveUserMessage,
         effectivePayload,
-        "研究设定已变化。我先帮您更新摘要，确认后会重新生成整套 Stata 工作流。"
+        "研究设定已变化。我先帮您更新摘要，确认后会重新生成整套 Stata 工作流。",
+        params.agentRunId
       );
     }
 
@@ -280,17 +367,8 @@ export class WorkflowService {
           currentModule: requestedStep,
           ...effectivePayload
         },
-        project.currentStep as WorkflowStep
-      );
-    }
-
-    if (this.isSetupStep(requestedStep)) {
-      return this.handleSetupCollection(
-        params.projectId,
-        effectiveUserMessage,
-        effectivePayload,
-        this.isConfirmation(effectiveUserMessage),
-        params.onProgress
+        project.currentStep as WorkflowStep,
+        params.agentRunId
       );
     }
 
@@ -299,8 +377,50 @@ export class WorkflowService {
       requestedStep,
       effectiveUserMessage,
       effectivePayload,
-      project.currentStep as WorkflowStep
+      project.currentStep as WorkflowStep,
+      params.agentRunId
     );
+  }
+
+  private async runSetupInterpreterMessage(
+    projectId: string,
+    currentStep: WorkflowStep,
+    setupData: ResearchSetupInterpreterOutput
+  ) {
+    const assistantText = this.normalizeSetupInterpreterAssistantMessage(setupData);
+    const assistantMessage = await this.messagesService.createMessage({
+      projectId,
+      role: "assistant",
+      messageType:
+        setupData.intent === "research_question"
+          ? AssistantMessageType.RESEARCH_CHAT
+          : AssistantMessageType.SYSTEM_NOTICE,
+      step: currentStep,
+      contentText: assistantText,
+      contentJson: {
+        ...setupData,
+        assistantMessage: assistantText
+      } as unknown as Record<string, unknown>
+    });
+
+    return {
+      projectId,
+      currentStep,
+      assistantMessage
+    };
+  }
+
+  private normalizeSetupInterpreterAssistantMessage(setupData: ResearchSetupInterpreterOutput) {
+    const text = setupData.assistantMessage.trim();
+    if (setupData.intent !== "irrelevant") {
+      return text;
+    }
+
+    if (/无关|非科研|不属于.*科研|和.*研究.*无关/.test(text)) {
+      return text;
+    }
+
+    return `您刚才的内容似乎和经管实证论文研究无关。${text}`;
   }
 
   private async handleSetupCollection(
@@ -308,9 +428,11 @@ export class WorkflowService {
     userMessage: string,
     payload: Record<string, unknown>,
     confirmed: boolean,
-    onProgress?: (progress: WorkflowProgressPayload) => void | Promise<void>
+    agentRunId?: string | null,
+    onProgress?: (progress: WorkflowProgressPayload) => void | Promise<void>,
+    setupInterpretation?: ResearchSetupInterpreterOutput
   ) {
-    const draft = await this.buildSetupDraft(projectId, userMessage, payload);
+    const draft = await this.buildSetupDraft(projectId, userMessage, payload, agentRunId);
     const missingFields = this.getMissingSetupFields(draft);
     const hasAnySetupContent = this.hasAnySetupContent(draft);
 
@@ -329,31 +451,50 @@ export class WorkflowService {
     await this.projectsService.updateCurrentStep(projectId, WorkflowStep.TOPIC_NORMALIZE, SkillName.TOPIC_NORMALIZE);
 
     if (!hasAnySetupContent || this.isMeaninglessSetupInput(userMessage, draft)) {
-      await this.clearSetupAssistantMessages(projectId);
-      return this.runSystemNotice(projectId, WorkflowStep.TOPIC_NORMALIZE, this.buildSetupCollectionPrompt());
+      const prompt = this.buildSetupCollectionPrompt();
+      return this.runSystemNotice(projectId, WorkflowStep.TOPIC_NORMALIZE, {
+        ...prompt,
+        ...(setupInterpretation?.assistantMessage ? { message: setupInterpretation.assistantMessage } : {}),
+        intent: setupInterpretation?.intent,
+        confidence: setupInterpretation?.confidence
+      });
     }
 
     await this.persistSetupDraft(projectId, draft);
 
     if (missingFields.length > 0) {
-      await this.clearSetupAssistantMessages(projectId);
+      const notice = this.buildMissingFieldsNotice(draft, missingFields);
+      const payload = {
+        ...notice,
+        ...(setupInterpretation?.assistantMessage ? { message: setupInterpretation.assistantMessage } : {}),
+        intent: setupInterpretation?.intent,
+        modelMissingFields: setupInterpretation?.missingFields ?? [],
+        confidence: setupInterpretation?.confidence
+      };
 
       if (confirmed) {
-        return this.runSystemNotice(projectId, WorkflowStep.TOPIC_NORMALIZE, this.buildMissingFieldsNotice(draft, missingFields));
+        return this.runSystemNotice(projectId, WorkflowStep.TOPIC_NORMALIZE, payload);
       }
 
-      return this.runSystemNotice(projectId, WorkflowStep.TOPIC_NORMALIZE, this.buildMissingFieldsNotice(draft, missingFields));
+      return this.runSystemNotice(projectId, WorkflowStep.TOPIC_NORMALIZE, payload);
     }
 
     if (!confirmed) {
-      await this.clearSetupAssistantMessages(projectId);
       const assistantMessage = await this.messagesService.createMessage({
         projectId,
         role: "assistant",
         messageType: AssistantMessageType.TOPIC_CONFIRM,
         step: WorkflowStep.TOPIC_NORMALIZE,
-        contentText: "我已经整理好一版研究设定。确认后我会一次性生成完整的 Stata 工作流。",
-        contentJson: this.buildSetupConfirmationContent(draft)
+        contentText:
+          setupInterpretation?.assistantMessage ||
+          "我已经整理好一版研究设定。确认后我会一次性生成完整的 Stata 工作流。",
+        contentJson: {
+          ...this.buildSetupConfirmationContent(draft),
+          intent: setupInterpretation?.intent ?? "research_setup",
+          missingFields: [],
+          modelMissingFields: setupInterpretation?.missingFields ?? [],
+          confidence: setupInterpretation?.confidence
+        }
       });
 
       return {
@@ -364,7 +505,7 @@ export class WorkflowService {
     }
 
     await this.researchProfileService.mergeExplicitUpdates(projectId, draft as unknown as Partial<ResearchProfile>);
-    const primaryMessage = await this.runFullWorkflowGeneration(projectId, draft, onProgress);
+    const primaryMessage = await this.runFullWorkflowGeneration(projectId, draft, agentRunId, onProgress);
 
     return {
       projectId,
@@ -378,10 +519,11 @@ export class WorkflowService {
     requestedStep: WorkflowStep,
     userMessage: string,
     payload: Record<string, unknown>,
-    projectCurrentStep: WorkflowStep
+    projectCurrentStep: WorkflowStep,
+    agentRunId?: string | null
   ) {
     if (this.wantsRegenerateModule(userMessage)) {
-      return this.runModuleSkill(projectId, requestedStep, payload, projectCurrentStep);
+      return this.runModuleSkill(projectId, requestedStep, payload, projectCurrentStep, agentRunId);
     }
 
     if (this.wantsNext(userMessage)) {
@@ -399,7 +541,8 @@ export class WorkflowService {
         currentModule: requestedStep,
         ...payload
       },
-      projectCurrentStep
+      projectCurrentStep,
+      agentRunId
     );
   }
 
@@ -407,9 +550,15 @@ export class WorkflowService {
     projectId: string,
     userMessage: string,
     payload: Record<string, unknown>,
-    message: string
+    message: string,
+    agentRunId?: string | null
   ) {
-    const draft = await this.buildSetupDraft(projectId, userMessage, payload);
+    const beforeProfile = await this.researchProfileService.getByProjectId(projectId);
+    const draft = await this.buildSetupDraft(projectId, userMessage, payload, agentRunId);
+    const profileDiff = this.harnessService.buildProfileDiff(
+      beforeProfile ? this.profileSnapshot(beforeProfile as unknown as Record<string, unknown>) : null,
+      this.profileSnapshot(draft as unknown as Record<string, unknown>)
+    );
     await this.persistSetupDraft(projectId, draft);
     await this.resetGeneratedSteps(projectId);
     await this.projectsService.updateStepStatus(projectId, WorkflowStep.TOPIC_DETECT, ProjectStepStatus.COMPLETED, {});
@@ -417,7 +566,6 @@ export class WorkflowService {
     await this.projectsService.updateCurrentStep(projectId, WorkflowStep.TOPIC_NORMALIZE, SkillName.TOPIC_NORMALIZE);
 
     const missingFields = this.getMissingSetupFields(draft);
-    await this.clearSetupAssistantMessages(projectId);
 
     if (missingFields.length > 0) {
       return this.runSystemNotice(projectId, WorkflowStep.TOPIC_NORMALIZE, this.buildMissingFieldsNotice(draft, missingFields, message));
@@ -429,7 +577,10 @@ export class WorkflowService {
       messageType: AssistantMessageType.TOPIC_CONFIRM,
       step: WorkflowStep.TOPIC_NORMALIZE,
       contentText: message,
-      contentJson: this.buildSetupConfirmationContent(draft)
+      contentJson: {
+        ...this.buildSetupConfirmationContent(draft),
+        profileDiff
+      }
     });
 
     return {
@@ -442,7 +593,8 @@ export class WorkflowService {
   private async buildSetupDraft(
     projectId: string,
     userMessage: string,
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
+    agentRunId?: string | null
   ): Promise<SetupDraft> {
     const stored = await this.researchProfileService.getByProjectId(projectId);
     const draft: SetupDraft = {
@@ -513,6 +665,9 @@ export class WorkflowService {
     if (draft.exportFormats.length === 0 && typeof payload.exportFormats === "string") {
       draft.exportFormats = this.normalizeExportFormats(this.splitItems(String(payload.exportFormats)));
     }
+    if (!draft.sampleScope) {
+      draft.sampleScope = this.inferSampleScopeFromText(userMessage);
+    }
 
     if ((draft.normalizedTopic && !draft.independentVariable) || (draft.normalizedTopic && !draft.dependentVariable)) {
       const inferredFromTopic = this.inferTopicFromSentence(draft.normalizedTopic);
@@ -532,7 +687,8 @@ export class WorkflowService {
           step: WorkflowStep.TOPIC_NORMALIZE,
           payload: {
             rawTopic: userMessage
-          }
+          },
+          agentRunId
         });
         const normalizedData = normalized.data as {
           normalizedTopic?: string;
@@ -558,8 +714,22 @@ export class WorkflowService {
     }
 
     draft.relationship = DEFAULT_RELATIONSHIP_LABEL;
-    draft.clusterVar ||= draft.panelId;
-    if (draft.didEnabled) {
+    if (/(?:不做|暂时不做|先不做|不使用|不用|不需要|无需).{0,12}(?:PSM|倾向得分匹配)/i.test(userMessage)) {
+      draft.psmEnabled = false;
+      draft.psmMatchVars = [];
+    }
+    if (/(?:不做|暂时不做|先不做|不使用|不用|不需要|无需).{0,12}(?:DID|双重差分)/i.test(userMessage)) {
+      draft.didEnabled = false;
+      draft.policyTimeVar = "";
+      draft.policyStartYear = "";
+    }
+    if (!draft.didEnabled && !draft.psmEnabled) {
+      draft.treatmentVar = "";
+    }
+    if (/(?:不做|暂时不做|先不做|不使用|不用|不需要|无需).{0,12}(?:IV|工具变量|工具变量法)/i.test(userMessage)) {
+      draft.instrumentVariable = "";
+    }
+    if (draft.didEnabled && draft.timeVar) {
       draft.policyTimeVar ||= draft.timeVar;
     }
     if (!draft.exportFormats.length) {
@@ -605,6 +775,7 @@ export class WorkflowService {
   private async runFullWorkflowGeneration(
     projectId: string,
     draft: SetupDraft,
+    agentRunId?: string | null,
     onProgress?: (progress: WorkflowProgressPayload) => void | Promise<void>
   ) {
     await this.resetGeneratedSteps(projectId);
@@ -612,67 +783,58 @@ export class WorkflowService {
     await this.projectsService.updateStepStatus(projectId, WorkflowStep.TOPIC_NORMALIZE, ProjectStepStatus.COMPLETED, {});
 
     let primaryMessage = null as Awaited<ReturnType<MessagesService["createMessage"]>> | null;
+    let completedCount = 1;
 
-    for (const entry of GENERATED_WORKFLOW) {
-      await this.projectsService.updateStepStatus(projectId, entry.step, ProjectStepStatus.IN_PROGRESS, { generatedInBatch: true });
-
-      const run = await this.skillsService.executeSkill({
-        projectId,
-        skillName: entry.skillName,
-        step: entry.step,
-        payload: {
-          normalizedTopic: draft.normalizedTopic,
-          researchObject: draft.researchObject,
-          independentVariable: draft.independentVariable,
-          dependentVariable: draft.dependentVariable,
-          controls: draft.controls,
-          fixedEffects: draft.fixedEffects,
-          sampleScope: draft.sampleScope,
-          clusterVar: draft.clusterVar || undefined,
-          panelId: draft.panelId || undefined,
-          timeVar: draft.timeVar || undefined,
-          analysisRoute: draft.analysisRoute,
-          didEnabled: draft.didEnabled,
-          psmEnabled: draft.psmEnabled,
-          treatmentVar: draft.treatmentVar || undefined,
-          policyTimeVar: draft.policyTimeVar || undefined,
-          policyStartYear: draft.policyStartYear || undefined,
-          instrumentVariable: draft.instrumentVariable || undefined,
-          psmMatchVars: draft.psmMatchVars,
-          mechanismVariables: draft.mechanismVariables,
-          heterogeneityVars: draft.heterogeneityVars,
-          exportFormats: draft.exportFormats,
-          notes: draft.notes || undefined,
-          dataDictionary: draft.dataDictionary
-        }
+    if (onProgress) {
+      await onProgress({
+        currentCount: completedCount,
+        totalCount: TOTAL_WORKFLOW_STAGE_COUNT,
+        stageLabel: "主题确认",
+        remainingMinutes: 5
       });
-
-      const assistantMessage = await this.messagesService.createMessage({
-        projectId,
-        role: "assistant",
-        messageType: run.messageType,
-        step: entry.step,
-        contentText: entry.contentText,
-        contentJson: run.data
-      });
-
-      await this.projectsService.updateStepStatus(projectId, entry.step, ProjectStepStatus.COMPLETED, { generatedInBatch: true });
-
-      const progressMeta = WORKFLOW_PROGRESS_BY_STEP[entry.step];
-      if (progressMeta && onProgress) {
-        const remainingStages = Math.max(0, TOTAL_WORKFLOW_STAGE_COUNT - progressMeta.currentCount);
-        await onProgress({
-          currentCount: progressMeta.currentCount,
-          totalCount: TOTAL_WORKFLOW_STAGE_COUNT,
-          stageLabel: progressMeta.stageLabel,
-          remainingMinutes: remainingStages === 0 ? 0 : Math.max(1, Math.ceil(remainingStages * 0.8))
-        });
-      }
-
-      if (entry.step === WorkflowStep.DATA_CLEANING) {
-        primaryMessage = assistantMessage;
-      }
     }
+
+    let nextTaskIndex = 0;
+
+    // The workflow generates independent product modules with bounded concurrency.
+    // Each module may contain one or more ordered skills, but progress advances only
+    // when a user-facing module finishes successfully.
+    const runWorker = async () => {
+      while (nextTaskIndex < GENERATED_WORKFLOW_MODULES.length) {
+        const task = GENERATED_WORKFLOW_MODULES[nextTaskIndex];
+        nextTaskIndex += 1;
+
+        if (!task) {
+          continue;
+        }
+
+        try {
+          const result = await this.runWorkflowModuleTask(projectId, draft, task, agentRunId);
+          if (result.primaryMessage) {
+            primaryMessage = result.primaryMessage;
+          }
+          completedCount += 1;
+          if (onProgress) {
+            const remainingStages = Math.max(0, TOTAL_WORKFLOW_STAGE_COUNT - completedCount);
+            await onProgress({
+              currentCount: completedCount,
+              totalCount: TOTAL_WORKFLOW_STAGE_COUNT,
+              stageLabel: task.label,
+              remainingMinutes: remainingStages === 0 ? 0 : Math.max(1, Math.ceil(remainingStages * 0.8))
+            });
+          }
+        } catch (error) {
+          await this.createWorkflowModuleFailureNotice(projectId, task, error);
+        }
+      }
+    };
+
+    await Promise.all(
+      Array.from(
+        { length: Math.min(WORKFLOW_GENERATION_CONCURRENCY, GENERATED_WORKFLOW_MODULES.length) },
+        () => runWorker()
+      )
+    );
 
     await this.projectsService.updateStepStatus(projectId, WorkflowStep.DATA_CLEANING, ProjectStepStatus.IN_PROGRESS, {
       generatedInBatch: true,
@@ -698,6 +860,132 @@ export class WorkflowService {
     return fallbackMessage;
   }
 
+  private buildWorkflowSkillPayload(draft: SetupDraft) {
+    return {
+      normalizedTopic: draft.normalizedTopic,
+      researchObject: draft.researchObject,
+      independentVariable: draft.independentVariable,
+      dependentVariable: draft.dependentVariable,
+      controls: draft.controls,
+      fixedEffects: draft.fixedEffects,
+      sampleScope: draft.sampleScope,
+      clusterVar: draft.clusterVar || undefined,
+      panelId: draft.panelId || undefined,
+      timeVar: draft.timeVar || undefined,
+      analysisRoute: draft.analysisRoute,
+      didEnabled: draft.didEnabled,
+      psmEnabled: draft.psmEnabled,
+      treatmentVar: draft.treatmentVar || undefined,
+      policyTimeVar: draft.policyTimeVar || undefined,
+      policyStartYear: draft.policyStartYear || undefined,
+      instrumentVariable: draft.instrumentVariable || undefined,
+      psmMatchVars: draft.psmMatchVars,
+      mechanismVariables: draft.mechanismVariables,
+      heterogeneityVars: draft.heterogeneityVars,
+      exportFormats: draft.exportFormats,
+      notes: draft.notes || undefined,
+      dataDictionary: draft.dataDictionary
+    };
+  }
+
+  private async runWorkflowModuleTask(
+    projectId: string,
+    draft: SetupDraft,
+    task: WorkflowModuleTask,
+    agentRunId?: string | null
+  ) {
+    let primaryMessage = null as Awaited<ReturnType<MessagesService["createMessage"]>> | null;
+
+    for (const entry of task.entries) {
+      await this.projectsService.updateStepStatus(projectId, entry.step, ProjectStepStatus.IN_PROGRESS, {
+        generatedInBatch: true,
+        moduleId: task.id
+      });
+
+      const assistantMessage = await this.retryWorkflowEntry(projectId, draft, entry, agentRunId);
+
+      await this.projectsService.updateStepStatus(projectId, entry.step, ProjectStepStatus.COMPLETED, {
+        generatedInBatch: true,
+        moduleId: task.id
+      });
+
+      if (entry.step === WorkflowStep.DATA_CLEANING) {
+        primaryMessage = assistantMessage;
+      }
+    }
+
+    return { primaryMessage };
+  }
+
+  private async retryWorkflowEntry(
+    projectId: string,
+    draft: SetupDraft,
+    entry: WorkflowRunEntry,
+    agentRunId?: string | null
+  ) {
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt <= WORKFLOW_GENERATION_RETRIES; attempt += 1) {
+      try {
+        const run = await this.skillsService.executeSkill({
+          projectId,
+          skillName: entry.skillName,
+          step: entry.step,
+          payload: this.buildWorkflowSkillPayload(draft),
+          agentRunId
+        });
+
+        return this.messagesService.createMessage({
+          projectId,
+          role: "assistant",
+          messageType: run.messageType,
+          step: entry.step,
+          contentText: entry.contentText,
+          contentJson: run.data
+        });
+      } catch (error) {
+        lastError = error;
+        if (attempt < WORKFLOW_GENERATION_RETRIES) {
+          await this.sleep(1000 * 2 ** attempt);
+        }
+      }
+    }
+
+    await this.projectsService.updateStepStatus(projectId, entry.step, ProjectStepStatus.BLOCKED, {
+      generatedInBatch: true,
+      error: lastError instanceof Error ? lastError.message : "模块生成失败"
+    });
+    throw lastError instanceof Error ? lastError : new Error("模块生成失败");
+  }
+
+  private async createWorkflowModuleFailureNotice(projectId: string, task: WorkflowModuleTask, error: unknown) {
+    await Promise.all(
+      task.entries.map((entry) =>
+        this.projectsService.updateStepStatus(projectId, entry.step, ProjectStepStatus.BLOCKED, {
+          generatedInBatch: true,
+          moduleId: task.id,
+          error: error instanceof Error ? error.message : "模块生成失败"
+        })
+      )
+    );
+
+    await this.messagesService.createMessage({
+      projectId,
+      role: "assistant",
+      messageType: AssistantMessageType.SYSTEM_NOTICE,
+      step: task.entries[0]?.step ?? WorkflowStep.DATA_CLEANING,
+      contentText: `${task.label}生成失败，稍后可以在该模块中重新生成。`,
+      contentJson: {
+        message: `${task.label}生成失败，稍后可以在该模块中重新生成。`,
+        error: error instanceof Error ? error.message : "模块生成失败"
+      }
+    });
+  }
+
+  private sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   private async resetGeneratedSteps(projectId: string) {
     await this.messagesService.clearAssistantMessagesForSteps(
       projectId,
@@ -720,7 +1008,8 @@ export class WorkflowService {
     projectId: string,
     requestedStep: WorkflowStep,
     payload: Record<string, unknown>,
-    projectCurrentStep: WorkflowStep
+    projectCurrentStep: WorkflowStep,
+    agentRunId?: string | null
   ) {
     const skillName = this.resolveSkillForStep(requestedStep);
     if (!skillName) {
@@ -733,7 +1022,8 @@ export class WorkflowService {
       projectId,
       skillName,
       step: requestedStep,
-      payload
+      payload,
+      agentRunId
     });
 
     await this.messagesService.clearAssistantMessagesForSteps(projectId, [requestedStep]);
@@ -778,6 +1068,7 @@ export class WorkflowService {
         ...REQUIRED_SETUP_FIELDS.map((item) => item.example),
         "可选：如果需要 DID，请说明处理组变量和政策年份；如果不需要，可以直接说不做 DID",
         "可选：如果需要 PSM，请说明处理变量和匹配变量；如果不需要，可以直接说不做 PSM",
+        "可选：如果需要 IV，请提供真实工具变量；如果暂时没有，可以先不做 IV",
         "可选：如果已有机制变量或分组变量，也可以一起告诉我"
       ]
     };
@@ -826,6 +1117,32 @@ export class WorkflowService {
       exportFormats: draft.exportFormats,
       dataDictionary: draft.dataDictionary,
       confirmationMessage: "如无问题，请确认并直接生成整套 Stata 工作流。"
+    };
+  }
+
+  private profileSnapshot(value: Record<string, unknown>) {
+    return {
+      normalizedTopic: value.normalizedTopic ?? "",
+      independentVariable: value.independentVariable ?? "",
+      dependentVariable: value.dependentVariable ?? "",
+      researchObject: value.researchObject ?? "",
+      controls: value.controls ?? [],
+      sampleScope: value.sampleScope ?? null,
+      fixedEffects: value.fixedEffects ?? [],
+      panelId: value.panelId ?? null,
+      timeVar: value.timeVar ?? null,
+      clusterVar: value.clusterVar ?? null,
+      didEnabled: value.didEnabled ?? false,
+      psmEnabled: value.psmEnabled ?? false,
+      treatmentVar: value.treatmentVar ?? null,
+      policyTimeVar: value.policyTimeVar ?? null,
+      policyStartYear: value.policyStartYear ?? null,
+      instrumentVariable: value.instrumentVariable ?? null,
+      psmMatchVars: value.psmMatchVars ?? [],
+      mechanismVariables: value.mechanismVariables ?? [],
+      heterogeneityVars: value.heterogeneityVars ?? [],
+      exportFormats: value.exportFormats ?? [],
+      dataDictionary: value.dataDictionary ?? []
     };
   }
 
@@ -884,9 +1201,6 @@ export class WorkflowService {
         draft.controls.length ||
         draft.sampleScope ||
         draft.fixedEffects.length ||
-        draft.panelId ||
-        draft.timeVar ||
-        draft.clusterVar ||
         draft.didEnabled ||
         draft.psmEnabled ||
         draft.instrumentVariable ||
@@ -920,6 +1234,22 @@ export class WorkflowService {
     };
   }
 
+  private inferSampleScopeFromText(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return "";
+    }
+
+    const match = trimmed.match(
+      /(?:^|(?:样本|研究|数据|时间|年份|选择).{0,24})((?:19|20)\d{2})\s*年?\s*(?:-|~|～|〜|–|—|至|到)\s*((?:19|20)\d{2})\s*年?/i
+    );
+    if (!match) {
+      return "";
+    }
+
+    return `${match[1]}–${match[2]}年`;
+  }
+
   private shouldTryNormalizeTopic(userMessage: string, draft: SetupDraft) {
     if (draft.normalizedTopic && draft.independentVariable && draft.dependentVariable) {
       return false;
@@ -939,8 +1269,8 @@ export class WorkflowService {
       return "";
     }
 
-    const normalized = trimmed.replace(/A股上市公司|A 股上市公司|A-share listed firms/i, DEFAULT_RESEARCH_OBJECT);
-    return normalized === "上市公司" || normalized === "企业" || normalized === "中国企业"
+    const normalized = trimmed.replace(/(?:中国)?A\s*股上市公司|(?:China\s+)?A-share listed firms/i, DEFAULT_RESEARCH_OBJECT);
+    return normalized === "上市公司" || normalized === "企业" || normalized === "中国企业" || normalized === "中国上市公司"
       ? DEFAULT_RESEARCH_OBJECT
       : normalized;
   }
@@ -1030,8 +1360,13 @@ export class WorkflowService {
   }
 
   private looksLikeStataError(userMessage: string) {
-    return /r\(\d+\)|not found|invalid syntax|command .* not found|type mismatch|variable .* not found|stata/i.test(
-      userMessage
+    const text = userMessage.trim();
+    if (!text) {
+      return false;
+    }
+
+    return /r\(\d+\)|\b(error|invalid syntax|type mismatch|not found)\b|报错|错误|command .* (not found|unrecognized)|variable .* not found|no variables defined|option .* not allowed/i.test(
+      text
     );
   }
 
@@ -1157,20 +1492,68 @@ export class WorkflowService {
     return Array.from(normalized);
   }
 
+  private isInvalidProfileString(value: string) {
+    return /^(待补充|默认不做|不做|不需要|无需|默认|无|null|undefined)$/i.test(value.trim());
+  }
+
+  private cleanProfileValue(value: unknown) {
+    if (value == null) {
+      return undefined;
+    }
+
+    if (typeof value === "string") {
+      const normalized = value.trim();
+      return normalized && !this.isInvalidProfileString(normalized) ? normalized : undefined;
+    }
+
+    if (Array.isArray(value)) {
+      const cleaned = Array.from(
+        new Set(
+          value
+            .map((item) => String(item).trim())
+            .filter((item) => item && !this.isInvalidProfileString(item))
+        )
+      );
+      return cleaned.length > 0 ? cleaned : undefined;
+    }
+
+    return value;
+  }
+
+  private applyMethodNegationCleanup(userMessage: string, payload: Record<string, unknown>) {
+    const cleaned = { ...payload };
+    const didDisabled = /(?:不做|暂时不做|先不做|不使用|不用|不需要|无需).{0,12}(?:DID|双重差分)/i.test(userMessage);
+    const psmDisabled = /(?:不做|暂时不做|先不做|不使用|不用|不需要|无需).{0,12}(?:PSM|倾向得分匹配)/i.test(userMessage);
+    const ivDisabled = /(?:不做|暂时不做|先不做|不使用|不用|不需要|无需).{0,12}(?:IV|工具变量|工具变量法)/i.test(userMessage);
+
+    if (didDisabled) {
+      cleaned.didEnabled = false;
+      delete cleaned.policyTimeVar;
+      delete cleaned.policyStartYear;
+    }
+
+    if (psmDisabled) {
+      // 否定表达优先于关键词命中；出现“不做 PSM”时不能因为文本含 PSM 就启用匹配变量追问。
+      cleaned.psmEnabled = false;
+      delete cleaned.psmMatchVars;
+    }
+
+    if (didDisabled && psmDisabled) {
+      delete cleaned.treatmentVar;
+    }
+
+    if (ivDisabled) {
+      cleaned.instrumentVariable = null;
+    }
+
+    return cleaned;
+  }
+
   private cleanProfileUpdatePayload(payload: Record<string, unknown>) {
     return Object.fromEntries(
-      Object.entries(payload).filter(([, value]) => {
-        if (value == null) {
-          return false;
-        }
-        if (typeof value === "string") {
-          return value.trim().length > 0;
-        }
-        if (Array.isArray(value)) {
-          return value.length > 0;
-        }
-        return true;
-      })
+      Object.entries(payload)
+        .map(([key, value]) => [key, this.cleanProfileValue(value)] as const)
+        .filter(([, value]) => value !== undefined)
     );
   }
 
@@ -1197,13 +1580,15 @@ export class WorkflowService {
       | typeof SkillName.RESULT_INTERPRET
       | typeof SkillName.STATA_ERROR_DEBUG,
     payload: Record<string, unknown>,
-    projectCurrentStep: WorkflowStep
+    projectCurrentStep: WorkflowStep,
+    agentRunId?: string | null
   ) {
     const run = await this.skillsService.executeSkill({
       projectId,
       skillName,
       step: currentStep,
-      payload
+      payload,
+      agentRunId
     });
 
     const assistantMessage = await this.messagesService.createMessage({
