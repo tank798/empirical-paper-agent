@@ -658,13 +658,11 @@ function WorkspaceSidebar({
 function WorkspaceRightPanel({
   profile,
   mappings,
-  dictionary,
-  onOpenAssistant
+  dictionary
 }: {
   profile: ResearchProfile | null | undefined;
   mappings: TermMapping[];
   dictionary: DataDictionaryEntry[];
-  onOpenAssistant: () => void;
 }) {
   const profileRows = [
     ["被解释变量", profile?.dependentVariable],
@@ -683,16 +681,7 @@ function WorkspaceRightPanel({
       }));
 
   return (
-    <aside className="hidden min-h-0 flex-col gap-4 overflow-y-auto lg:flex">
-      <button
-        aria-label="打开 AI 助手"
-        className="inline-flex h-11 w-full items-center justify-center rounded-[16px] border border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.04)] transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
-        onClick={onOpenAssistant}
-        type="button"
-      >
-        AI 助手
-      </button>
-
+    <aside className="hidden-scrollbar hidden min-h-0 flex-col gap-4 overflow-y-auto lg:flex">
       <section className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-[0_12px_36px_rgba(15,23,42,0.05)]">
         <h2 className="text-sm font-semibold text-slate-950">研究设定</h2>
         <div className="mt-4 space-y-3">
@@ -793,7 +782,7 @@ function WorkspaceAssistantDrawer({
   };
 
   return (
-    <aside className="hidden h-full min-h-0 flex-col overflow-hidden border-l border-[#E5EAF2] bg-white shadow-[0_12px_40px_rgba(15,23,42,0.08)] transition-[transform,opacity] duration-[180ms] ease-out lg:flex">
+    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-[26px] border border-[#E5EAF2] bg-white/95 shadow-[-18px_0_48px_rgba(15,23,42,0.13)] ring-1 ring-white/70 backdrop-blur-xl transition-[transform,opacity] duration-[180ms] ease-out">
       <div className="hidden-scrollbar flex-1 overflow-y-auto px-5 py-5" onScroll={handleScroll} ref={scrollRef}>
         {messages.length === 0 ? (
           <div className="pt-[120px] text-center">
@@ -1718,7 +1707,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     <>
       <section
         className={clsx(
-          "mx-auto grid h-[calc(100vh-6.5rem)] max-w-[1760px] grid-cols-1 gap-5 overflow-hidden px-2 pb-3 transition-[opacity,transform] duration-200 md:grid-cols-[220px_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)_340px] xl:grid-cols-[260px_minmax(0,1fr)_380px]",
+          "mx-auto grid h-[calc(100vh-2.5rem)] max-w-[1760px] grid-cols-1 gap-5 overflow-hidden px-2 pb-0 transition-[opacity,transform] duration-200 md:grid-cols-[220px_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)_340px] xl:grid-cols-[260px_minmax(0,1fr)_380px]",
           pageEntered ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
         )}
       >
@@ -1779,18 +1768,44 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
               </div>
             )}
           </main>
-
-          {assistantOpen ? (
-            <button
-              aria-label="关闭 AI 助手蒙版"
-              className="assistant-page-mask absolute inset-0 z-20 rounded-[28px]"
-              onClick={() => setAssistantOpen(false)}
-              type="button"
-            />
-          ) : null}
         </div>
 
-        {assistantOpen ? (
+        <WorkspaceRightPanel
+          dictionary={dataDictionary}
+          mappings={termMappings}
+          profile={detail?.researchProfile}
+        />
+      </section>
+
+      {!assistantOpen ? (
+        <button
+          aria-label="打开 AI 助手"
+          className="assistant-float-arrow fixed right-3 top-1/2 z-40 inline-flex h-14 w-8 items-center justify-center text-4xl font-light leading-none text-slate-500/80 transition hover:text-slate-950"
+          onClick={() => setAssistantOpen(true)}
+          type="button"
+        >
+          ‹
+        </button>
+      ) : null}
+
+      <div
+        className={clsx(
+          "fixed inset-0 z-50 transition-opacity duration-[180ms] ease-out",
+          assistantOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+        )}
+      >
+        <button
+          aria-label="关闭 AI 助手"
+          className="absolute inset-0 h-full w-full cursor-default bg-transparent"
+          onClick={() => setAssistantOpen(false)}
+          type="button"
+        />
+        <div
+          className={clsx(
+            "absolute bottom-4 right-4 top-4 w-[min(460px,calc(100vw-2rem))] transition-[transform,opacity] duration-[180ms] ease-out",
+            assistantOpen ? "translate-x-0 opacity-100" : "translate-x-8 opacity-0"
+          )}
+        >
           <WorkspaceAssistantDrawer
             attachment={attachment}
             attachmentProcessing={attachmentProcessing}
@@ -1808,15 +1823,8 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
             onStop={stopAssistantMessage}
             sending={sending}
           />
-        ) : (
-          <WorkspaceRightPanel
-            dictionary={dataDictionary}
-            mappings={termMappings}
-            onOpenAssistant={() => setAssistantOpen(true)}
-            profile={detail?.researchProfile}
-          />
-        )}
-      </section>
+        </div>
+      </div>
 
       <input
         accept={SUPPORTED_ATTACHMENT_ACCEPT}
@@ -1826,7 +1834,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
         type="file"
       />
 
-      {/* 旧的确认主题居中蒙版和生成进度弹窗已移除；详情页只保留 AI Drawer 的正文蒙版。 */}
+      {/* 旧的确认主题居中蒙版和生成进度弹窗已移除；详情页 AI Drawer 只保留透明外部点击层，不再压灰正文。 */}
     </>
   );
 }

@@ -54,6 +54,11 @@ function normalizeAttachmentText(rawContent: string) {
   return rawContent
     .replace(/\u0000/g, "")
     .replace(/\r\n/g, "\n")
+    .replace(/([A-Za-z])[ \t]+([\u4e00-\u9fff])/g, "$1$2")
+    .replace(/([\u4e00-\u9fff])[ \t]+([A-Za-z])/g, "$1$2")
+    .replace(/([\u4e00-\u9fff])[ \t]+([\u4e00-\u9fff])/g, "$1$2")
+    .replace(/((?:19|20)\d{2})\s*年?\s*(?:-|~|\uFF5E|\u301C|\u2013|\u2014|至|到)\s*((?:19|20)\d{2})\s*年?/g, "$1到$2年")
+    .replace(/深沪A股/g, "沪深A股")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -169,12 +174,18 @@ async function readSpreadsheetAttachment(file: File): Promise<ComposerAttachment
   const sheetTexts: string[] = [];
   let truncated = workbook.SheetNames.length > MAX_SPREADSHEET_SHEETS;
   let totalLength = 0;
+  const orderedSheetNames = [...workbook.SheetNames].sort((a, b) => {
+    const score = (name: string) => (/变量|字典|说明|codebook|dictionary|field|字段/i.test(name) ? 0 : 1);
+    return score(a) - score(b);
+  });
 
-  for (const sheetName of workbook.SheetNames.slice(0, MAX_SPREADSHEET_SHEETS)) {
+  for (const sheetName of orderedSheetNames.slice(0, MAX_SPREADSHEET_SHEETS)) {
     const sheet = workbook.Sheets[sheetName];
     if (!sheet) {
       continue;
     }
+    const isDictionaryLikeSheet = /变量|字典|说明|codebook|dictionary|field|字段/i.test(sheetName);
+    const rowLimit = isDictionaryLikeSheet ? Math.max(MAX_SPREADSHEET_ROWS, 140) : 32;
 
     const rows = XLSX.utils.sheet_to_json(sheet, {
       header: 1,
@@ -183,11 +194,11 @@ async function readSpreadsheetAttachment(file: File): Promise<ComposerAttachment
       defval: ""
     }) as Array<Array<string | number | boolean | null>>;
 
-    if (rows.length > MAX_SPREADSHEET_ROWS) {
+    if (rows.length > rowLimit) {
       truncated = true;
     }
 
-    const previewRows = rows.slice(0, MAX_SPREADSHEET_ROWS).map((row) =>
+    const previewRows = rows.slice(0, rowLimit).map((row) =>
       row
         .map((cell) => String(cell ?? "").trim())
         .filter(Boolean)
@@ -270,6 +281,8 @@ export function buildComposerSubmission(rawMessage: string, attachment: Composer
   const attachmentExtension = attachment ? getFileExtension(attachment.name) : "";
   const looksLikeDictionaryAttachment =
     attachment?.source === "file" && ["csv", "xls", "xlsx", "json", "txt", "md"].includes(attachmentExtension);
+  const looksLikeResearchDocumentAttachment =
+    attachment?.source === "file" && ["pdf", "docx", "txt", "md"].includes(attachmentExtension);
   const baseMessage =
     rawMessage.trim() ||
     (attachment
@@ -277,6 +290,8 @@ export function buildComposerSubmission(rawMessage: string, attachment: Composer
         ? "请结合截图识别内容继续处理。"
         : looksLikeDictionaryAttachment
           ? "请判断这个附件是否是数据字典或字段表；如果是，请识别真实字段名、字段含义和候选变量角色。"
+          : looksLikeResearchDocumentAttachment
+            ? "请从附件中提取研究设定，包括研究主题、解释变量、被解释变量、样本区间、控制变量、机制变量、固定效应、面板个体变量、时间变量和聚类变量。"
           : "请结合附件内容继续处理。"
       : "");
 

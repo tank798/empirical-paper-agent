@@ -294,11 +294,10 @@ export class WorkflowService {
 
       const interpretedUpdates = this.cleanProfileUpdatePayload(setupData.profileUpdates ?? {});
       const deterministicUpdates = this.cleanProfileUpdatePayload(inferProfileUpdates(userMessage) as Record<string, unknown>);
-      const effectivePayload = this.applyMethodNegationCleanup(userMessage, {
-        ...(params.payload ?? {}),
-        ...interpretedUpdates,
-        ...deterministicUpdates
-      });
+      const effectivePayload = this.applyMethodNegationCleanup(
+        userMessage,
+        this.mergeModelFirstProfileUpdates(params.payload ?? {}, deterministicUpdates, interpretedUpdates)
+      );
 
       return this.handleSetupCollection(
         params.projectId,
@@ -327,11 +326,10 @@ export class WorkflowService {
       (interpreter.data.profileUpdates as Record<string, unknown> | undefined) ?? {}
     );
     const deterministicUpdates = this.cleanProfileUpdatePayload(inferProfileUpdates(userMessage) as Record<string, unknown>);
-    const effectivePayload = this.applyMethodNegationCleanup(userMessage, {
-      ...(params.payload ?? {}),
-      ...interpretedUpdates,
-      ...deterministicUpdates
-    });
+    const effectivePayload = this.applyMethodNegationCleanup(
+      userMessage,
+      this.mergeModelFirstProfileUpdates(params.payload ?? {}, deterministicUpdates, interpretedUpdates)
+    );
     const effectiveUserMessage =
       (typeof interpreter.data.normalizedUserMessage === "string" &&
         interpreter.data.normalizedUserMessage.trim()) || userMessage;
@@ -1518,6 +1516,19 @@ export class WorkflowService {
     }
 
     return value;
+  }
+
+  private mergeModelFirstProfileUpdates(
+    basePayload: Record<string, unknown>,
+    deterministicUpdates: Record<string, unknown>,
+    modelUpdates: Record<string, unknown>
+  ) {
+    // 研究设定抽取以大模型结构化结果为准；正则/文件解析只补模型漏掉的字段，不能再覆盖模型明确放入的位置。
+    return {
+      ...basePayload,
+      ...deterministicUpdates,
+      ...modelUpdates
+    };
   }
 
   private applyMethodNegationCleanup(userMessage: string, payload: Record<string, unknown>) {

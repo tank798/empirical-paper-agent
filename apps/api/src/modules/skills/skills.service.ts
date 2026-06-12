@@ -254,6 +254,71 @@ const workflowInterpreterTools: LlmFunctionTool[] = [
   }
 ];
 
+const researchSetupInterpreterTools: LlmFunctionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "update_research_profile",
+      description:
+        "用户提供、粘贴或上传了研究设定、开题报告、变量表或数据字典时调用。把能识别的研究主题、变量、样本、固定效应、面板字段和扩展方法放入 profileUpdates。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          assistantMessage: {
+            type: "string",
+            description: "给用户看的简短反馈；说明已识别内容和还缺什么，或提示可确认生成。"
+          },
+          missingFields: {
+            type: "array",
+            items: { type: "string" },
+            description: "仍缺失的字段 key，例如 controls、sampleScope、fixedEffects；没有缺失则为空数组。"
+          },
+          confidence: { type: "string", enum: ["high", "medium", "low"] },
+          profileUpdates: {
+            type: "object",
+            additionalProperties: false,
+            properties: workflowProfileUpdateProperties
+          }
+        },
+        required: ["assistantMessage", "profileUpdates"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "answer_research_question",
+      description: "用户是在问经管实证、变量、模型、Stata 或论文方法问题，不是在提供新的研究设定时调用。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          assistantMessage: { type: "string" },
+          confidence: { type: "string", enum: ["high", "medium", "low"] }
+        },
+        required: ["assistantMessage"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "handle_irrelevant_input",
+      description: "用户输入与经管实证论文研究无关，且没有有效研究设定字段时调用。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          assistantMessage: { type: "string" },
+          confidence: { type: "string", enum: ["high", "medium", "low"] }
+        },
+        required: ["assistantMessage"]
+      }
+    }
+  }
+];
+
 @Injectable()
 export class SkillsService {
   constructor(
@@ -350,12 +415,26 @@ export class SkillsService {
       );
     } else {
       try {
-        const generationPromise =
-          params.skillName === SkillName.WORKFLOW_INPUT_INTERPRETER
-            ? this.generateWorkflowInterpreterWithTools(systemPrompt, userPrompt, input, executionProfile.llmProfile)
-            : this.llmService.generateJson(systemPrompt, userPrompt, {
-                profile: executionProfile.llmProfile
-              });
+        let generationPromise: Promise<{ data: Record<string, unknown>; model: string }>;
+        if (params.skillName === SkillName.WORKFLOW_INPUT_INTERPRETER) {
+          generationPromise = this.generateWorkflowInterpreterWithTools(
+            systemPrompt,
+            userPrompt,
+            input,
+            executionProfile.llmProfile
+          );
+        } else if (params.skillName === SkillName.RESEARCH_SETUP_INTERPRETER) {
+          generationPromise = this.generateResearchSetupInterpreterWithTools(
+            systemPrompt,
+            userPrompt,
+            input,
+            executionProfile.llmProfile
+          );
+        } else {
+          generationPromise = this.llmService.generateJson(systemPrompt, userPrompt, {
+            profile: executionProfile.llmProfile
+          });
+        }
         const generated = await this.withTimeout(
           generationPromise,
           executionProfile.timeoutMs,
@@ -485,6 +564,79 @@ export class SkillsService {
         );
       }
     }
+  }
+
+  private async generateResearchSetupInterpreterWithTools(
+    systemPrompt: string,
+    userPrompt: string,
+    input: Record<string, any>,
+    profile: LlmProfileName
+  ) {
+    try {
+      const toolResult = await this.llmService.generateToolCall(systemPrompt, userPrompt, researchSetupInterpreterTools, {
+        profile,
+        toolChoice: "required"
+      });
+      const toolCall = toolResult.toolCalls[0];
+      if (!toolCall) {
+        throw new Error("The model did not return a research setup tool call.");
+      }
+
+      return {
+        data: this.mapResearchSetupInterpreterToolCall(toolCall, input),
+        model: toolResult.model
+      };
+    } catch (toolError) {
+      try {
+        return await this.llmService.generateJson(systemPrompt, userPrompt, { profile });
+      } catch (jsonError) {
+        throw new Error(
+          `Research setup tool-call failed: ${this.errorMessage(toolError)}; JSON fallback failed: ${this.errorMessage(jsonError)}`
+        );
+      }
+    }
+  }
+
+  private mapResearchSetupInterpreterToolCall(toolCall: LlmToolCall, input: Record<string, any>) {
+    const args = toolCall.arguments;
+
+    if (toolCall.name === "update_research_profile") {
+      return {
+        intent: "research_setup",
+        profileUpdates: this.profileUpdatesArg(args),
+        missingFields: this.stringArrayArg(args.missingFields),
+        assistantMessage: this.stringArg(
+          args.assistantMessage,
+          "我已经整理出一版研究设定，请确认字段是否正确。"
+        ),
+        confidence: this.confidenceArg(args.confidence)
+      };
+    }
+
+    if (toolCall.name === "answer_research_question") {
+      return {
+        intent: "research_question",
+        profileUpdates: {},
+        missingFields: [],
+        assistantMessage: this.stringArg(args.assistantMessage, "我先回答您的研究方法问题。"),
+        confidence: this.confidenceArg(args.confidence)
+      };
+    }
+
+    if (toolCall.name === "handle_irrelevant_input") {
+      return {
+        intent: "irrelevant",
+        profileUpdates: {},
+        missingFields: [],
+        assistantMessage: this.stringArg(
+          args.assistantMessage,
+          "这条消息里没有可识别的研究设定。您可以直接提供研究主题、变量、样本区间和固定效应。"
+        ),
+        confidence: this.confidenceArg(args.confidence)
+      };
+    }
+
+    throw new Error(`Unknown research setup interpreter tool call: ${toolCall.name}`);
   }
 
   private mapWorkflowInterpreterToolCall(toolCall: LlmToolCall, input: Record<string, any>) {

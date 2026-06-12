@@ -3,7 +3,7 @@
 import clsx from "clsx";
 import { startTransition, type ChangeEvent, type ClipboardEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { WorkflowStep, type AssistantMessageEnvelope, type ProjectDetail } from "@empirical/shared";
+import { WorkflowStep, type AssistantMessageEnvelope, type ProjectDetail, type ResearchProfile } from "@empirical/shared";
 import {
   SUPPORTED_ATTACHMENT_ACCEPT,
   buildComposerSubmission,
@@ -66,6 +66,38 @@ type SpeechRecognitionLike = {
 };
 
 type SpeechRecognitionConstructorLike = new () => SpeechRecognitionLike;
+
+const AUTO_START_SECONDS = 30;
+
+type SetupCardFieldKey =
+  | "normalizedTopic"
+  | "independentVariable"
+  | "dependentVariable"
+  | "researchObject"
+  | "sampleScope"
+  | "controls"
+  | "fixedEffects"
+  | "clusterVar";
+
+type SetupCardField = {
+  key: SetupCardFieldKey;
+  label: string;
+  list?: boolean;
+  multiline?: boolean;
+};
+
+type SetupCardDraft = Record<SetupCardFieldKey, string>;
+
+const SETUP_CARD_FIELDS: SetupCardField[] = [
+  { key: "normalizedTopic", label: "研究主题" },
+  { key: "independentVariable", label: "解释变量" },
+  { key: "dependentVariable", label: "被解释变量" },
+  { key: "researchObject", label: "研究对象", multiline: true },
+  { key: "sampleScope", label: "样本区间" },
+  { key: "controls", label: "控制变量", list: true, multiline: true },
+  { key: "fixedEffects", label: "固定效应", list: true },
+  { key: "clusterVar", label: "聚类变量" }
+];
 
 function MicIcon() {
   return (
@@ -281,83 +313,186 @@ function displaySetupValue(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function getSetupCardRows(contentJson: Record<string, unknown> | undefined): Array<[string, string]> {
-  const json = contentJson ?? {};
-  const rows: Array<[string, unknown]> = [
-    ["研究主题", json.normalizedTopic],
-    ["解释变量", json.independentVariable],
-    ["被解释变量", json.dependentVariable],
-    ["研究对象", json.researchObject],
-    ["样本区间", json.sampleScope],
-    ["控制变量", json.controls],
-    ["固定效应", json.fixedEffects],
-    ["聚类变量", json.clusterVar]
-  ];
+function asSetupRecord(value: unknown) {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
 
-  return rows
-    .map(([label, value]): [string, string] => [label, displaySetupValue(value)])
-    .filter(([, value]) => value);
+function getSetupCardSource(contentJson: Record<string, unknown> | undefined) {
+  const json = contentJson ?? {};
+  return {
+    ...json,
+    ...asSetupRecord(json.currentDraft)
+  };
+}
+
+function getSetupCardRows(contentJson: Record<string, unknown> | undefined, includeEmpty = false) {
+  const source = getSetupCardSource(contentJson);
+
+  return SETUP_CARD_FIELDS
+    .map((field) => ({
+      ...field,
+      value: displaySetupValue(source[field.key])
+    }))
+    .filter((row) => includeEmpty || row.value);
+}
+
+function buildSetupCardDraft(contentJson: Record<string, unknown> | undefined): SetupCardDraft {
+  const source = getSetupCardSource(contentJson);
+  return SETUP_CARD_FIELDS.reduce<SetupCardDraft>((draft, field) => {
+    draft[field.key] = displaySetupValue(source[field.key]);
+    return draft;
+  }, {} as SetupCardDraft);
+}
+
+function splitSetupList(value: string) {
+  return value
+    .split(/[、,，;；\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function buildProfilePatchFromSetupDraft(draft: SetupCardDraft): Partial<ResearchProfile> {
+  return SETUP_CARD_FIELDS.reduce<Partial<ResearchProfile>>((patch, field) => {
+    const value = draft[field.key].trim();
+
+    if (!value) {
+      return patch;
+    }
+
+    if (field.list) {
+      return {
+        ...patch,
+        [field.key]: splitSetupList(value)
+      };
+    }
+
+    return {
+      ...patch,
+      [field.key]: value
+    };
+  }, {});
+}
+
+function mergeSetupCardContentJson(contentJson: Record<string, unknown> | undefined, patch: Partial<ResearchProfile>) {
+  const json = contentJson ?? {};
+  return {
+    ...json,
+    ...patch,
+    currentDraft: {
+      ...asSetupRecord(json.currentDraft),
+      ...patch
+    }
+  };
 }
 
 function SetupConfirmationCard({
   contentJson,
+  editing,
+  draftValues,
   secondsRemaining,
   autoStartCancelled,
   disabled,
+  saving,
+  onDraftChange,
   onEdit,
-  onCancel,
+  onUndo,
+  onCancelAutoStart,
+  onSave,
   onStart
 }: {
   contentJson?: Record<string, unknown>;
+  editing: boolean;
+  draftValues: SetupCardDraft;
   secondsRemaining: number;
   autoStartCancelled: boolean;
   disabled: boolean;
+  saving: boolean;
+  onDraftChange: (key: SetupCardFieldKey, value: string) => void;
   onEdit: () => void;
-  onCancel: () => void;
+  onUndo: () => void;
+  onCancelAutoStart: () => void;
+  onSave: () => void | Promise<void>;
   onStart: () => void;
 }) {
-  const rows = getSetupCardRows(contentJson);
+  const rows = getSetupCardRows(contentJson, editing);
 
   return (
-    <div className="setup-confirm-card mt-4 w-full max-w-[640px] rounded-[16px] border border-[#E5EAF2] bg-white p-6 shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
+    <div className="setup-confirm-card mx-auto mt-4 w-full max-w-[720px] rounded-[22px] border border-[#E5EAF2] bg-white p-6 shadow-[0_18px_46px_rgba(15,23,42,0.08)] sm:p-7">
       <h2 className="text-lg font-semibold text-slate-950">研究设定</h2>
       <div className="mt-5 divide-y divide-slate-100">
-        {rows.map(([label, value]) => (
-          <div className="grid gap-1 py-3 first:pt-0 last:pb-0 sm:grid-cols-[120px_minmax(0,1fr)] sm:gap-4" key={label}>
-            <p className="text-[13px] font-semibold leading-6 text-[#64748B]">{label}</p>
-            <p className="break-words text-sm font-medium leading-6 text-[#111827]">{value}</p>
+        {rows.map((row) => (
+          <div className="grid gap-1 py-3 first:pt-0 last:pb-0 sm:grid-cols-[120px_minmax(0,1fr)] sm:gap-4" key={row.key}>
+            <p className="text-[13px] font-semibold leading-6 text-[#64748B]">{row.label}</p>
+            {editing ? (
+              <textarea
+                className="min-h-10 w-full resize-y rounded-[12px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium leading-6 text-[#111827] outline-none transition focus:border-slate-400 focus:bg-white"
+                disabled={disabled || saving}
+                onChange={(event) => onDraftChange(row.key, event.target.value)}
+                rows={row.multiline ? 3 : 1}
+                value={draftValues[row.key] ?? ""}
+              />
+            ) : (
+              <p className="break-words text-sm font-medium leading-6 text-[#111827]">{row.value}</p>
+            )}
           </div>
         ))}
       </div>
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <p className="text-[13px] leading-5 text-[#64748B]">
-          {autoStartCancelled ? "已取消自动开始" : `${secondsRemaining}s 后自动开始`}
+          {editing
+            ? "正在编辑，自动开始已暂停"
+            : autoStartCancelled
+              ? "已取消自动开始"
+              : `${secondsRemaining}s 后自动开始`}
         </p>
         <div className="flex items-center gap-2">
-          <button
-            className="inline-flex h-9 items-center rounded-[10px] border border-[#D8DEE9] bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={disabled}
-            onClick={onEdit}
-            type="button"
-          >
-            编辑
-          </button>
-          <button
-            className="inline-flex h-9 items-center rounded-[10px] border border-[#D8DEE9] bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={disabled}
-            onClick={onCancel}
-            type="button"
-          >
-            取消
-          </button>
-          <button
-            className="inline-flex h-9 items-center rounded-[10px] bg-[#0F172A] px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={disabled}
-            onClick={onStart}
-            type="button"
-          >
-            开始
-          </button>
+          {editing ? (
+            <>
+              <button
+                className="inline-flex h-9 items-center rounded-[10px] border border-[#D8DEE9] bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={disabled || saving}
+                onClick={onUndo}
+                type="button"
+              >
+                撤销
+              </button>
+              <button
+                className="inline-flex h-9 items-center rounded-[10px] bg-[#0F172A] px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={disabled || saving}
+                onClick={() => void onSave()}
+                type="button"
+              >
+                {saving ? "保存中" : "确认"}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                className="inline-flex h-9 items-center rounded-[10px] border border-[#D8DEE9] bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={disabled}
+                onClick={onEdit}
+                type="button"
+              >
+                编辑
+              </button>
+              <button
+                className="inline-flex h-9 items-center rounded-[10px] border border-[#D8DEE9] bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={disabled}
+                onClick={onCancelAutoStart}
+                type="button"
+              >
+                取消
+              </button>
+              <button
+                className="inline-flex h-9 items-center rounded-[10px] bg-[#0F172A] px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={disabled}
+                onClick={onStart}
+                type="button"
+              >
+                开始
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -367,9 +502,9 @@ function SetupConfirmationCard({
 function GenerationStatusMessage({ progress }: { progress: number }) {
   return (
     <div className="flex justify-start">
-      <div className="w-full max-w-[640px] text-[#111827]">
+      <div className="w-full text-[#111827]">
         <p className="mb-1 text-xs font-semibold text-slate-400">Tank</p>
-        <div className="flex items-center justify-between gap-5 text-[15px] leading-7">
+        <div className="inline-flex items-center gap-3 text-[15px] leading-7">
           <span className="inline-flex items-center gap-1">
             正在生成中
             <span className="thinking-bubble-dot">.</span>
@@ -398,15 +533,18 @@ export function HomeHero() {
   const [handoffReady, setHandoffReady] = useState(false);
   const [setupSession, setSetupSession] = useState<HomeSetupSession | null>(null);
   const [localChatMessages, setLocalChatMessages] = useState<LocalChatMessage[]>([]);
-  const [setupEditMode, setSetupEditMode] = useState(false);
+  const [setupConfirmEditing, setSetupConfirmEditing] = useState(false);
+  const [setupCardDraft, setSetupCardDraft] = useState<SetupCardDraft>(() => buildSetupCardDraft(undefined));
+  const [setupCardSaving, setSetupCardSaving] = useState(false);
   const [researchConfirmCardVisible, setResearchConfirmCardVisible] = useState(true);
-  const [autoStartRemaining, setAutoStartRemaining] = useState(5);
+  const [autoStartRemaining, setAutoStartRemaining] = useState(AUTO_START_SECONDS);
   const [autoStartCancelled, setAutoStartCancelled] = useState(false);
   const [generationInProgress, setGenerationInProgress] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const setupScrollRef = useRef<HTMLDivElement | null>(null);
+  const setupConfirmCardRef = useRef<HTMLDivElement | null>(null);
   const setupBottomRef = useRef<HTMLDivElement | null>(null);
   const setupStickToBottomRef = useRef(true);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -423,12 +561,11 @@ export function HomeHero() {
   const showResearchConfirmCard = Boolean(
     researchSettingComplete &&
       researchConfirmCardVisible &&
-      !setupEditMode &&
       !generationInProgress
   );
   // 研究设定完成后关闭右侧卡片，让聊天区通过 setup-chat-grid 自动拉宽。
-  const showRightSetupPanel = !researchSettingComplete || setupEditMode;
-  const setupChatWide = Boolean(researchSettingComplete && !setupEditMode);
+  const showRightSetupPanel = !researchSettingComplete;
+  const setupChatWide = Boolean(researchSettingComplete);
   const setupChatMessages = setupSession
     ? [...buildPersistedChatMessages(setupSession.messages), ...localChatMessages]
     : localChatMessages;
@@ -457,13 +594,29 @@ export function HomeHero() {
       return;
     }
 
-    setSetupEditMode(false);
+    setSetupConfirmEditing(false);
+    setSetupCardDraft(buildSetupCardDraft((latestSetupMessage?.contentJson ?? {}) as Record<string, unknown>));
     setResearchConfirmCardVisible(true);
-    setAutoStartRemaining(5);
+    setAutoStartRemaining(AUTO_START_SECONDS);
     setAutoStartCancelled(false);
     setGenerationInProgress(false);
     setGenerationProgress(0);
-  }, [latestSetupMessageId, researchSettingComplete]);
+  }, [latestSetupMessage, latestSetupMessageId, researchSettingComplete]);
+
+  useEffect(() => {
+    if (!showResearchConfirmCard || generationInProgress) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setupStickToBottomRef.current = false;
+      setupConfirmCardRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }, 60);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [generationInProgress, latestSetupMessageId, showResearchConfirmCard, setupConfirmEditing]);
 
   const handleSetupScroll = () => {
     const element = setupScrollRef.current;
@@ -596,6 +749,57 @@ export function HomeHero() {
     }, 180);
   };
 
+  const applySetupCardEdits = async () => {
+    if (!setupSession || !latestSetupMessage || setupCardSaving) {
+      return;
+    }
+
+    const profilePatch = buildProfilePatchFromSetupDraft(setupCardDraft);
+    setSetupCardSaving(true);
+    setError("");
+
+    try {
+      const updatedProfile = await apiRequest<ResearchProfile>(`/projects/${setupSession.projectId}/research-profile`, {
+        method: "PUT",
+        token: setupSession.token,
+        body: JSON.stringify(profilePatch)
+      });
+      const updatedContentJson = mergeSetupCardContentJson(
+        (latestSetupMessage.contentJson ?? {}) as Record<string, unknown>,
+        profilePatch
+      );
+
+      setSetupSession((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          title: typeof profilePatch.normalizedTopic === "string" ? profilePatch.normalizedTopic : current.title,
+          detail: {
+            ...current.detail,
+            researchProfile: updatedProfile
+          },
+          messages: current.messages.map((message) =>
+            message.id === latestSetupMessage.id
+              ? {
+                  ...message,
+                  contentJson: updatedContentJson
+                }
+              : message
+          )
+        };
+      });
+      setSetupConfirmEditing(false);
+      setSetupCardDraft(buildSetupCardDraft(updatedContentJson));
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "研究设定保存失败，请稍后重试。");
+    } finally {
+      setSetupCardSaving(false);
+    }
+  };
+
   // 新生成流程留在首页聊天流中，替代旧的详情页全屏蒙版进度条。
   const startSetupGeneration = async () => {
     if (!setupSession || generationInProgress) {
@@ -604,7 +808,7 @@ export function HomeHero() {
 
     setAutoStartCancelled(true);
     setResearchConfirmCardVisible(false);
-    setSetupEditMode(false);
+    setSetupConfirmEditing(false);
     setGenerationInProgress(true);
     setGenerationProgress(0);
     setLoading(true);
@@ -664,7 +868,7 @@ export function HomeHero() {
   };
 
   useEffect(() => {
-    if (!showResearchConfirmCard || autoStartCancelled || generationInProgress || loading) {
+    if (!showResearchConfirmCard || setupConfirmEditing || autoStartCancelled || generationInProgress || loading) {
       return;
     }
 
@@ -680,7 +884,7 @@ export function HomeHero() {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [autoStartCancelled, autoStartRemaining, generationInProgress, loading, showResearchConfirmCard]);
+  }, [autoStartCancelled, autoStartRemaining, generationInProgress, loading, setupConfirmEditing, showResearchConfirmCard]);
 
   const streamSetupMessage = async (
     session: Pick<HomeSetupSession, "projectId" | "token" | "title">,
@@ -755,6 +959,7 @@ export function HomeHero() {
     if (researchSettingComplete) {
       setResearchConfirmCardVisible(false);
       setAutoStartCancelled(true);
+      setSetupConfirmEditing(false);
       setGenerationInProgress(false);
       setGenerationProgress(0);
     }
@@ -1008,7 +1213,7 @@ export function HomeHero() {
               <div
                 className={clsx(
                   "mx-auto flex w-full flex-col gap-7 transition-[max-width] duration-[220ms] ease-out",
-                  setupChatWide ? "max-w-[1120px]" : "max-w-[980px]"
+                  setupChatWide ? "max-w-[940px]" : "max-w-[980px]"
                 )}
               >
                 {setupChatMessages.map((message) => {
@@ -1018,22 +1223,36 @@ export function HomeHero() {
                     }
 
                     return (
-                      <div className="flex justify-start" key={message.id}>
-                        <div className="assistant-message max-w-[760px] whitespace-pre-wrap break-words text-[15px] leading-7 text-slate-900">
+                      <div className="flex scroll-mt-8 justify-center" key={message.id} ref={setupConfirmCardRef}>
+                        <div className="assistant-message w-full max-w-[760px] whitespace-pre-wrap break-words text-[15px] leading-7 text-slate-900">
                           <p>{message.text}</p>
                           <SetupConfirmationCard
                             autoStartCancelled={autoStartCancelled}
                             contentJson={message.contentJson}
                             disabled={loading || generationInProgress}
-                            onCancel={() => setAutoStartCancelled(true)}
+                            draftValues={setupCardDraft}
+                            editing={setupConfirmEditing}
+                            onCancelAutoStart={() => setAutoStartCancelled(true)}
+                            onDraftChange={(key, value) => {
+                              setSetupCardDraft((current) => ({
+                                ...current,
+                                [key]: value
+                              }));
+                            }}
                             onEdit={() => {
                               setAutoStartCancelled(true);
-                              setSetupEditMode(true);
-                              setResearchConfirmCardVisible(false);
+                              setSetupCardDraft(buildSetupCardDraft(message.contentJson));
+                              setSetupConfirmEditing(true);
                             }}
+                            onSave={applySetupCardEdits}
                             onStart={() => {
                               void startSetupGeneration();
                             }}
+                            onUndo={() => {
+                              setSetupCardDraft(buildSetupCardDraft(message.contentJson));
+                              setSetupConfirmEditing(false);
+                            }}
+                            saving={setupCardSaving}
                             secondsRemaining={autoStartRemaining}
                           />
                         </div>
@@ -1065,7 +1284,7 @@ export function HomeHero() {
             <div
               className={clsx(
                 "mx-auto w-full px-2 pb-3 transition-[max-width] duration-[220ms] ease-out sm:px-5 lg:px-9",
-                setupChatWide ? "max-w-[1120px]" : "max-w-[980px]"
+                setupChatWide ? "max-w-[940px]" : "max-w-[980px]"
               )}
             >
               <ChatComposer

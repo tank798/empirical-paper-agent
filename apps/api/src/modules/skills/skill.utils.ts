@@ -417,7 +417,11 @@ function normalizeFixedEffectToken(value: string) {
   }
 
   if (/\u56fa\u5b9a\u6548\u5e94|fixedeffects?|\bfe\b/i.test(raw)) {
-    return [raw];
+    return raw.length <= 20 ? [raw] : [];
+  }
+
+  if (/^\d+$/.test(raw) || raw === "月" || raw.length > 8 || /(研究|样本|变量|模型|结果|证据|影响|检验|机制|基础|路径|治理|实践)/u.test(raw)) {
+    return [];
   }
 
   return [raw.endsWith("\u56fa\u5b9a\u6548\u5e94") ? raw : `${raw}\u56fa\u5b9a\u6548\u5e94`];
@@ -467,6 +471,41 @@ function buildFieldPattern(labels: string[]) {
     String.raw`(?:${joined})(?:\s*(?::|\uFF1A|=)\s*|\s*(?:\u662f|\u4e3a|\u6539\u6210|\u6539\u4e3a|\u6362\u6210)\s*)([^\n\r,\uFF0C;\uFF1B\u3002.!?\uFF01\uFF1F]+)`,
     "i"
   );
+}
+
+function normalizeResearchInputText(value: string) {
+  const inlineNormalized = value
+    .replace(/\u0000/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/([A-Za-z])[ \t]+([\u4e00-\u9fff])/g, "$1$2")
+    .replace(/([\u4e00-\u9fff])[ \t]+([A-Za-z])/g, "$1$2")
+    .replace(/([\u4e00-\u9fff])[ \t]+([\u4e00-\u9fff])/g, "$1$2")
+    .replace(/((?:19|20)\d{2})\s*年?\s*(?:-|~|\uFF5E|\u301C|\u2013|\u2014|至|到)\s*((?:19|20)\d{2})\s*年?/g, "$1到$2年")
+    .replace(/深沪A股/g, "沪深A股")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n");
+
+  const lines: string[] = [];
+  for (const rawLine of inlineNormalized.split("\n")) {
+    const line = rawLine.trimEnd();
+    const previous = lines[lines.length - 1];
+    const trimmed = line.trimStart();
+
+    if (
+      previous &&
+      trimmed &&
+      !previous.includes("|") &&
+      !trimmed.includes("|") &&
+      !/[。；;：:!?！？]$/.test(previous.trim()) &&
+      !/^(工作表|CASE|=|#|[一二三四五六七八九十]、|（[一二三四五六七八九十]|[0-9]+[.)、]|•)/u.test(trimmed)
+    ) {
+      lines[lines.length - 1] = `${previous.trimEnd()}${trimmed}`;
+    } else {
+      lines.push(line);
+    }
+  }
+
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function inferYearRange(text: string) {
@@ -527,6 +566,13 @@ function parseVariableList(value: string) {
 
 function inferShortTopicTitle(text: string, updates: WorkflowInputInterpreterProfilePatch) {
   const firstSentence = text.split(/[。.!?\n]/)[0]?.trim() ?? "";
+  const explicitImpactTopic = text.match(
+    /(?:我想研究|研究主题(?:是|为|：|:)?|题目(?:是|为|：|:)?)([^。；;，,\n]{1,50}?对[^。；;，,\n]{1,50}?(?:影响|作用|效应|关系))/
+  )?.[1]?.trim();
+  if (explicitImpactTopic) {
+    return explicitImpactTopic.endsWith("研究") ? explicitImpactTopic : `${explicitImpactTopic}研究`;
+  }
+
   const topicPhrase = firstSentence.match(/(?:我想研究|研究主题(?:是|为|：|:)?|题目(?:是|为|：|:)?)(.+)$/)?.[1]?.trim() ?? "";
   const candidate = cleanTerm(topicPhrase || firstSentence)
     .replace(/^本文(?:选择|研究)/, "")
@@ -536,7 +582,8 @@ function inferShortTopicTitle(text: string, updates: WorkflowInputInterpreterPro
     .replace(/(?:的)?关系$/, "的关系研究")
     .trim();
 
-  if (candidate && /对|影响|效应|关系/.test(candidate) && candidate.length <= 40) {
+  const candidateWithoutMethodTerms = candidate.replace(/固定效应|双向固定效应|面板固定效应/g, "");
+  if (candidate && /对|影响|效应|关系/.test(candidateWithoutMethodTerms) && candidate.length <= 40) {
     return candidate.endsWith("研究") ? candidate : `${candidate}研究`;
   }
 
@@ -569,12 +616,39 @@ function inferResearchObjectFromText(text: string) {
 }
 
 function inferControlsFromText(text: string) {
-  const raw = text.match(/控制变量(?:包括|有|就|是|为|：|:)\s*([^。；;\n]+)/)?.[1]?.trim() ?? "";
+  const raw = text.match(
+    /控制变量(?:包括|有|就|是|为|放|放入|：|:)\s*([\s\S]+?)(?=(?:，|,)?\s*(?:时间|样本|固定效应|研究对象|面板|聚类)\s*(?:是|为|:|：)|[。；;\n]|$)/
+  )?.[1]?.trim() ?? "";
   return raw ? parseVariableList(raw.replace(/这些$/u, "")) : [];
 }
 
+function cleanFixedEffectsCandidate(value: string) {
+  if (/双(?:向|重)?固定效应|two[- ]?way\s*(?:fixed\s*effects?|\bfe\b)/i.test(value)) {
+    return "双向固定效应";
+  }
+
+  return value
+    .replace(/^(?:固定效应(?:采用|加入|控制|使用|为|是)?|采用|加入|控制|使用|本文采用|在控制)\s*/u, "")
+    .split(/(?:，|,|。|；|;|的基础|基础上|控制不可观测|用于|检验|为企业|为本文)/u)[0]
+    ?.trim() ?? "";
+}
+
+function inferFixedEffectsFromText(text: string) {
+  const sentences = text
+    .split(/[。；;\n]/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => /固定效应|fixed\s*effects?|\bFE\b/i.test(sentence));
+
+  const preferred =
+    sentences.find((sentence) => /固定效应(?:采用|为|是|：|:)|(?:采用|加入|控制|使用).{0,20}固定效应|双(?:向|重)?固定效应/i.test(sentence)) ??
+    sentences.find((sentence) => /企业固定效应.{0,12}年份固定效应|公司固定效应.{0,12}年份固定效应/i.test(sentence)) ??
+    "";
+
+  return preferred ? cleanFixedEffectsCandidate(preferred) : "";
+}
+
 function inferMechanismVariablesFromText(text: string) {
-  const section = text.match(/机制变量方面([\s\S]+?)(?=控制变量|固定效应|异质性|样本|$)/)?.[1] ?? "";
+  const section = text.match(/(?:机制变量方面|机制变量包括|中介变量包括|机制分析)([\s\S]+?)(?=控制变量|固定效应|异质性|样本|$)/)?.[1] ?? "";
   if (!section) {
     return [];
   }
@@ -587,8 +661,226 @@ function inferMechanismVariablesFromText(text: string) {
       }
     }
   }
+  for (const code of section.match(/\b[A-Za-z][A-Za-z0-9_]*\b/g) ?? []) {
+    if (!/^(DID|PSM|IV|FE|ROA|ESG)$/i.test(code)) {
+      values.push(code);
+    }
+  }
 
   return uniqueStrings(values);
+}
+
+function extractCodeLikeValue(value: string) {
+  return value.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/)?.[0] ?? "";
+}
+
+function inferSampleObjectFromTableValue(value: string) {
+  const range = inferYearRange(value);
+  return value
+    .replace(/(?:19|20)\d{2}\s*年?\s*(?:-|~|\uFF5E|\u301C|\u2013|\u2014|至|到)\s*(?:19|20)\d{2}\s*年?/g, "")
+    .replace(/[；;].*$/u, "")
+    .replace(/本测试数据.*/u, "")
+    .replace(/^[:：|\s]+/u, "")
+    .replace(/；$/u, "")
+    .trim() || (range ? "" : value.trim());
+}
+
+function inferTopicProfileFromValue(value: string) {
+  const topic = inferShortTopicTitle(value, {});
+  if (topic) {
+    const normalized = normalizeTopic(topic);
+    return {
+      ...normalized,
+      normalizedTopic: topic
+    };
+  }
+
+  return normalizeTopic(value);
+}
+
+function inferTableProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch {
+  const updates: WorkflowInputInterpreterProfilePatch = {};
+  const controls: string[] = [];
+  const mechanismVariables: string[] = [];
+
+  for (const line of text.split("\n")) {
+    if (!line.includes("|")) {
+      continue;
+    }
+
+    const cells = line.split("|").map((cell) => cell.trim()).filter(Boolean);
+    if (cells.length < 2) {
+      continue;
+    }
+
+    const [key, value = ""] = cells;
+    const rowText = cells.slice(1).join(" ");
+
+    if (/^(字段名|用途|工作表|文件名|类型|大小|来源|内容已完整解析|内容较长)$/u.test(key)) {
+      continue;
+    }
+
+    if (/^(测试主题|研究主题|主题|题目)$/u.test(key)) {
+      const topic = inferTopicProfileFromValue(value);
+      updates.normalizedTopic ||= topic.normalizedTopic;
+      updates.independentVariable ||= topic.independentVariable;
+      updates.dependentVariable ||= topic.dependentVariable;
+      continue;
+    }
+
+    if (/^(样本设定|样本区间|样本范围|研究对象)$/u.test(key)) {
+      updates.sampleScope ||= inferYearRange(value);
+      const object = inferSampleObjectFromTableValue(value);
+      if (object) {
+        updates.researchObject ||= normalizeResearchObject(object);
+      }
+      continue;
+    }
+
+    if (/^固定效应/u.test(key)) {
+      const fixedEffects = normalizeFixedEffects(value);
+      if (fixedEffects.length) {
+        updates.fixedEffects = fixedEffects;
+      }
+      continue;
+    }
+
+    if (/^面板个体变量/u.test(key)) {
+      const panelId = extractCodeLikeValue(value);
+      if (panelId) {
+        updates.panelId = panelId;
+      }
+      continue;
+    }
+
+    if (/^时间变量/u.test(key)) {
+      const timeVar = extractCodeLikeValue(value);
+      if (timeVar) {
+        updates.timeVar = timeVar;
+      }
+      continue;
+    }
+
+    if (/^聚类变量/u.test(key)) {
+      const clusterVar = extractCodeLikeValue(value);
+      if (clusterVar) {
+        updates.clusterVar = clusterVar;
+      }
+      continue;
+    }
+
+    const variableName = /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) ? key : "";
+    if (!variableName) {
+      continue;
+    }
+
+    if (/被解释变量|因变量|结果变量/u.test(rowText)) {
+      updates.dependentVariable = variableName;
+    } else if (/(?:核心)?解释变量|自变量/u.test(rowText)) {
+      updates.independentVariable = variableName;
+    }
+
+    if (/控制变量/u.test(rowText)) {
+      controls.push(variableName);
+    }
+    if (/机制变量|中介变量/u.test(rowText)) {
+      mechanismVariables.push(variableName);
+    }
+    if (/面板个体变量|公司代码|股票代码/u.test(rowText)) {
+      updates.panelId ||= variableName;
+    }
+    if (/时间变量|年份/u.test(rowText)) {
+      updates.timeVar ||= variableName;
+    }
+    if (/聚类变量/u.test(rowText)) {
+      updates.clusterVar ||= variableName;
+    }
+  }
+
+  if (controls.length) {
+    updates.controls = uniqueStrings(controls);
+  }
+  if (mechanismVariables.length) {
+    updates.mechanismVariables = uniqueStrings(mechanismVariables);
+  }
+
+  return updates;
+}
+
+function inferDictionarySentenceUpdates(text: string): WorkflowInputInterpreterProfilePatch {
+  const updates: WorkflowInputInterpreterProfilePatch = {};
+  const controls: string[] = [];
+  const mechanismVariables: string[] = [];
+  const isDictionaryInput = /上传的数据|数据里|变量字典|字段表|字段名|工作表/u.test(text);
+
+  const explicitDependentCode = text.match(/被解释变量\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:表示|为|是)/)?.[1];
+  if (explicitDependentCode) {
+    updates.dependentVariable = explicitDependentCode;
+  }
+
+  const explicitIndependentCode = text.match(/(?:核心)?解释变量\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:表示|为|是)/)?.[1];
+  if (explicitIndependentCode) {
+    updates.independentVariable = explicitIndependentCode;
+  }
+
+  for (const match of text.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\b\s*(?:是|为|表示)\s*([^。；;\n，,]+)/g)) {
+    const variableName = match[1] ?? "";
+    const description = match[2] ?? "";
+    if (!variableName || !description) {
+      continue;
+    }
+
+    if (/公司代码|股票代码|证券代码|个体变量|面板个体/u.test(description)) {
+      updates.panelId ||= variableName;
+    }
+    if (/年份|年度|时间变量|时间维度/u.test(description)) {
+      updates.timeVar ||= variableName;
+    }
+    if (/被解释变量|因变量|结果变量/u.test(description) || (isDictionaryInput && /ESG评级|ESG表现/u.test(description))) {
+      updates.dependentVariable ||= variableName;
+    }
+    if (/核心解释变量|解释变量|自变量/u.test(description) || (isDictionaryInput && /创新水平|数字化/u.test(description))) {
+      updates.independentVariable ||= variableName;
+    }
+    if (/信贷|融资约束|风险承担|机制变量|中介变量/u.test(description)) {
+      mechanismVariables.push(variableName);
+    }
+  }
+
+  for (const match of text.matchAll(/((?:\b[A-Za-z_][A-Za-z0-9_]*\b(?:、|,|，|和|\s+和\s+|\s+)?){2,})\s*(?:是|为|表示)\s*([^。；;\n，,]+)/g)) {
+    const variableNames = match[1]?.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? [];
+    const description = match[2] ?? "";
+    if (/信贷|融资约束|风险承担|机制变量|中介变量/u.test(description)) {
+      mechanismVariables.push(...variableNames);
+    }
+  }
+
+  for (const match of text.matchAll(/((?:\b[A-Za-z_][A-Za-z0-9_]*\b(?:\s*、\s*|\s*,\s*|\s*，\s*|\s*和\s*)?){2,})(?:是|为)(?:融资约束|风险承担|机制变量|中介变量)/g)) {
+    mechanismVariables.push(...(match[1]?.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? []));
+  }
+
+  for (const match of text.matchAll(/\b(Risk\d+)\b\s*和\s*\b(Risk\d+)\b\s*(?:是|为|表示)?\s*风险承担/g)) {
+    mechanismVariables.push(match[1], match[2]);
+  }
+
+  for (const match of text.matchAll(/((?:\b[A-Za-z_][A-Za-z0-9_]*\b(?:、|,|，|和|\s+和\s+|\s+)?){2,})\s*(?:是|为)\s*控制变量/g)) {
+    controls.push(...(match[1]?.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? []));
+  }
+
+  if (!updates.normalizedTopic && /企业创新|创新水平|Innov/i.test(text) && /ESG表现|ESG评级|\bESG\b/i.test(text)) {
+    updates.normalizedTopic = "企业创新对ESG表现的影响研究";
+    updates.independentVariable ||= isDictionaryInput && /\bInnov\b/.test(text) ? "Innov" : "企业创新水平";
+    updates.dependentVariable ||= isDictionaryInput && /\bESG\b/.test(text) ? "ESG" : "企业ESG表现";
+  }
+
+  if (controls.length) {
+    updates.controls = uniqueStrings(controls);
+  }
+  if (mechanismVariables.length) {
+    updates.mechanismVariables = uniqueStrings(mechanismVariables);
+  }
+
+  return updates;
 }
 
 function looksLikeWorkflowQuestion(text: string) {
@@ -619,12 +911,13 @@ function looksLikeSmallTalkOrOffTopic(text: string) {
 }
 
 export function inferProfileUpdates(text: string): WorkflowInputInterpreterProfilePatch {
+  text = normalizeResearchInputText(text);
   const updates: WorkflowInputInterpreterProfilePatch = {};
 
   const independentVariable = firstMatch(text, [
     buildFieldPattern(["\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf", "\u81ea\u53d8\u91cf"]),
     buildFieldPattern(["independent variable", "x variable"])
-  ]) || text.match(/(?:^|[。；;\n\r])\s*解释变量(?:\s*(?::|\uFF1A|=)\s*|\s*(?:是|为)\s*)([^\n\r,\uFF0C;\uFF1B\u3002.!?\uFF01\uFF1F]+)/)?.[1]?.trim() || "";
+  ]) || text.match(/(?:^|[。；;，,\n\r])\s*(?:核心)?解释变量(?:\s*(?::|\uFF1A|=)\s*|\s*(?:是|为)\s*)([^\n\r,\uFF0C;\uFF1B\u3002.!?\uFF01\uFF1F]+)/)?.[1]?.trim() || "";
   if (independentVariable) {
     updates.independentVariable = independentVariable;
   }
@@ -674,7 +967,7 @@ export function inferProfileUpdates(text: string): WorkflowInputInterpreterProfi
   const fixedEffectsRaw = firstMatch(text, [
     buildFieldPattern(["\u56fa\u5b9a\u6548\u5e94", "\u56fa\u5b9a\u6548\u5e94\u8bbe\u5b9a"]),
     buildFieldPattern(["fixed effects", "fe"])
-  ]) || text.match(/固定效应(?:采用|加入|控制)?\s*([^。；;\n]+)/)?.[1]?.trim() || "";
+  ]) || inferFixedEffectsFromText(text);
   if (fixedEffectsRaw) {
     updates.fixedEffects = normalizeFixedEffects(fixedEffectsRaw);
   }
@@ -813,6 +1106,14 @@ export function inferProfileUpdates(text: string): WorkflowInputInterpreterProfi
   const normalizedExportFormats = normalizeExportFormats(exportFormats);
   if (normalizedExportFormats.length > 0) {
     updates.exportFormats = normalizedExportFormats as Array<"word" | "latex" | "excel" | "stata_do">;
+  }
+
+  Object.assign(updates, inferDictionarySentenceUpdates(text), inferTableProfileUpdates(text));
+
+  if (updates.normalizedTopic && (!updates.independentVariable || !updates.dependentVariable)) {
+    const normalized = normalizeTopic(updates.normalizedTopic);
+    updates.independentVariable ||= normalized.independentVariable;
+    updates.dependentVariable ||= normalized.dependentVariable;
   }
 
   return Object.fromEntries(
