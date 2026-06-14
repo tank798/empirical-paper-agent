@@ -2,25 +2,36 @@
 
 一个面向经管 / 管理 / 金融实证论文场景的 AI 工作台。用户可以输入研究主题、变量设定、开题报告片段、数据字典或 Stata 问题，系统会先整理成结构化研究设定，再生成可阅读、可复制、可继续追问的 Stata 工作流。
 
-当前版本的重点迭代是：从“多个 Skill 先分类再分发”的旧链路，收敛到“一个 Research Agent 统一理解用户输入，并通过工具更新项目状态或生成工作流”的新链路。
+当前版本的重点迭代是：从“WorkflowService 规则分支 + 阶段 Skill 编排”的旧链路，收敛到“一个 Research Agent 统一理解用户输入，并通过工具更新项目状态或生成工作流”的新链路。
 
 ## 架构迭代
 
 ```mermaid
 flowchart TD
-  subgraph OLD["旧链路：Interpreter + 多个 Skill 分发"]
-    O1["用户输入"] --> O2["WorkflowService.handleLegacyNext"]
-    O2 --> O3["Workflow Input Interpreter\n先判断 route"]
-    O3 --> O4{"输入类型"}
-    O4 -->|"研究设定"| O5["Research Setup Interpreter"]
-    O4 -->|"普通科研问题"| O6["General Research Chat"]
-    O4 -->|"Stata 报错 / 回归结果"| O7["Stata Error Debug\nResult Interpret"]
-    O5 --> O8["SkillsService.executeSkill"]
-    O6 --> O8
-    O7 --> O8
+  subgraph OLD["旧链路：WorkflowService 规则分支 + 阶段 Skill"]
+    O1["用户输入"] --> O2["WorkflowController\n/next"]
+    O2 --> O3["WorkflowService.handleLegacyNext\n按当前 step 和规则分支"]
+    O3 --> O4{"快速判断"}
+    O4 -->|"Stata 报错"| O5["Stata Error Debug"]
+    O4 -->|"回归结果"| O6["Result Interpret"]
+    O4 -->|"主题确认阶段"| O7["Research Setup Interpreter"]
+    O4 -->|"已进入工作流模块"| O8["Workflow Input Interpreter"]
+    O7 -->|"研究设定"| O9["buildSetupDraft\nResearchProfile\nTopic Confirm"]
+    O7 -->|"科研问答 / 无关输入"| O10["Research Chat\n或 System Notice"]
+    O8 -->|"补充设定"| O11["resetToSetupConfirmation"]
+    O8 -->|"普通科研问题"| O12["General Research Chat"]
+    O8 -->|"模块内修改"| O13["handleGeneratedModuleInput\nrunModuleSkill"]
+    O9 -->|"用户确认"| O14["runFullWorkflowGeneration\n逐阶段 executeSkill"]
+    O5 --> O15["Messages / Project Step"]
+    O6 --> O15
+    O10 --> O15
+    O11 --> O15
+    O12 --> O15
+    O13 --> O15
+    O14 --> O15
   end
 
-  O8 -->|"收敛到统一 Agent"| N1
+  O15 -->|"收敛到统一 Agent 决策"| N1
 
   subgraph NEW["新链路：Research Agent + 工具调用"]
     N1["用户输入\n文本 / 语音转写 / 附件解析文本"] --> N2["WorkflowController\n/next /stream"]
@@ -42,7 +53,7 @@ flowchart TD
 
 ## 项目做了什么
 
-- **研究设定抽取**：从自然语言、开题报告、数据字典、截图 OCR 等输入中抽取研究主题、解释变量、被解释变量、研究对象、控制变量、样本区间、固定效应、面板字段和聚类变量。
+- **研究设定抽取**：从自然语言、开题报告、数据字典、图片 OCR 等输入中抽取研究主题、解释变量、被解释变量、研究对象、控制变量、样本区间、固定效应、面板字段和聚类变量。
 - **统一 Agent 调度**：`research-agent.md` 负责判断用户是在闲聊、问科研问题、补充研究设定、要求生成工作流，还是要求重生成某个模块。
 - **可追踪工作流**：每次对话都会创建 `AgentRun`，并记录事件、工具结果、进度和错误，方便调试和展示 Agent 执行过程。
 - **确定性 Stata 生成**：主工作流的 Stata 代码由后端模板确定性生成，减少模型随机性，保证同一研究设定下输出更稳定。
@@ -68,7 +79,7 @@ flowchart LR
   M --> A
 ```
 
-## 截图
+## 页面展示
 
 ### 首页输入框
 
