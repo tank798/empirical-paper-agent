@@ -2,55 +2,43 @@
 
 一个面向经管 / 管理 / 金融实证论文场景的 AI 工作台。用户可以输入研究主题、变量设定、开题报告片段、数据字典或 Stata 问题，系统会先整理成结构化研究设定，再生成可阅读、可复制、可继续追问的 Stata 工作流。
 
-当前版本的重点迭代是：从“WorkflowService 规则分支 + 阶段 Skill 编排”的旧链路，收敛到“一个 Research Agent 统一理解用户输入，并通过工具更新项目状态或生成工作流”的新链路；同时补充了多源上下文处理能力，支持长文本材料、多个附件和历史上传内容的可控回看。
+当前版本的重点迭代是：从“WorkflowService 正则 / 关键词 / 当前阶段规则路由”的旧链路，收敛到“一个 Research Agent 统一理解用户输入，并通过工具更新项目状态或生成工作流”的新链路；同时补充了多源上下文处理能力，支持长文本材料、多个附件和历史上传内容的可控回看。
 
 ## 架构迭代
 
 ```mermaid
 flowchart TD
-  subgraph OLD["旧链路：WorkflowService 规则分支 + 阶段 Skill"]
+  subgraph OLD["旧链路：正则 / 关键词 / 当前阶段规则路由"]
     O1["用户输入"] --> O2["WorkflowController\n/next"]
-    O2 --> O3["WorkflowService.handleLegacyNext\n按当前 step 和规则分支"]
-    O3 --> O4{"快速判断"}
-    O4 -->|"Stata 报错"| O5["Stata Error Debug"]
-    O4 -->|"回归结果"| O6["Result Interpret"]
-    O4 -->|"主题确认阶段"| O7["Research Setup Interpreter"]
-    O4 -->|"已进入工作流模块"| O8["Workflow Input Interpreter"]
-    O7 -->|"研究设定"| O9["buildSetupDraft\nResearchProfile\nTopic Confirm"]
-    O7 -->|"科研问答 / 无关输入"| O10["Research Chat\n或 System Notice"]
-    O8 -->|"补充设定"| O11["resetToSetupConfirmation"]
-    O8 -->|"普通科研问题"| O12["General Research Chat"]
-    O8 -->|"模块内修改"| O13["handleGeneratedModuleInput\nrunModuleSkill"]
-    O9 -->|"用户确认"| O14["runFullWorkflowGeneration\n逐阶段 executeSkill"]
-    O5 --> O15["Messages / Project Step"]
-    O6 --> O15
-    O10 --> O15
-    O11 --> O15
-    O12 --> O15
-    O13 --> O15
-    O14 --> O15
+    O2 --> O3["WorkflowService.handleLegacyNext"]
+    O3 --> O4{"当前 step\n+ 关键词 / 正则\n+ if/else 规则"}
+    O4 -->|"报错 / 回归结果"| O5["固定分流到\nStata Debug / Result Interpret"]
+    O4 -->|"主题确认阶段"| O6["Research Setup Interpreter"]
+    O4 -->|"工作流模块内"| O7["Workflow Input Interpreter\n或模块 Skill"]
+    O5 --> O8["Messages / ProjectStep / ResearchProfile"]
+    O6 --> O8
+    O7 --> O8
   end
 
-  O15 -->|"收敛到统一 Agent 决策"| N1
+  O8 -->|"迭代为统一 Agent 决策"| N1
 
   subgraph NEW["新链路：Research Agent + 工具调用"]
-    N1["用户输入\n文本 / 多附件 / 图片 OCR"] --> N2["WorkflowController\n/next /stream"]
-    N2 --> N3["InputSourceService\n多源拆分、长文本预检、分块召回"]
-    N3 --> N4["ResearchAgentService"]
-    N4 --> N5["research-agent.md\n+ 当前运行上下文\n+ source index\n+ 工具定义"]
-    N5 --> N6{"模型决策"}
+    N1["用户输入\n文本 / 多附件 / 图片 OCR"] --> N2["InputSourceService\n多源拆分、长文本预检、分块召回"]
+    N2 --> N3["source artifact\n+ 历史 source index"]
+    N2 --> N4["ResearchAgentService"]
+    N4 --> N5["research-agent.md\n+ 当前研究设定\n+ source index\n+ 工具定义"]
+    N5 --> N6{"Agent 决策"}
     N6 -->|"直接回答"| N7["自然语言回复"]
-    N6 -->|"回看历史材料"| N8["recall_sources"]
-    N6 -->|"更新研究设定"| N9["update_research_profile"]
-    N6 -->|"校验设定"| N10["validate_research_setup"]
-    N6 -->|"生成完整工作流"| N11["generate_workflow"]
-    N6 -->|"重生成模块"| N12["regenerate_workflow_module"]
-    N8 --> N5
-    N9 --> N13["ResearchProfile / Messages / Harness 记录"]
-    N11 --> N14["WorkflowService + SkillsService"]
-    N12 --> N14
-    N14 --> N15["workflow-output.builder.ts\n确定性生成 Stata 模块"]
-    N15 --> N16["项目工作台\n路径、代码、解读、AI 助手"]
+    N6 -->|"需要历史材料"| N8["recall_sources"]
+    N6 -->|"补充/修改设定"| N9["update_research_profile"]
+    N6 -->|"确认后生成"| N10["generate_workflow"]
+    N6 -->|"模块调整"| N11["regenerate_workflow_module"]
+    N8 --> N4
+    N9 --> N12["ResearchProfile / Messages / Harness 记录"]
+    N10 --> N13["WorkflowService + SkillsService"]
+    N11 --> N13
+    N13 --> N14["workflow-output.builder.ts\n确定性生成 Stata 模块"]
+    N14 --> N15["项目工作台\n路径、代码、解读、AI 助手"]
   end
 ```
 
