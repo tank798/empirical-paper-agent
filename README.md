@@ -20,7 +20,7 @@ flowchart TD
     O7 --> O8
   end
 
-  O8 --> M["迭代方向：把分散判断收敛到统一 Agent\n旧 Skill 保留为兼容、测试和直接调用能力"]
+  O8 -->|"收敛到统一 Agent"| N1
 
   subgraph NEW["新链路：Research Agent + 工具调用"]
     N1["用户输入\n文本 / 语音转写 / 附件解析文本"] --> N2["WorkflowController\n/next /stream"]
@@ -70,31 +70,45 @@ flowchart LR
 
 ## 截图
 
-截图先不放在仓库里。你后续把图片按下面文件名保存到 `docs/assets/readme/`，GitHub README 会自动渲染。
+### 首页输入框
 
-| 截图 | 建议展示内容 | 保存路径 |
-| --- | --- | --- |
-| 首页输入框 | 初始聊天框和上传 / 语音入口 | `docs/assets/readme/01-home-chat.png` |
-| 闲聊场景 | 用户输入无关内容，Agent 引导回科研任务 | `docs/assets/readme/02-chitchat.png` |
-| 科研问答场景 | 用户问固定效应、DID、PSM、IV 或 Stata 概念，Agent 直接回答 | `docs/assets/readme/03-research-qa.png` |
-| 研究设定思考过程 | 输入完整研究需求后，Agent 正在理解和整理设定 | `docs/assets/readme/04-research-setup1.png` |
-| 研究设定卡片 | 结构化研究卡片被填充，可确认或微调 | `docs/assets/readme/04-research-setup2.png` |
-| 工作流页面 | 进入具体模块，展示本节目标和 Stata 代码 | `docs/assets/readme/05-workflow-module.png` |
-| 右侧 AI 助手 | 工作流中打开 AI 助手继续追问 / 修改 | `docs/assets/readme/06-workflow-assistant.png` |
-
-<!-- 把截图保存到上面的路径后，下面这些图片会在 GitHub 自动显示。 -->
+用户进入产品后首先看到的界面，支持文本输入、附件上传（PDF / DOCX / Excel / 图片）和语音输入，Agent 会自动识别输入内容并进入对应的处理流程。
 
 ![首页输入框](docs/assets/readme/01-home-chat.png)
 
+### 闲聊场景
+
+当用户输入与科研无关的内容时，Agent 会礼貌地引导用户回到经管实证论文的研究任务上，并提示当前可处理的科研场景。
+
 ![闲聊场景](docs/assets/readme/02-chitchat.png)
+
+### 科研问答场景
+
+用户可以直接向 Agent 提问科研概念性问题，例如固定效应、DID、PSM、工具变量或 Stata 语法等，Agent 会直接给出专业解答，无需进入工作流生成流程。
 
 ![科研问答场景](docs/assets/readme/03-research-qa.png)
 
+### 研究设定思考过程
+
+用户输入完整的研究需求后，Agent 会在对话中展示思考和理解过程，从自然语言描述中逐步抽取研究主题、变量设定、样本区间等关键信息。右侧「研究设定」面板实时显示已识别和待补充的字段。
+
 ![研究设定思考过程](docs/assets/readme/04-research-setup1.png)
+
+### 研究设定卡片
+
+当 Agent 完成研究设定的抽取后，会弹出结构化的研究设定卡片，汇总展示研究主题、解释变量、被解释变量、研究对象、控制变量、固定效应等全部信息。用户可以点击「编辑」微调，或直接「开始」生成完整 Stata 工作流。
 
 ![研究设定卡片](docs/assets/readme/04-research-setup2.png)
 
+### 工作流页面
+
+确认研究设定后，系统会生成一套完整的 Stata 工作流，按「主题确认 → 路径与数据 → 基准回归 → 稳健性检验 → 内生性分析 → 机制分析 → 异质性分析」组织为 7 个模块。每个模块展示本节目标、可复制的 Stata 代码，以及右侧的研究设定和变量映射面板。
+
 ![工作流页面](docs/assets/readme/05-workflow-module.png)
+
+### 右侧 AI 助手
+
+在工作流的任意模块中，用户都可以打开右侧的 AI 助手面板，针对当前模块的代码或研究思路继续追问、要求修改、补充分析或重新生成，实现工作台内的持续交互。
 
 ![右侧 AI 助手](docs/assets/readme/06-workflow-assistant.png)
 
