@@ -3,11 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "nest build",
+    "build": "corepack pnpm --filter @empirical/shared build && corepack pnpm --filter @empirical/prompts build && nest build",
     "start": "node dist/apps/api/src/main.js",
-    "start:dev": "nest start --watch",
+    "start:dev": "corepack pnpm --filter @empirical/shared build && corepack pnpm --filter @empirical/prompts build && nest build && node dist/apps/api/src/main.js",
     "lint": "tsc --noEmit",
     "test": "jest --runInBand",
+    "smoke:agent-prompt": "ts-node -P tsconfig.json -r ../../node_modules/.pnpm/tsconfig-paths@4.2.0/node_modules/tsconfig-paths/register scripts/agent-prompt-smoke-test.ts",
+    "smoke:agent": "ts-node -P tsconfig.json -r ../../node_modules/.pnpm/tsconfig-paths@4.2.0/node_modules/tsconfig-paths/register scripts/agent-smoke-test.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev"
   },

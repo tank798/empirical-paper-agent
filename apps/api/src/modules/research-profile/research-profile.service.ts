@@ -373,6 +373,89 @@ export class ResearchProfileService {
     return this.mapProfile(profile);
   }
 
+  async applyAgentPatch(
+    projectId: string,
+    payload: Partial<ResearchProfile>,
+    clearFields: string[] = []
+  ) {
+    await this.mergeExplicitUpdates(projectId, payload);
+
+    const clearData: Record<string, unknown> = {};
+    const nullableFields = new Set([
+      "clusterVar",
+      "panelId",
+      "timeVar",
+      "sampleScope",
+      "treatmentVar",
+      "policyTimeVar",
+      "policyStartYear",
+      "instrumentVariable",
+      "notes"
+    ]);
+    const arrayFields = new Set([
+      "controls",
+      "fixedEffects",
+      "psmMatchVars",
+      "mechanismVariables",
+      "heterogeneityVars",
+      "exportFormats"
+    ]);
+    const booleanFields = new Set(["didEnabled", "psmEnabled"]);
+    const stringFields = new Set([
+      "normalizedTopic",
+      "independentVariable",
+      "dependentVariable",
+      "researchObject",
+      "relationship"
+    ]);
+
+    for (const field of clearFields) {
+      if (nullableFields.has(field)) {
+        clearData[field] = null;
+      } else if (arrayFields.has(field)) {
+        clearData[field] = [];
+      } else if (booleanFields.has(field)) {
+        clearData[field] = false;
+      } else if (stringFields.has(field)) {
+        clearData[field] = "";
+      } else if (field === "dataDictionary") {
+        clearData.dataDictionaryJson = [];
+      }
+    }
+
+    if (Object.keys(clearData).length > 0) {
+      await this.prisma.researchProfile.update({
+        where: { projectId },
+        data: clearData as never
+      });
+    }
+
+    const finalProfile = await this.getByProjectId(projectId);
+    if (!finalProfile) {
+      return null;
+    }
+
+    const termMappings = buildTermMappings({
+      independentVariable: finalProfile.independentVariable,
+      dependentVariable: finalProfile.dependentVariable,
+      controls: finalProfile.controls,
+      fixedEffects: finalProfile.fixedEffects,
+      clusterVar: finalProfile.clusterVar,
+      panelId: finalProfile.panelId,
+      timeVar: finalProfile.timeVar,
+      dataDictionary: finalProfile.dataDictionary
+    });
+    await this.prisma.researchProfile.update({
+      where: { projectId },
+      data: { termMappingsJson: termMappings as never }
+    });
+
+    return {
+      ...finalProfile,
+      termMappings
+    };
+  }
+
   resolveRegressionInput(
     stored: ResearchProfile | null,
     payload: Record<string, unknown>,

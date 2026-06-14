@@ -92,6 +92,10 @@ export class ProjectsService {
     return project;
   }
 
+  async getProjectRecord(projectId: string) {
+    return this.prisma.project.findUniqueOrThrow({ where: { id: projectId } });
+  }
+
   async getProjectDetail(projectId: string, resumeToken?: string): Promise<ProjectDetail> {
     await this.assertProjectAccess(projectId, resumeToken);
     const project = await this.prisma.project.findUniqueOrThrow({

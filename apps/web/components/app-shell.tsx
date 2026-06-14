@@ -11,9 +11,12 @@ function isWorkspaceDetailPath(pathname: string) {
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const workspaceDetail = isWorkspaceDetailPath(pathname);
+  const shellClassName = workspaceDetail
+    ? "mx-auto min-h-screen max-w-[1760px] px-4 pb-0 pt-4 sm:px-6 sm:pt-5"
+    : "mx-auto min-h-screen max-w-[1760px] px-4 py-4 sm:px-6 sm:py-5";
 
   return (
-    <div className="mx-auto min-h-screen max-w-[1760px] px-4 py-4 sm:px-6 sm:py-5">
+    <div className={shellClassName}>
       {!workspaceDetail ? (
         <header className="mb-6 flex items-center">
           <AppMenu />

@@ -9,6 +9,7 @@ import {
   normalizeRelationshipText,
   normalizeResearchObjectText
 } from "../lib/message-display";
+import { FormattedText } from "./formatted-text";
 import { StataCodeBlock } from "./stata-code-block";
 
 type TopicConfirmAction = {
@@ -498,13 +499,17 @@ export function MessageCard({
       ) : (
         <>
           {contentText && !isResearchChat && message.messageType !== "skill_output" && !isSystemNotice ? (
-            <p className="whitespace-pre-wrap text-sm font-normal leading-7 text-slate-800">{contentText}</p>
+            <p className="whitespace-pre-wrap text-sm font-normal leading-7 text-slate-800">
+              <FormattedText text={contentText} />
+            </p>
           ) : null}
 
           {message.messageType === "system_notice" ? (
             <div className="space-y-4">
               {contentText ? (
-                <p className="whitespace-pre-wrap text-sm font-normal leading-7 text-slate-800">{contentText}</p>
+                <p className="whitespace-pre-wrap text-sm font-normal leading-7 text-slate-800">
+                  <FormattedText text={contentText} />
+                </p>
               ) : null}
 
               {Array.isArray(json.guidanceOptions) && json.guidanceOptions.length > 0 ? (
@@ -590,7 +595,7 @@ export function MessageCard({
             <div className="mt-4 space-y-4">
               <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-4">
                 <p className="whitespace-pre-wrap text-sm font-normal leading-7 text-slate-800">
-                  {contentText || normalizeDisplayText(json.answer)}
+                  <FormattedText text={contentText || normalizeDisplayText(json.answer)} />
                 </p>
               </div>
 

@@ -27,9 +27,9 @@
 硬性要求：
 - moduleName 必须严格等于 "baseline_regression"。
 - modelSpec 必须写成 M1-M6 递进规格：M1 只放核心解释变量；M2 加入控制变量；M3 加入时间固定效应；M4 加入个体固定效应；M5 加入个体和时间双向固定效应；M6 在 M5 基础上按聚类变量计算稳健标准误，并作为主规格。
-- stataCode 必须包含 outreg2 导出命令；第一列 replace，后续列 append；导出路径使用 D:\results\baseline regression.doc。
+- stataCode 必须包含 outreg2 导出命令；第一列 replace，后续列 append；导出路径使用相对路径 results/baseline regression.doc。
 - stataCode 必须使用 termMappings 中的英文缩写，不要直接使用中文变量名。
-- stataCode 必须包含 reghdfe、ftools、outreg2 的安装提示。
+- 扩展命令已经在数据清洗阶段集中安装，stataCode 不得再次包含 ssc install。
 - 如果 panelId、timeVar 或 clusterVar 缺失，应使用清晰占位符并在 codeExplanation 中提醒用户替换。
 - 不要编造回归统计量、系数、显著性或样本量。
 - 所有自然语言字段使用简体中文。

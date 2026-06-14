@@ -103,7 +103,8 @@ export function ChatComposer({
   variant = "default"
 }: ChatComposerProps) {
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
-  const inputLocked = disabled || sending || attachmentProcessing;
+  const inputLocked = disabled || attachmentProcessing;
+  const secondaryActionLocked = disabled || sending || attachmentProcessing;
   const actionLocked = disabled || attachmentProcessing;
   const drawerVariant = variant === "assistantDrawer";
 
@@ -131,7 +132,7 @@ export function ChatComposer({
     }
 
     event.preventDefault();
-    if (!inputLocked && (value.trim() || attachment)) {
+    if (!inputLocked && !sending && (value.trim() || attachment)) {
       void onSend();
     }
   };
@@ -151,7 +152,7 @@ export function ChatComposer({
             <button
               aria-label="移除附件"
               className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={inputLocked}
+              disabled={secondaryActionLocked}
               onClick={onRemoveAttachment}
               type="button"
             >
@@ -179,7 +180,7 @@ export function ChatComposer({
             <button
               aria-label="上传文件"
               className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-700 transition hover:bg-slate-100 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={inputLocked}
+              disabled={secondaryActionLocked}
               onClick={onAttachClick}
               type="button"
             >
@@ -195,7 +196,7 @@ export function ChatComposer({
                 "inline-flex h-10 w-10 items-center justify-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-45",
                 listening ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
               )}
-              disabled={inputLocked}
+              disabled={secondaryActionLocked}
               onClick={onMicClick}
               type="button"
             >

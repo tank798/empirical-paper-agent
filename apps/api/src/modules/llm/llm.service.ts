@@ -59,6 +59,35 @@ export type GenerateToolCallResult = {
   maxTokens: number | null;
 };
 
+export type LlmAssistantMessage = {
+  role: "assistant";
+  content: string | null;
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: {
+      name: string;
+      arguments: string;
+    };
+  }>;
+};
+
+export type LlmChatMessage =
+  | {
+      role: "user";
+      content: string | null;
+    }
+  | LlmAssistantMessage
+  | {
+      role: "tool";
+      tool_call_id: string;
+      content: string;
+    };
+
+export type GenerateAgentResponseResult = GenerateToolCallResult & {
+  assistantMessage: LlmAssistantMessage;
+};
+
 function parseBoolean(value: string | undefined, defaultValue: boolean) {
   if (value == null || value.trim() === "") {
     return defaultValue;
@@ -427,6 +456,116 @@ export class LlmService {
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         throw new Error(`LLM tool-call request timed out after ${resolved.timeoutMs}ms`);
+      }
+
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  async generateAgentResponse(
+    systemPrompt: string,
+    messages: LlmChatMessage[],
+    tools: LlmFunctionTool[],
+    options: GenerateToolCallOptions = {}
+  ): Promise<GenerateAgentResponseResult> {
+    if (!this.apiKey) {
+      throw new Error("OPENAI_API_KEY is not configured");
+    }
+
+    const resolved = this.resolveConfig(options);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), resolved.timeoutMs);
+
+    try {
+      const requestBody: Record<string, unknown> = {
+        model: resolved.model,
+        temperature: resolved.temperature,
+        stream: false,
+        messages: [{ role: "system", content: systemPrompt }, ...messages],
+        tools,
+        tool_choice: options.toolChoice ?? "auto"
+      };
+
+      if (resolved.enableThinking !== null) {
+        requestBody.enable_thinking = resolved.enableThinking;
+      }
+
+      if (resolved.maxTokens !== null) {
+        requestBody.max_tokens = resolved.maxTokens;
+      }
+
+      const response = await fetch(`${this.baseURL.replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal
+      });
+
+      const text = await response.text();
+      const payload = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+      if (!response.ok) {
+        throw new Error(extractErrorMessage(payload, `LLM agent request failed with status ${response.status}`));
+      }
+
+      const message = (payload.choices as Array<Record<string, unknown>> | undefined)?.[0]?.message as
+        | Record<string, unknown>
+        | undefined;
+      if (!message) {
+        throw new Error("The model response did not include an assistant message.");
+      }
+
+      const content = typeof message.content === "string" ? message.content : null;
+      const rawToolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+      const toolCalls: LlmToolCall[] = rawToolCalls.flatMap((rawCall, index) => {
+        if (!rawCall || typeof rawCall !== "object") {
+          return [];
+        }
+
+        const call = rawCall as Record<string, unknown>;
+        const functionCall = call.function as Record<string, unknown> | undefined;
+        const name = typeof functionCall?.name === "string" ? functionCall.name : "";
+        if (!name) {
+          return [];
+        }
+
+        const rawArguments = typeof functionCall?.arguments === "string" ? functionCall.arguments : "{}";
+        return [{
+          id: typeof call.id === "string" ? call.id : `agent_tool_${index}`,
+          name,
+          arguments: parseToolArguments(rawArguments),
+          rawArguments
+        }];
+      });
+      const assistantToolCalls = toolCalls.map((call) => ({
+        id: call.id as string,
+        type: "function" as const,
+        function: {
+          name: call.name,
+          arguments: call.rawArguments
+        }
+      }));
+
+      return {
+        toolCalls,
+        content,
+        assistantMessage: {
+          role: "assistant",
+          content,
+          ...(assistantToolCalls.length > 0 ? { tool_calls: assistantToolCalls } : {})
+        },
+        model: resolved.model,
+        profile: resolved.profile,
+        timeoutMs: resolved.timeoutMs,
+        maxTokens: resolved.maxTokens
+      };
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error(`LLM agent request timed out after ${resolved.timeoutMs}ms`);
       }
 
       throw error;

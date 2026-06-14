@@ -8,12 +8,12 @@ import {
 import { ok } from "../../common/api-response";
 import { HarnessService } from "../harness/harness.service";
 import { ProjectsService } from "../projects/projects.service";
-import { WorkflowService } from "./workflow.service";
+import { ResearchAgentService } from "../agent/research-agent.service";
 
 @Controller("projects/:projectId/workflow")
 export class WorkflowController {
   constructor(
-    private readonly workflowService: WorkflowService,
+    private readonly researchAgentService: ResearchAgentService,
     private readonly projectsService: ProjectsService,
     private readonly harnessService: HarnessService
   ) {}
@@ -39,7 +39,7 @@ export class WorkflowController {
     });
 
     try {
-      const result = await this.workflowService.handleNext({
+      const result = await this.researchAgentService.handleTurn({
         projectId,
         resumeToken: token,
         userMessage: parsed.userMessage,
@@ -128,7 +128,7 @@ export class WorkflowController {
         });
       }, 3000);
 
-      const result = (await this.workflowService.handleNext({
+      const result = (await this.researchAgentService.handleTurn({
         projectId,
         resumeToken: token,
         userMessage: parsed.userMessage,

@@ -9,7 +9,8 @@
 - 稳健性至少包含：主规格复现、替换变量口径、调整样本区间、缩尾后复现主规格。
 - didEnabled 为 true 时，追加 DID 扩展代码，并提醒需要 treatmentVar 和 policyStartYear；didEnabled 为 false 时，不生成 DID 代码。
 - psmEnabled 为 true 时，追加 PSM 匹配和匹配样本回归代码，并提醒需要 treatmentVar 和 psmMatchVars；psmEnabled 为 false 时，不生成 PSM 代码。
-- 所有回归结果必须用 outreg2 导出到 D:\results\robustness check.doc，第一列 replace，后续 append。
+- 所有回归结果必须用 outreg2 导出到相对路径 results/robustness check.doc，第一列 replace，后续 append。
+- 扩展命令已经在数据清洗阶段集中安装，stataCode 不得再次包含 ssc install。
 - 不要编造变量口径、统计量或结果。
 - 所有自然语言字段使用简体中文。
 

@@ -14,7 +14,6 @@ import {
   useState
 } from "react";
 import {
-  SkillName,
   WorkflowStep,
   WorkflowStreamPhase,
   type AgentRunSummary,
@@ -23,6 +22,7 @@ import {
   type ProjectDetail,
   type ResearchProfile,
   type TermMapping,
+  type WorkflowNextResponse,
   type WorkflowProgressPayload,
   type WorkflowStreamPhase as WorkflowStreamPhaseValue
 } from "@empirical/shared";
@@ -40,6 +40,7 @@ import { appendCommittedSpeech, buildSpeechText, finalizeSpeechText, inferSpeech
 import { normalizeAssistantCopy, normalizeDisplayText, normalizeResearchObjectText } from "../lib/message-display";
 import { clearPendingProjectBootstrap, getPendingProjectBootstrap, getStoredProject, getStoredProjects } from "../lib/storage";
 import { ChatComposer } from "./chat-composer";
+import { FormattedText } from "./formatted-text";
 import { StataCodeBlock } from "./stata-code-block";
 import { ThinkingBubble } from "./thinking-bubble";
 import { TypingDots } from "./typing-dots";
@@ -67,15 +68,6 @@ type AssistantPanelMessage = {
   role: "user" | "assistant";
   text: string;
   status?: "loading" | "streaming" | "done" | "error" | "stopped";
-};
-
-type GeneralResearchChatSkillRun = {
-  messageType: AssistantMessageEnvelope["messageType"];
-  data: {
-    answer?: string;
-    keyPoints?: string[];
-    suggestedNextActions?: string[];
-  };
 };
 
 type AccordionKey = "goal" | "stataCode" | "codeExplanation" | "readingAdvice";
@@ -236,25 +228,6 @@ function createLocalUserMessage(message: string, step: WorkflowStep | null | und
     contentJson: { userMessage: message },
     createdAt: new Date().toISOString()
   };
-}
-
-function getAssistantSkillAnswer(run: GeneralResearchChatSkillRun | null) {
-  if (!run) {
-    return "";
-  }
-
-  const keyPoints = Array.isArray(run.data.keyPoints) ? run.data.keyPoints.filter(Boolean) : [];
-  const suggestedNextActions = Array.isArray(run.data.suggestedNextActions)
-    ? run.data.suggestedNextActions.filter(Boolean)
-    : [];
-
-  return [
-    normalizeAssistantCopy(run.data.answer ?? ""),
-    keyPoints.length > 0 ? keyPoints.map((item) => `- ${item}`).join("\n") : "",
-    suggestedNextActions.length > 0 ? `建议下一步：${suggestedNextActions.join("；")}` : ""
-  ]
-    .filter(Boolean)
-    .join("\n\n");
 }
 
 function buildStreamPreview(message: AssistantMessageEnvelope) {
@@ -598,6 +571,34 @@ function WorkspaceSidebar({
   onSelect: (stageId: StageId) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) {
+        return;
+      }
+
+      setMenuOpen(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [menuOpen]);
 
   return (
     <aside className="flex min-h-0 flex-col rounded-[28px] border border-slate-200 bg-white px-4 py-5 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
@@ -634,18 +635,24 @@ function WorkspaceSidebar({
 
       <div className="relative mt-5">
         {menuOpen ? (
-          <div className="absolute bottom-full left-0 mb-2 w-full rounded-[16px] border border-slate-200 bg-white p-2 text-sm shadow-[0_18px_42px_rgba(15,23,42,0.12)]">
-            <Link className="block rounded-[12px] px-3 py-2 text-slate-700 hover:bg-slate-50" href="/projects">
+          <div
+            className="absolute bottom-full left-0 mb-2 w-full rounded-[16px] border border-slate-200 bg-white p-2 text-sm shadow-[0_18px_42px_rgba(15,23,42,0.12)]"
+            ref={menuRef}
+          >
+            <Link className="block rounded-[12px] px-3 py-2 text-slate-700 hover:bg-slate-50" href="/projects" onClick={() => setMenuOpen(false)}>
               历史项目
             </Link>
-            <Link className="block rounded-[12px] px-3 py-2 text-slate-700 hover:bg-slate-50" href="/">
+            <Link className="block rounded-[12px] px-3 py-2 text-slate-700 hover:bg-slate-50" href="/" onClick={() => setMenuOpen(false)}>
               新建项目
             </Link>
           </div>
         ) : null}
         <button
+          aria-expanded={menuOpen}
+          aria-label="打开项目菜单"
           className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
           onClick={() => setMenuOpen((current) => !current)}
+          ref={triggerRef}
           type="button"
         >
           ···
@@ -681,7 +688,7 @@ function WorkspaceRightPanel({
       }));
 
   return (
-    <aside className="hidden-scrollbar hidden min-h-0 flex-col gap-4 overflow-y-auto lg:flex">
+    <aside className="hidden-scrollbar hidden min-h-0 flex-col gap-4 overflow-y-auto rounded-[28px] bg-[#F8FAFC] lg:flex">
       <section className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-[0_12px_36px_rgba(15,23,42,0.05)]">
         <h2 className="text-sm font-semibold text-slate-950">研究设定</h2>
         <div className="mt-4 space-y-3">
@@ -804,7 +811,13 @@ function WorkspaceAssistantDrawer({
                 {message.role === "assistant" ? (
                   <p className="mb-1 text-xs font-semibold text-slate-400">Tank</p>
                 ) : null}
-                {message.role === "assistant" && message.status === "loading" && !message.text ? <TypingDots /> : message.text}
+                {message.role === "assistant" && message.status === "loading" && !message.text ? (
+                  <TypingDots />
+                ) : message.role === "assistant" ? (
+                  <FormattedText text={message.text} />
+                ) : (
+                  message.text
+                )}
               </div>
             ))}
           </div>
@@ -1591,23 +1604,22 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       ]);
       assistantPlaceholderInserted = true;
 
-      // Detail assistant chat is intentionally local to the drawer: this direct skill call
-      // returns an answer without creating workflow messages or changing middle-page content.
-      const run = await apiRequest<GeneralResearchChatSkillRun>(`/projects/${projectId}/skills/${SkillName.GENERAL_RESEARCH_CHAT}`, {
+      const response = await apiRequest<WorkflowNextResponse>(`/projects/${projectId}/workflow/next`, {
         method: "POST",
         token: stored.token,
         signal: controller.signal,
         body: JSON.stringify({
-          step: requestedStep,
+          userMessage: submittedQuestion,
+          requestedStep,
           payload: {
-            userQuestion: submittedQuestion,
-            currentModule: requestedStep,
-            topic: detail?.researchProfile?.normalizedTopic ?? detail?.project.topicNormalized ?? detail?.project.topicRaw ?? ""
+            ...submission.payload
           }
         })
       });
 
-      const answerText = getAssistantSkillAnswer(run) || "我已经收到你的问题，但这次没有生成可展示的回答。";
+      const answerText =
+        normalizeAssistantCopy(response.assistantMessage.contentText ?? "") ||
+        "我已经收到你的问题，但这次没有生成可展示的回答。";
       setAssistantMessages((current) =>
         current.map((message) =>
           message.id === assistantMessageId
@@ -1619,6 +1631,12 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
             : message
         )
       );
+      const [nextDetail, nextMessages] = await Promise.all([
+        apiRequest<ProjectDetail>(`/projects/${projectId}`, { token: stored.token }),
+        apiRequest<AssistantMessageEnvelope[]>(`/projects/${projectId}/messages`, { token: stored.token })
+      ]);
+      setDetail(nextDetail);
+      setMessages(nextMessages);
     } catch (requestError) {
       if (!isAbortError(requestError)) {
         const messageText = requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。";
@@ -1707,7 +1725,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     <>
       <section
         className={clsx(
-          "mx-auto grid h-[calc(100vh-2.5rem)] max-w-[1760px] grid-cols-1 gap-5 overflow-hidden px-2 pb-0 transition-[opacity,transform] duration-200 md:grid-cols-[220px_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)_340px] xl:grid-cols-[260px_minmax(0,1fr)_380px]",
+          "mx-auto grid h-[calc(100vh-1rem)] max-w-[1760px] grid-cols-1 gap-5 overflow-hidden px-2 pb-0 transition-[opacity,transform] duration-200 sm:h-[calc(100vh-1.25rem)] md:grid-cols-[220px_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)_340px] xl:grid-cols-[260px_minmax(0,1fr)_380px]",
           pageEntered ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
         )}
       >
@@ -1780,7 +1798,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       {!assistantOpen ? (
         <button
           aria-label="打开 AI 助手"
-          className="assistant-float-arrow fixed right-3 top-1/2 z-40 inline-flex h-14 w-8 items-center justify-center text-4xl font-light leading-none text-slate-500/80 transition hover:text-slate-950"
+          className="assistant-float-arrow fixed right-0 top-1/2 z-40 inline-flex h-14 w-7 items-center justify-center select-none text-4xl font-light leading-none text-slate-500/80 transition hover:text-slate-950"
           onClick={() => setAssistantOpen(true)}
           type="button"
         >

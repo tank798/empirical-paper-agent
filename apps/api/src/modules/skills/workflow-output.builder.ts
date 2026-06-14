@@ -17,6 +17,7 @@ import {
   type TopicNormalizeOutput
 } from "@empirical/shared";
 import { buildTermAliasBundle } from "../research-profile/term-mappings";
+import { DATA_CLEANING_INSTALL_LINES, STATA_RESULTS_DIRECTORY } from "./stata-code.config";
 
 type RegressionModuleVariant = "baseline" | "robustness" | "iv" | "mechanism" | "heterogeneity";
 
@@ -43,7 +44,7 @@ function unique(values: Array<string | null | undefined>) {
 }
 
 function buildExportPath(fileName: string) {
-  return `D:\\results\\${fileName}`;
+  return `${STATA_RESULTS_DIRECTORY}/${fileName}`;
 }
 
 function buildOutregLine(filePath: string, writeMode: ExportWriteMode) {
@@ -79,22 +80,11 @@ function buildIvreghdfeOptions(fixedEffectAliases: string[], clusterAlias: strin
 }
 
 function buildExportNoticeLines(fileName: string) {
-  return ["* \u8bf7\u628a D:\\results\\ \u66ff\u6362\u6210\u4f60\u81ea\u5df1\u7684\u5bfc\u51fa\u8def\u5f84", `* \u6587\u4ef6\u540d\u4e5f\u53ef\u4ee5\u6309\u9700\u81ea\u884c\u4fee\u6539\uff1a${fileName}`];
-}
-
-function buildInstallLines(commands: Array<{ command: string; install: string }>) {
-  const seen = new Set<string>();
-  return commands.flatMap((item) => {
-    if (seen.has(item.command)) {
-      return [];
-    }
-
-    seen.add(item.command);
-    return [
-      `* \u5982\u679c\u4f60\u4ee5\u524d\u6ca1\u5b89\u88c5\u8fc7 ${item.command}\uff0c\u8bf7\u5148\u8fd0\u884c\u4e0b\u4e00\u884c\uff1b\u5b89\u88c5\u8fc7\u7684\u8bdd\u53ef\u4ee5\u76f4\u63a5\u5ffd\u7565\uff0c\u6216\u8005\u7528 Ctrl+/ \u6ce8\u91ca\u6389`,
-      item.install
-    ];
-  });
+  return [
+    '* \u7ed3\u679c\u5c06\u5bfc\u51fa\u5230\u5f53\u524d\u5de5\u4f5c\u76ee\u5f55\u4e0b\u7684 results/ \u6587\u4ef6\u5939',
+    `capture mkdir "${STATA_RESULTS_DIRECTORY}"`,
+    `* \u6587\u4ef6\u540d\u4e5f\u53ef\u4ee5\u6309\u9700\u81ea\u884c\u4fee\u6539\uff1a${fileName}`
+  ];
 }
 
 function buildRenameTemplateLines(termMappings: TermMapping[]) {
@@ -180,9 +170,9 @@ export function buildDataCleaningOutputTemplate(input: DataCleaningInput): DataC
   const timeAlias = aliasBundle.timeAlias || aliasBundle.preferredTimeAlias;
 
   const stataLines = [
-    ...buildRenameTemplateLines(aliasBundle.termMappings),
+    ...DATA_CLEANING_INSTALL_LINES,
     "",
-    ...buildInstallLines([{ command: "winsor2", install: "ssc install winsor2, replace" }]),
+    ...buildRenameTemplateLines(aliasBundle.termMappings),
     "",
     `destring ${variables.join(" ")}, replace force`,
     `drop if missing(${missingTargets.join(", ")})`,
@@ -196,9 +186,10 @@ export function buildDataCleaningOutputTemplate(input: DataCleaningInput): DataC
 
   return {
     moduleName: "data_cleaning",
-    purpose: "\u5148\u628a\u5173\u952e\u53d8\u91cf\u7edf\u4e00\u547d\u540d\u3001\u6e05\u6d17\u5e76\u6574\u7406\u6210\u53ef\u76f4\u63a5\u8fdb\u5165\u56de\u5f52\u7684\u5206\u6790\u6837\u672c\u3002",
+    purpose: "\u5b89\u88c5\u540e\u7eed\u5de5\u4f5c\u6d41\u9700\u8981\u7684 Stata \u6269\u5c55\u547d\u4ee4\uff0c\u518d\u628a\u5173\u952e\u53d8\u91cf\u7edf\u4e00\u547d\u540d\u3001\u6e05\u6d17\u5e76\u6574\u7406\u6210\u53ef\u76f4\u63a5\u8fdb\u5165\u56de\u5f52\u7684\u5206\u6790\u6837\u672c\u3002",
     meaning: `\u8fd9\u4e00\u90e8\u5206\u56f4\u7ed5 ${input.independentVariable}\u3001${input.dependentVariable} \u4ee5\u53ca\u63a7\u5236\u53d8\u91cf\uff0c\u5b8c\u6210\u7edf\u4e00\u82f1\u6587\u7f29\u5199\u3001\u7f3a\u5931\u503c\u5904\u7406\u548c\u6781\u7aef\u503c\u5904\u7406\u3002`,
     variableDesign: [
+      "\u5728 Stata \u4ee3\u7801\u6700\u9876\u90e8\u96c6\u4e2d\u5b89\u88c5\u5de5\u4f5c\u6d41\u9700\u8981\u7684\u6269\u5c55\u547d\u4ee4\uff0c\u540e\u7eed\u6a21\u5757\u4e0d\u518d\u91cd\u590d\u5b89\u88c5\u3002",
       "\u5148\u7edf\u4e00\u53d8\u91cf\u547d\u540d\u89c4\u5219\uff0c\u4fdd\u8bc1\u540e\u7eed\u6240\u6709\u6a21\u5757\u90fd\u4f7f\u7528\u540c\u4e00\u5957\u82f1\u6587\u7f29\u5199\u3002",
       ...variables.map((item) => `\u68c0\u67e5 ${item} \u7684\u53d8\u91cf\u7c7b\u578b\u3001\u7f3a\u5931\u503c\u4e0e\u6781\u7aef\u503c\u60c5\u51b5`)
     ],
@@ -206,8 +197,8 @@ export function buildDataCleaningOutputTemplate(input: DataCleaningInput): DataC
     modelSpec: "\u540e\u7eed\u6240\u6709\u6a21\u5757\u90fd\u4f1a\u7edf\u4e00\u6cbf\u7528\u8fd9\u4e00\u7ec4\u82f1\u6587\u7f29\u5199\u6765\u5199 Stata \u4ee3\u7801\u3002",
     stataCode: stataLines.join("\n"),
     codeExplanation: [
+      "\u5f00\u5934\u7684 ssc install \u5b89\u88c5\u533a\u96c6\u4e2d\u5b89\u88c5\u540e\u7eed\u9762\u677f\u56de\u5f52\u3001DID\u3001RD\u3001SCM\u3001\u5339\u914d\u3001\u7a33\u5065\u63a8\u65ad\u3001\u8868\u56fe\u548c\u6570\u636e\u68c0\u67e5\u9700\u8981\u7684\u6269\u5c55\u547d\u4ee4\uff1b\u540e\u7eed\u6a21\u5757\u4e0d\u518d\u91cd\u590d\u5b89\u88c5\u3002",
       "\u5f00\u5934\u7684 rename \u6a21\u677f\u8868\u793a\uff1a\u5148\u628a\u539f\u59cb\u5b57\u6bb5\u540d\u6539\u6210\u540e\u7eed\u4ee3\u7801\u7edf\u4e00\u4f7f\u7528\u7684\u82f1\u6587\u7f29\u5199\uff1b\u8bf7\u628a\u5de6\u4fa7 old_* \u5360\u4f4d\u7b26\u66ff\u6362\u6210\u4f60\u81ea\u5df1\u7684\u771f\u5b9e\u53d8\u91cf\u540d\u3002",
-      "ssc install winsor2, replace \u53ea\u5728\u4f60\u4ee5\u524d\u6ca1\u5b89\u88c5\u8fc7 winsor2 \u65f6\u8fd0\u884c\u5373\u53ef\uff1b\u88c5\u8fc7\u7684\u8bdd\u53ef\u4ee5\u76f4\u63a5\u5ffd\u7565\uff0c\u6216\u8005\u7528 Ctrl+/ \u6ce8\u91ca\u6389\u3002",
       "destring \u7528\u4e8e\u628a\u88ab\u8bef\u5bfc\u5165\u4e3a\u5b57\u7b26\u578b\u7684\u53d8\u91cf\u8f6c\u6210\u6570\u503c\u578b\u3002",
       "drop if missing(...) \u7528\u4e8e\u5220\u9664\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u548c\u88ab\u89e3\u91ca\u53d8\u91cf\u7f3a\u5931\u7684\u6837\u672c\u3002",
       "winsor2 \u7528\u4e8e\u7f29\u5c3e\u5904\u7406\u6781\u7aef\u503c\uff0c\u51cf\u5c11\u6781\u7aef\u6837\u672c\u5bf9\u540e\u7eed\u56de\u5f52\u7684\u5e72\u6270\u3002"
@@ -295,12 +286,6 @@ export function buildRegressionModuleOutput(
   const groupAlias = toStataName(input.heterogeneityVars?.[0], "group_var");
   const fileName = MODULE_EXPORT_FILES[variant];
   const filePath = buildExportPath(fileName);
-  const baselineInstallLines = buildInstallLines([
-    { command: "reghdfe", install: "ssc install reghdfe, replace" },
-    { command: "ftools", install: "ssc install ftools, replace" },
-    { command: "outreg2", install: "ssc install outreg2, replace" }
-  ]);
-
   const baseline: RegressionSkillOutput = {
     moduleName,
     purpose: `${moduleLabel}\u7528\u4e8e\u68c0\u9a8c\u6838\u5fc3\u7814\u7a76\u5047\u8bbe\u662f\u5426\u6210\u7acb\u3002`,
@@ -311,8 +296,6 @@ export function buildRegressionModuleOutput(
     mechanismPaths: [],
     modelSpec: `M1 只放核心解释变量；M2 加入控制变量；M3 加入时间固定效应；M4 加入个体固定效应；M5 同时加入个体和时间固定效应；M6 在 M5 基础上按 ${clusterAlias} 聚类，是论文主规格。`,
     stataCode: [
-      ...baselineInstallLines,
-      "",
       ...buildExportNoticeLines(fileName),
       "",
       `xtset ${panelAlias} ${timeAlias}`,
@@ -352,7 +335,6 @@ export function buildRegressionModuleOutput(
       buildOutregLine(filePath, ExportWriteMode.APPEND)
     ].join("\n"),
     codeExplanation: [
-      "ssc install reghdfe、ftools 和 outreg2 只在第一次使用这些命令时运行；已安装可以直接注释掉。",
       "xtset 用于声明面板数据结构，后续所有规格都沿用同一组个体变量和时间变量。",
       "M1-M6 是递进规格：从最简相关关系逐步加入控制变量、时间固定效应、个体固定效应、双向固定效应和聚类稳健标准误。",
       "M6 是默认主回归规格，前面几列主要用于说明结论不是由某一个控制项或固定效应突然驱动。",
@@ -362,7 +344,7 @@ export function buildRegressionModuleOutput(
       "\u5148\u770b\u6838\u5fc3\u89e3\u91ca\u53d8\u91cf\u7684\u7cfb\u6570\u65b9\u5411\u662f\u5426\u7b26\u5408\u7406\u8bba\u9884\u671f\u3002",
       "重点比较 M1 到 M6 中核心系数方向、量级和显著性是否逐步稳定。",
       "论文正文通常解释 M6，M1-M5 作为递进展示和模型设定合理性说明。",
-      "\u4ee3\u7801\u4e2d\u7684 D:\\results\\ \u53ea\u662f\u793a\u4f8b\u8def\u5f84\uff0c\u8fd0\u884c\u524d\u8bf7\u6539\u6210\u4f60\u81ea\u5df1\u7684\u5bfc\u51fa\u8def\u5f84\u3002"
+      "\u56de\u5f52\u8868\u9ed8\u8ba4\u5bfc\u51fa\u5230\u5f53\u524d\u5de5\u4f5c\u76ee\u5f55\u4e0b\u7684 results/ \u6587\u4ef6\u5939\u3002"
     ],
     nextSuggestion: "\u5b8c\u6210\u57fa\u51c6\u56de\u5f52\u540e\uff0c\u53ef\u4ee5\u7ee7\u7eed\u770b\u7a33\u5065\u6027\u3001\u5185\u751f\u6027\u3001\u673a\u5236\u548c\u5f02\u8d28\u6027\u5206\u6790\u3002"
   };
@@ -378,14 +360,6 @@ export function buildRegressionModuleOutput(
       meaning: `这一部分围绕面板双向固定效应主规格做稳健性：替换变量口径、调整样本期、改变聚类或标准误处理；DID 和 PSM 只在用户明确选择时作为扩展检验，不把论文主回归改成 DID。`,
       modelSpec: `主规格为 ${aliasBundle.dependentAlias} 对 ${aliasBundle.independentAlias} 的双向固定效应模型；稳健性依次检查替代变量、样本区间、聚类稳健标准误，并按选择追加 DID 或 PSM 扩展。`,
       stataCode: [
-        ...buildInstallLines([
-          { command: "reghdfe", install: "ssc install reghdfe, replace" },
-          { command: "ftools", install: "ssc install ftools, replace" },
-          { command: "winsor2", install: "ssc install winsor2, replace" },
-          { command: "outreg2", install: "ssc install outreg2, replace" },
-          ...(input.psmEnabled ? [{ command: "psmatch2", install: "ssc install psmatch2, replace" }] : [])
-        ]),
-        "",
         ...buildExportNoticeLines(fileName),
         "",
         "* 主规格复现：双向固定效应 + 聚类稳健标准误",
@@ -484,13 +458,6 @@ export function buildRegressionModuleOutput(
       ],
       modelSpec: `第一阶段用工具变量 ${instrumentAlias} 解释 ${aliasBundle.independentAlias}；第二阶段在双向固定效应框架下估计 ${aliasBundle.independentAlias} 对 ${aliasBundle.dependentAlias} 的净效应。`,
       stataCode: [
-        ...buildInstallLines([
-          { command: "reghdfe", install: "ssc install reghdfe, replace" },
-          { command: "ftools", install: "ssc install ftools, replace" },
-          { command: "ivreghdfe", install: "ssc install ivreghdfe, replace" },
-          { command: "outreg2", install: "ssc install outreg2, replace" }
-        ]),
-        "",
         ...buildExportNoticeLines(fileName),
         "",
         hasUsableInstrumentAlias
@@ -544,8 +511,6 @@ export function buildRegressionModuleOutput(
       ],
       modelSpec: `先用 ${mechanismAlias} 做中介机制两步回归；如有第二个机制或调节变量，再用 ${moderatorAlias} 构造交互项检验调节效应。`,
       stataCode: [
-        ...baselineInstallLines,
-        "",
         ...buildExportNoticeLines(fileName),
         "",
         `* 中介变量：${mechanismAlias}；调节变量：${moderatorAlias}。如果只是占位符，请替换成真实变量名。`,
@@ -590,8 +555,6 @@ export function buildRegressionModuleOutput(
     meaning: "\u5e38\u89c1\u505a\u6cd5\u662f\u505a\u5206\u7ec4\u56de\u5f52\uff0c\u6216\u8005\u76f4\u63a5\u6784\u9020\u4ea4\u4e92\u9879\u6bd4\u8f83\u4e0d\u540c\u7ec4\u522b\u7684\u7cfb\u6570\u5dee\u5f02\u3002",
     modelSpec: `先按 ${groupAlias} 分别跑两组样本，再用交互项模型直接检验组间系数差异。`,
     stataCode: [
-      ...baselineInstallLines,
-      "",
       ...buildExportNoticeLines(fileName),
       "",
       `* 分组变量：${groupAlias}。如果这里仍是 group_var，请替换成真实分组变量，例如国有/非国有、大企业/小企业等。`,
@@ -732,13 +695,8 @@ export function buildStataErrorFallback(input: StataErrorDebugInput): StataError
     return {
       errorType: "command_not_found",
       explanation: "\u8fd9\u4e2a\u62a5\u9519\u901a\u5e38\u8bf4\u660e\u5bf9\u5e94\u547d\u4ee4\u8fd8\u6ca1\u6709\u5b89\u88c5\uff0c\u6216\u8005\u5f53\u524d\u73af\u5883\u6ca1\u6709\u6b63\u786e\u8bc6\u522b\u7528\u6237\u81ea\u88c5\u547d\u4ee4\u3002",
-      fixCode: [
-        "* 如果你以前没安装过 reghdfe、ftools 和 outreg2，请先运行下面三行；安装过的话可以直接忽略，或者用 Ctrl+/ 注释掉",
-        "ssc install reghdfe, replace",
-        "ssc install ftools, replace",
-        "ssc install outreg2, replace"
-      ].join("\n"),
-      retryMessage: "\u5b89\u88c5\u5b8c\u6210\u540e\uff0c\u518d\u91cd\u65b0\u8fd0\u884c\u539f\u6765\u7684\u56de\u5f52\u547d\u4ee4\u5373\u53ef\u3002"
+      fixCode: "* \u8bf7\u56de\u5230\u6570\u636e\u6e05\u6d17\u6a21\u5757\uff0c\u8fd0\u884c Stata \u4ee3\u7801\u6700\u9876\u90e8\u7684\u6269\u5c55\u547d\u4ee4\u5b89\u88c5\u533a\u3002",
+      retryMessage: "\u5b8c\u6210\u6570\u636e\u6e05\u6d17\u6a21\u5757\u9876\u90e8\u7684\u96c6\u4e2d\u5b89\u88c5\u540e\uff0c\u518d\u91cd\u65b0\u8fd0\u884c\u539f\u6765\u7684\u56de\u5f52\u547d\u4ee4\u5373\u53ef\u3002"
     };
   }
 

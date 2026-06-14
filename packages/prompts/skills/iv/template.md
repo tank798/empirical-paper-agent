@@ -10,7 +10,8 @@
 - 若 input.instrumentVariable 为空，不要编造工具变量；stataCode 可以使用 iv_var 占位，但 codeExplanation 必须提醒替换成真实工具变量后才可运行和解释。
 - 若 input.instrumentVariable 存在，stataCode 使用该工具变量做第一阶段和 ivreghdfe 第二阶段。
 - IV 模型仍沿用面板固定效应、控制变量和聚类变量。
-- 所有回归结果必须用 outreg2 导出到 D:\results\iv analysis.doc，第一列 replace，后续 append。
+- 所有回归结果必须用 outreg2 导出到相对路径 results/iv analysis.doc，第一列 replace，后续 append。
+- 扩展命令已经在数据清洗阶段集中安装，stataCode 不得再次包含 ssc install。
 - 不要编造回归统计量、弱工具检验结果或过度识别检验结果。
 - 所有自然语言字段使用简体中文。
 

@@ -190,7 +190,179 @@ export class WorkflowService {
     private readonly harnessService: HarnessService
   ) {}
 
-  async handleNext(params: {
+  async updateResearchProfileFromAgent(params: {
+    projectId: string;
+    userMessage: string;
+    profileUpdates: Record<string, unknown>;
+    clearFields?: string[];
+    phase: "research_setup" | "workflow_ready";
+    agentRunId?: string | null;
+  }) {
+    const beforeProfile = await this.researchProfileService.getByProjectId(params.projectId);
+    const deterministicUpdates = this.cleanProfileUpdatePayload(
+      inferProfileUpdates(params.userMessage) as Record<string, unknown>
+    );
+    const modelUpdates = this.filterUnsupportedProfileUpdates(
+      params.userMessage,
+      this.cleanProfileUpdatePayload(params.profileUpdates),
+      deterministicUpdates
+    );
+    const effectiveUpdates = this.applyAppendSemantics(
+      params.userMessage,
+      beforeProfile,
+      this.mergeModelFirstProfileUpdates({}, deterministicUpdates, modelUpdates)
+    );
+    const clearFields = new Set(this.filterExplicitClearFields(params.userMessage, params.clearFields ?? []));
+
+    const didDisabled = /(?:不做|暂时不做|先不做|不使用|不用|不需要|无需).{0,12}(?:DID|双重差分)/i.test(params.userMessage);
+    const psmDisabled = /(?:不做|暂时不做|先不做|不使用|不用|不需要|无需).{0,12}(?:PSM|倾向得分匹配)/i.test(params.userMessage);
+
+    if (didDisabled) {
+      effectiveUpdates.didEnabled = false;
+      clearFields.add("policyTimeVar");
+      clearFields.add("policyStartYear");
+    }
+    if (psmDisabled) {
+      effectiveUpdates.psmEnabled = false;
+      clearFields.add("psmMatchVars");
+    }
+    const didWillBeEnabled = Boolean(effectiveUpdates.didEnabled ?? beforeProfile?.didEnabled ?? false);
+    const psmWillBeEnabled = Boolean(effectiveUpdates.psmEnabled ?? beforeProfile?.psmEnabled ?? false);
+    if (!didWillBeEnabled && !psmWillBeEnabled && (didDisabled || psmDisabled)) {
+      clearFields.add("treatmentVar");
+    }
+    if (/(?:不做|暂时不做|先不做|不使用|不用|不需要|无需).{0,12}(?:IV|工具变量|工具变量法)/i.test(params.userMessage)) {
+      clearFields.add("instrumentVariable");
+    }
+
+    const updatedProfile = await this.researchProfileService.applyAgentPatch(
+      params.projectId,
+      effectiveUpdates as Partial<ResearchProfile>,
+      Array.from(clearFields)
+    );
+    if (updatedProfile?.normalizedTopic) {
+      await this.projectsService.updateTopic(params.projectId, updatedProfile.normalizedTopic);
+    }
+
+    const draft = await this.buildSetupDraft(params.projectId, "", {}, params.agentRunId);
+    await this.persistSetupDraft(params.projectId, draft);
+    const missingFields = this.getMissingSetupFields(draft);
+    const profileDiff = this.harnessService.buildProfileDiff(
+      beforeProfile ? this.profileSnapshot(beforeProfile as unknown as Record<string, unknown>) : null,
+      this.profileSnapshot(draft as unknown as Record<string, unknown>)
+    );
+
+    if (params.phase === "research_setup") {
+      await this.projectsService.updateStepStatus(
+        params.projectId,
+        WorkflowStep.TOPIC_DETECT,
+        this.hasAnySetupContent(draft) ? ProjectStepStatus.COMPLETED : ProjectStepStatus.IN_PROGRESS,
+        {}
+      );
+      await this.projectsService.updateStepStatus(
+        params.projectId,
+        WorkflowStep.TOPIC_NORMALIZE,
+        ProjectStepStatus.IN_PROGRESS,
+        {}
+      );
+      await this.projectsService.updateCurrentStep(
+        params.projectId,
+        WorkflowStep.TOPIC_NORMALIZE,
+        SkillName.TOPIC_NORMALIZE
+      );
+    }
+
+    return {
+      ok: true,
+      changedFields: profileDiff.map((item) => item.field),
+      profileDiff,
+      researchProfile: this.profileSnapshot(draft as unknown as Record<string, unknown>),
+      missingFields: missingFields.map((item) => item.key),
+      missingFieldLabels: missingFields.map((item) => item.label),
+      setupComplete: missingFields.length === 0,
+      requiresRegeneration: params.phase === "workflow_ready" && profileDiff.length > 0,
+      affectedModules:
+        params.phase === "workflow_ready" && profileDiff.length > 0
+          ? GENERATED_WORKFLOW.map((entry) => entry.step)
+          : [],
+      currentStep:
+        params.phase === "research_setup" ? WorkflowStep.TOPIC_NORMALIZE : undefined
+    };
+  }
+
+  async validateResearchSetupFromAgent(projectId: string, agentRunId?: string | null) {
+    const draft = await this.buildSetupDraft(projectId, "", {}, agentRunId);
+    const missingFields = this.getMissingSetupFields(draft);
+
+    return {
+      ok: missingFields.length === 0,
+      missingFields: missingFields.map((item) => item.key),
+      missingFieldLabels: missingFields.map((item) => item.label),
+      researchProfile: this.profileSnapshot(draft as unknown as Record<string, unknown>)
+    };
+  }
+
+  async generateWorkflowFromAgent(params: {
+    projectId: string;
+    agentRunId?: string | null;
+    onProgress?: (progress: WorkflowProgressPayload) => void | Promise<void>;
+  }) {
+    const draft = await this.buildSetupDraft(params.projectId, "", {}, params.agentRunId);
+    const missingFields = this.getMissingSetupFields(draft);
+    if (missingFields.length > 0) {
+      return {
+        ok: false,
+        generatedModules: [] as string[],
+        missingFields: missingFields.map((item) => item.key),
+        missingFieldLabels: missingFields.map((item) => item.label),
+        currentStep: WorkflowStep.TOPIC_NORMALIZE
+      };
+    }
+
+    await this.persistSetupDraft(params.projectId, draft);
+    await this.runFullWorkflowGeneration(params.projectId, draft, params.agentRunId, params.onProgress);
+
+    return {
+      ok: true,
+      generatedModules: GENERATED_WORKFLOW.map((entry) => entry.step),
+      missingFields: [] as string[],
+      missingFieldLabels: [] as string[],
+      currentStep: WorkflowStep.DATA_CLEANING
+    };
+  }
+
+  async regenerateWorkflowModuleFromAgent(params: {
+    projectId: string;
+    requestedStep: WorkflowStep;
+    agentRunId?: string | null;
+  }) {
+    const skillName = this.resolveSkillForStep(params.requestedStep);
+    if (!skillName) {
+      return {
+        ok: false,
+        module: params.requestedStep,
+        error: "这个模块暂时不支持单独重新生成。"
+      };
+    }
+
+    const project = await this.projectsService.getProjectRecord(params.projectId);
+    const result = await this.runModuleSkill(
+      params.projectId,
+      params.requestedStep,
+      {},
+      project.currentStep as WorkflowStep,
+      params.agentRunId
+    );
+
+    return {
+      ok: true,
+      module: params.requestedStep,
+      currentStep: result.currentStep
+    };
+  }
+
+  // Kept temporarily for rollback comparison only. Runtime workflow routes use ResearchAgentService.
+  private async handleLegacyNext(params: {
     projectId: string;
     resumeToken?: string;
     userMessage: string;
@@ -930,7 +1102,8 @@ export class WorkflowService {
           skillName: entry.skillName,
           step: entry.step,
           payload: this.buildWorkflowSkillPayload(draft),
-          agentRunId
+          agentRunId,
+          executionMode: "deterministic"
         });
 
         return this.messagesService.createMessage({
@@ -1021,7 +1194,8 @@ export class WorkflowService {
       skillName,
       step: requestedStep,
       payload,
-      agentRunId
+      agentRunId,
+      executionMode: "deterministic"
     });
 
     await this.messagesService.clearAssistantMessagesForSteps(projectId, [requestedStep]);
@@ -1529,6 +1703,99 @@ export class WorkflowService {
       ...deterministicUpdates,
       ...modelUpdates
     };
+  }
+
+  private applyAppendSemantics(
+    userMessage: string,
+    stored: ResearchProfile | null,
+    updates: Record<string, unknown>
+  ) {
+    if (!/(?:再加|加上|追加|补充|新增)/.test(userMessage)) {
+      return updates;
+    }
+
+    const result = { ...updates };
+    const appendableFields: Array<
+      "controls" | "fixedEffects" | "psmMatchVars" | "mechanismVariables" | "heterogeneityVars" | "exportFormats"
+    > = ["controls", "fixedEffects", "psmMatchVars", "mechanismVariables", "heterogeneityVars", "exportFormats"];
+
+    for (const field of appendableFields) {
+      if (!Array.isArray(result[field])) {
+        continue;
+      }
+      result[field] = Array.from(new Set([...(stored?.[field] ?? []), ...(result[field] as string[])]));
+    }
+
+    return result;
+  }
+
+  private filterExplicitClearFields(userMessage: string, fields: string[]) {
+    const genericClear = /删除|清空|移除|去掉|取消|不再使用|不再做|不用|不使用|不需要|无需|暂时不做|先不做/.test(userMessage);
+    if (!genericClear) {
+      return [];
+    }
+
+    const fieldKeywords: Record<string, RegExp> = {
+      controls: /控制变量/,
+      fixedEffects: /固定效应/,
+      clusterVar: /聚类/,
+      panelId: /面板|个体变量/,
+      timeVar: /时间变量|年份变量/,
+      sampleScope: /样本|年份|区间/,
+      didEnabled: /DID|双重差分/i,
+      treatmentVar: /DID|PSM|处理组|处理变量/i,
+      policyTimeVar: /DID|双重差分|政策时间/i,
+      policyStartYear: /DID|双重差分|政策年份/i,
+      psmEnabled: /PSM|倾向得分匹配/i,
+      psmMatchVars: /PSM|倾向得分匹配|匹配变量/i,
+      instrumentVariable: /IV|工具变量/i,
+      mechanismVariables: /机制|中介|调节/,
+      heterogeneityVars: /异质性|分组变量/,
+      exportFormats: /导出格式/,
+      dataDictionary: /数据字典|变量字典|字段表/
+    };
+
+    return fields.filter((field) => fieldKeywords[field]?.test(userMessage) ?? false);
+  }
+
+  private filterUnsupportedProfileUpdates(
+    userMessage: string,
+    modelUpdates: Record<string, unknown>,
+    deterministicUpdates: Record<string, unknown>
+  ) {
+    const evidence: Record<string, RegExp> = {
+      researchObject: /研究对象|样本|A股|上市公司|企业|公司|银行|居民|家庭|城市|省份|行业/,
+      sampleScope: /(?:19|20)\d{2}\s*年?\s*(?:-|~|～|〜|–|—|至|到)\s*(?:19|20)\d{2}/,
+      controls: /控制变量|controls?/i,
+      fixedEffects: /固定效应|fix(?:ed)?\s*effects?/i,
+      clusterVar: /聚类|cluster/i,
+      panelId: /面板|个体变量|panel\s*id/i,
+      timeVar: /时间变量|年份变量|time\s*var/i,
+      didEnabled: /DID|双重差分|政策冲击/i,
+      psmEnabled: /PSM|倾向得分匹配|匹配/i,
+      treatmentVar: /处理组|处理变量|treat/i,
+      policyTimeVar: /政策时间|DID|双重差分/i,
+      policyStartYear: /政策年份|政策开始|DID|双重差分/i,
+      instrumentVariable: /IV|工具变量/i,
+      psmMatchVars: /PSM|倾向得分匹配|匹配变量/i,
+      mechanismVariables: /机制|中介|调节/,
+      heterogeneityVars: /异质性|分组变量|分组回归/,
+      exportFormats: /导出|Word|LaTeX|Excel|Stata\s*do/i,
+      dataDictionary: /数据字典|变量字典|字段表|字段名|表头|上传的数据/
+    };
+    const filtered = { ...modelUpdates };
+
+    for (const [field, pattern] of Object.entries(evidence)) {
+      if (
+        Object.prototype.hasOwnProperty.call(filtered, field) &&
+        !Object.prototype.hasOwnProperty.call(deterministicUpdates, field) &&
+        !pattern.test(userMessage)
+      ) {
+        delete filtered[field];
+      }
+    }
+
+    return filtered;
   }
 
   private applyMethodNegationCleanup(userMessage: string, payload: Record<string, unknown>) {

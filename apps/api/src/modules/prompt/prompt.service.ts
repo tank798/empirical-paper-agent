@@ -9,6 +9,7 @@ import * as path from "path";
 export class PromptService {
   private promptsRoot: string | null = null;
   private systemPromptCache: string | null = null;
+  private researchAgentPromptCache: string | null = null;
   private skillPromptCache = new Map<
     PromptSkillName,
     {
@@ -28,6 +29,17 @@ export class PromptService {
     const systemPrompt = await fs.readFile(path.join(root, promptManifest.system.file), "utf8");
     this.systemPromptCache = systemPrompt;
     return systemPrompt;
+  }
+
+  async getResearchAgentPrompt(): Promise<string> {
+    if (this.researchAgentPromptCache) {
+      return this.researchAgentPromptCache;
+    }
+
+    const root = this.resolvePromptsRoot();
+    const prompt = await fs.readFile(path.join(root, promptManifest.agent.file), "utf8");
+    this.researchAgentPromptCache = prompt;
+    return prompt;
   }
 
   async getSkillPrompt(skillName: PromptSkillName) {

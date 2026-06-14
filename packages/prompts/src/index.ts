@@ -1,5 +1,6 @@
 ﻿export const promptManifest = {
   system: { file: "common/system.md", version: "1.0.0" },
+  agent: { file: "agent/research-agent.md", version: "1.0.0" },
   skills: {
     topic_detect: { file: "skills/topic-detect/template.md", version: "1.0.0" },
     topic_normalize: { file: "skills/topic-normalize/template.md", version: "1.0.0" },

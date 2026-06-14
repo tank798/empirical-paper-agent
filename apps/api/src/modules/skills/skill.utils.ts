@@ -20,6 +20,7 @@ import {
   type WorkflowInputInterpreterOutput,
   type WorkflowInputInterpreterProfilePatch
 } from "@empirical/shared";
+import { DATA_CLEANING_INSTALL_LINES, STATA_RESULTS_DIRECTORY } from "./stata-code.config";
 
 function cleanTerm(value: string) {
   return value.replace(/[。；;,.，]/g, "").trim();
@@ -1633,25 +1634,30 @@ export function buildDataCleaningOutput(input: {
 
   return {
     moduleName: "data_cleaning",
-    purpose: "在回归之前完成变量类型、缺失值和极端值的基础清洗。",
+    purpose: "安装后续工作流需要的 Stata 扩展命令，并在回归之前完成变量类型、缺失值和极端值的基础清洗。",
     meaning: `围绕当前题目，先把 ${input.dependentVariable}、${input.independentVariable} 以及控制变量整理成可直接进入 Stata 回归的形式。`,
-    variableDesign: uniqueVars.map((item) => `检查 ${item} 是否为数值型、是否存在异常值和缺失值`),
+    variableDesign: [
+      "集中安装工作流需要的扩展命令，后续模块不再重复安装。",
+      ...uniqueVars.map((item) => `检查 ${item} 是否为数值型、是否存在异常值和缺失值`)
+    ],
     modelSpec: "本阶段不估计正式模型，重点是把数据整理干净。",
     stataCode: [
+      ...DATA_CLEANING_INSTALL_LINES,
+      "",
       `destring ${uniqueVars.join(" ")}, replace force`,
       `drop if missing(${[input.dependentVariable, input.independentVariable, ...input.controls.slice(0, 2)].filter(Boolean).join(", ")})`,
       logStatements,
       `winsor2 ${uniqueVars.join(" ")}, replace cuts(1 99)`
     ].join("\n"),
     codeExplanation: [
+      "开头的安装区集中准备后续模块需要的扩展命令。",
       "destring 用于把字符串型变量转换成数值型变量。",
       "drop if missing 用于删除核心变量缺失的样本。",
       "对数处理一般用于规模类变量或右偏分布较明显的变量。",
       "winsor2 用于对 1% 和 99% 分位数进行缩尾，降低极端值影响。"
     ],
     interpretationGuide: [
-      "清洗完成后建议先运行 summarize，确认变量分布是否合理。",
-      "如果本地没有 winsor2，请先执行 ssc install winsor2, replace。"
+      "清洗完成后建议先运行 summarize，确认变量分布是否合理。"
     ],
     nextSuggestion: "完成清洗后，建议继续做数据结构与描述统计检查。"
   };
@@ -1705,7 +1711,7 @@ export function buildRegressionOutput(
     : "FE, NOT SPECIFIED";
   const exportState = input.exportState ?? {
     fileName: `${moduleName}.doc`,
-    filePath: `D:\\results\\${moduleName}.doc`,
+    filePath: `${STATA_RESULTS_DIRECTORY}/${moduleName}.doc`,
     writeMode: ExportWriteMode.REPLACE
   };
 
@@ -1774,16 +1780,11 @@ export function classifyStataError(input: StataErrorDebugInput): StataErrorDebug
   const errorText = input.errorText.toLowerCase();
   if (errorText.includes("command") && errorText.includes("not found")) {
     const command = input.errorText.match(/command\s+([^\s]+)/i)?.[1] ?? "该命令";
-    const installHint = command === "reghdfe"
-      ? "ssc install reghdfe, replace\nssc install ftools, replace"
-      : command === "outreg2"
-        ? "ssc install outreg2, replace"
-        : `ssc install ${command}, replace`;
     return {
       errorType: "command_not_found",
       explanation: `${command} 尚未安装到当前 Stata 环境中。`,
-      fixCode: installHint,
-      retryMessage: "先安装命令，再重新运行原始代码；如果仍有报错，再把完整报错贴回来。"
+      fixCode: "* 请回到数据清洗模块，运行 Stata 代码最顶部的扩展命令安装区。",
+      retryMessage: "完成数据清洗模块顶部的集中安装后，再重新运行原始代码；如果仍有报错，再把完整报错贴回来。"
     };
   }
 

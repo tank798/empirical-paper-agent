@@ -26,6 +26,17 @@ type RecentMessage = {
   contentJson?: Record<string, unknown>;
 };
 
+const DETERMINISTIC_WORKFLOW_SKILLS = new Set<SkillName>([
+  SkillName.SOP_GUIDE,
+  SkillName.DATA_CLEANING,
+  SkillName.DATA_CHECK,
+  SkillName.BASELINE_REGRESSION,
+  SkillName.ROBUSTNESS,
+  SkillName.IV,
+  SkillName.MECHANISM,
+  SkillName.HETEROGENEITY
+]);
+
 const workflowDataDictionaryItemProperties = {
   variableName: { type: "string", description: "数据中的真实字段名，例如 stkcd、year、rd_exp" },
   labelCn: { type: "string", description: "字段中文名或变量标签；没有时省略" },
@@ -338,6 +349,7 @@ export class SkillsService {
     step: WorkflowStep;
     payload?: Record<string, unknown>;
     agentRunId?: string | null;
+    executionMode?: "auto" | "deterministic";
   }): Promise<SkillRunResult<any>> {
     const definition = skillRegistry[params.skillName];
     if (!definition) {
@@ -400,11 +412,13 @@ export class SkillsService {
     let fallbackUsed = false;
     let error: { type: string; message: string } | null = null;
     let resolvedModel = this.llmService.modelName;
-    const shouldUseDeterministicFallback =
-      params.skillName === SkillName.TOPIC_DETECT || params.skillName === SkillName.SOP_GUIDE;
+    const shouldUseDeterministicExecution =
+      params.executionMode === "deterministic" ||
+      params.skillName === SkillName.TOPIC_DETECT ||
+      DETERMINISTIC_WORKFLOW_SKILLS.has(params.skillName);
 
-    if (shouldUseDeterministicFallback) {
-      fallbackUsed = true;
+    if (shouldUseDeterministicExecution) {
+      resolvedModel = "deterministic";
       output = definition.outputSchema.parse(
         definition.fallback(input, {
           projectId: params.projectId,
@@ -479,7 +493,7 @@ export class SkillsService {
         errorJson: error as never,
         promptVersion: prompt.version,
         model: resolvedModel,
-        status: fallbackUsed ? "fallback" : "success"
+        status: shouldUseDeterministicExecution ? "deterministic" : fallbackUsed ? "fallback" : "success"
       }
     });
 
@@ -1118,6 +1132,7 @@ export class SkillsService {
       const template = buildDataCleaningOutputTemplate(input as any);
       return {
         ...output,
+        purpose: template.purpose,
         variableDesign: template.variableDesign,
         termMappings: template.termMappings,
         modelSpec: template.modelSpec,

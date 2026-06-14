@@ -17,6 +17,7 @@ import { ensureNamedImageFile } from "../lib/image-ocr";
 import { appendCommittedSpeech, buildSpeechText, finalizeSpeechText, inferSpeechRecognitionLanguage } from "../lib/speech";
 import { saveStoredProject, setPendingProjectBootstrap } from "../lib/storage";
 import { ChatComposer } from "./chat-composer";
+import { FormattedText } from "./formatted-text";
 import { ResearchSetupPanel } from "./research-setup-panel";
 import { TypingDots } from "./typing-dots";
 
@@ -417,7 +418,7 @@ function SetupConfirmationCard({
   const rows = getSetupCardRows(contentJson, editing);
 
   return (
-    <div className="setup-confirm-card mx-auto mt-4 w-full max-w-[720px] rounded-[22px] border border-[#E5EAF2] bg-white p-6 shadow-[0_18px_46px_rgba(15,23,42,0.08)] sm:p-7">
+    <div className="setup-confirm-card mx-auto w-full max-w-[720px] rounded-[22px] border border-[#E5EAF2] bg-white p-6 shadow-[0_18px_46px_rgba(15,23,42,0.08)] sm:p-7">
       <h2 className="text-lg font-semibold text-slate-950">研究设定</h2>
       <div className="mt-5 divide-y divide-slate-100">
         {rows.map((row) => (
@@ -547,6 +548,7 @@ export function HomeHero() {
   const setupConfirmCardRef = useRef<HTMLDivElement | null>(null);
   const setupBottomRef = useRef<HTMLDivElement | null>(null);
   const setupStickToBottomRef = useRef(true);
+  const setupCardAutoScrollMessageIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const speechBaseTextRef = useRef("");
@@ -582,12 +584,12 @@ export function HomeHero() {
   }, []);
 
   useEffect(() => {
-    if (!setupChatActive || !setupStickToBottomRef.current) {
+    if (!setupChatActive || !setupStickToBottomRef.current || showResearchConfirmCard) {
       return;
     }
 
     setupBottomRef.current?.scrollIntoView({ block: "end" });
-  }, [generationInProgress, generationProgress, loading, setupChatActive, setupChatMessages]);
+  }, [generationInProgress, generationProgress, loading, setupChatActive, setupChatMessages, showResearchConfirmCard]);
 
   useEffect(() => {
     if (!researchSettingComplete || !latestSetupMessageId) {
@@ -604,19 +606,25 @@ export function HomeHero() {
   }, [latestSetupMessage, latestSetupMessageId, researchSettingComplete]);
 
   useEffect(() => {
-    if (!showResearchConfirmCard || generationInProgress) {
+    if (
+      !showResearchConfirmCard ||
+      generationInProgress ||
+      setupCardAutoScrollMessageIdRef.current === latestSetupMessageId ||
+      !setupStickToBottomRef.current
+    ) {
       return;
     }
 
     const timer = window.setTimeout(() => {
       setupStickToBottomRef.current = false;
+      setupCardAutoScrollMessageIdRef.current = latestSetupMessageId;
       setupConfirmCardRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     }, 60);
 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [generationInProgress, latestSetupMessageId, showResearchConfirmCard, setupConfirmEditing]);
+  }, [generationInProgress, latestSetupMessageId, showResearchConfirmCard]);
 
   const handleSetupScroll = () => {
     const element = setupScrollRef.current;
@@ -1224,8 +1232,7 @@ export function HomeHero() {
 
                     return (
                       <div className="flex scroll-mt-8 justify-center" key={message.id} ref={setupConfirmCardRef}>
-                        <div className="assistant-message w-full max-w-[760px] whitespace-pre-wrap break-words text-[15px] leading-7 text-slate-900">
-                          <p>{message.text}</p>
+                        <div className="assistant-message w-full max-w-[760px] break-words text-[15px] leading-7 text-slate-900">
                           <SetupConfirmationCard
                             autoStartCancelled={autoStartCancelled}
                             contentJson={message.contentJson}
@@ -1269,7 +1276,7 @@ export function HomeHero() {
                   ) : (
                     <div key={message.id} className="flex justify-start">
                       <div className="assistant-message max-w-[760px] whitespace-pre-wrap break-words text-[15px] leading-7 text-slate-900">
-                        {message.status === "loading" && !message.text ? <TypingDots /> : message.text}
+                        {message.status === "loading" && !message.text ? <TypingDots /> : <FormattedText text={message.text} />}
                       </div>
                     </div>
                   );
