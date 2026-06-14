@@ -8,38 +8,8 @@
 
 ```mermaid
 flowchart TD
-  subgraph OLD["旧链路：正则 / 关键词 / 当前阶段规则路由"]
-    O1["用户输入"] --> O2["WorkflowController\n/next"]
-    O2 --> O3["WorkflowService.handleLegacyNext"]
-    O3 --> O4{"当前 step\n+ 关键词 / 正则\n+ if/else 规则"}
-    O4 -->|"报错 / 回归结果"| O5["固定分流到\nStata Debug / Result Interpret"]
-    O4 -->|"主题确认阶段"| O6["Research Setup Interpreter"]
-    O4 -->|"工作流模块内"| O7["Workflow Input Interpreter\n或模块 Skill"]
-    O5 --> O8["Messages / ProjectStep / ResearchProfile"]
-    O6 --> O8
-    O7 --> O8
-  end
-
-  O8 -->|"迭代为统一 Agent 决策"| N1
-
-  subgraph NEW["新链路：Research Agent + 工具调用"]
-    N1["用户输入\n文本 / 多附件 / 图片 OCR"] --> N2["InputSourceService\n多源拆分、长文本预检、分块召回"]
-    N2 --> N3["source artifact\n+ 历史 source index"]
-    N2 --> N4["ResearchAgentService"]
-    N4 --> N5["research-agent.md\n+ 当前研究设定\n+ source index\n+ 工具定义"]
-    N5 --> N6{"Agent 决策"}
-    N6 -->|"直接回答"| N7["自然语言回复"]
-    N6 -->|"需要历史材料"| N8["recall_sources"]
-    N6 -->|"补充/修改设定"| N9["update_research_profile"]
-    N6 -->|"确认后生成"| N10["generate_workflow"]
-    N6 -->|"模块调整"| N11["regenerate_workflow_module"]
-    N8 --> N4
-    N9 --> N12["ResearchProfile / Messages / Harness 记录"]
-    N10 --> N13["WorkflowService + SkillsService"]
-    N11 --> N13
-    N13 --> N14["workflow-output.builder.ts\n确定性生成 Stata 模块"]
-    N14 --> N15["项目工作台\n路径、代码、解读、AI 助手"]
-  end
+  A["旧链路\n正则 / 关键词 / 当前阶段规则路由\n分散调用阶段 Skill"] --> B["迭代为"]
+  B --> C["新链路\n多源输入预处理 → Research Agent 统一决策 → 工具调用 → 工作流生成"]
 ```
 
 ## 项目做了什么
@@ -55,25 +25,34 @@ flowchart TD
 ## 当前主链路
 
 ```mermaid
-flowchart LR
-  A["Next.js 前端\napps/web"] --> B["附件解析\nPDF / DOCX / Excel / 图片 OCR"]
-  B --> C["/api/proxy"]
-  C --> D["NestJS API\napps/api"]
-  D --> E["InputSourceService\nsource 拆分 / 预检 / 分块 / index"]
-  E --> F["ResearchAgentService"]
-  F --> G["LlmService\nOpenAI 兼容接口"]
-  F --> H["工具调用"]
-  H --> I["recall_sources\n历史材料回看"]
-  H --> J["ResearchProfileService\n研究设定入库"]
-  H --> K["WorkflowService\n推进工作流"]
-  K --> L["SkillsService"]
-  L --> M["workflow-output.builder.ts\nStata 模块生成"]
-  I --> F
-  J --> N[("Postgres / Prisma")]
-  M --> N
-  E --> N
-  N --> O["Messages + Project Detail"]
-  O --> A
+flowchart TD
+  A["用户输入\n文本 / 多附件 / 图片 OCR"] --> B["Next.js 前端\napps/web"]
+  B --> C["附件解析\nPDF / DOCX / Excel / 图片 OCR"]
+  C --> D["/api/proxy"]
+  D --> E["NestJS API\napps/api"]
+  E --> F["InputSourceService\n多源拆分、长文本预检、分块召回"]
+  F --> G["source artifact\n+ 历史 source index"]
+  F --> H["ResearchAgentService"]
+  H --> I["research-agent.md\n+ 当前研究设定\n+ source index\n+ 工具定义"]
+  I --> J["LlmService\nOpenAI 兼容接口"]
+  J --> K{"Agent 决策"}
+  K -->|"直接回答"| L["自然语言回复"]
+  K -->|"需要历史材料"| M["recall_sources"]
+  K -->|"补充/修改设定"| N["update_research_profile"]
+  K -->|"确认生成工作流"| O["generate_workflow"]
+  K -->|"模块调整"| P["regenerate_workflow_module"]
+  M --> H
+  N --> Q["ResearchProfileService\n研究设定入库"]
+  O --> R["WorkflowService + SkillsService"]
+  P --> R
+  R --> S["workflow-output.builder.ts\n确定性生成 Stata 模块"]
+  G --> T[("Postgres / Prisma")]
+  Q --> T
+  S --> T
+  L --> U["Messages + Project Detail"]
+  T --> U
+  U --> V["项目工作台\n路径、代码、解读、AI 助手"]
+  V --> B
 ```
 
 ## 长文本与多附件上下文
