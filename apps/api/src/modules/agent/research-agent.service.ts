@@ -17,6 +17,8 @@ import { ResearchProfileService } from "../research-profile/research-profile.ser
 import { HarnessService } from "../harness/harness.service";
 import { inferProfileUpdates } from "../skills/skill.utils";
 import { WorkflowService } from "../workflow/workflow.service";
+import { InputSourceService } from "./input-source.service";
+import { HISTORY_MESSAGE_LIMIT, trimHeadTail } from "./input-source.utils";
 
 type AgentPhase = "research_setup" | "workflow_ready";
 
@@ -125,6 +127,33 @@ export const RESEARCH_AGENT_TOOLS: LlmFunctionTool[] = [
   {
     type: "function",
     function: {
+      name: "recall_sources",
+      description:
+        "只读回看历史输入源。当当前问题依赖此前上传/粘贴的材料，且当前研究设定和短历史不足以回答或更新设定时调用。不要因为出现'之前/刚才/附件'等词机械调用，需要结合语义判断。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          sourceIds: {
+            type: "array",
+            items: { type: "string" },
+            description: "可选。历史输入源索引中的 sourceId 或 artifactId；不填则回看最近输入源。"
+          },
+          query: {
+            type: "string",
+            description: "用于召回片段的查询词，例如：变量定义 模型设定 样本区间。"
+          },
+          maxChunks: {
+            type: "number",
+            description: "每个长文本源最多返回多少个片段，默认8，最大20。"
+          }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "update_research_profile",
       description:
         "仅在用户明确提供、补充、替换或清空研究设定时调用。profileUpdates只放本轮明确变化；本轮未提到的字段不要填写。用户明确删除或不再使用的字段放入clearFields。",
@@ -222,6 +251,7 @@ export class ResearchAgentService {
     private readonly promptService: PromptService,
     private readonly llmService: LlmService,
     private readonly harnessService: HarnessService,
+    private readonly inputSourceService: InputSourceService,
     private readonly workflowService: WorkflowService
   ) {}
 
@@ -237,12 +267,19 @@ export class ResearchAgentService {
     const project = await this.projectsService.assertProjectAccess(params.projectId, params.resumeToken);
     const requestedStep = (params.requestedStep ?? project.currentStep) as WorkflowStep;
     const phase = this.resolvePhase(project.currentStep as WorkflowStep);
+    const turnContext = await this.inputSourceService.prepareTurnContext({
+      projectId: params.projectId,
+      runId: params.agentRunId ?? null,
+      userMessage: params.userMessage,
+      payload: params.payload ?? {}
+    });
     const budgetedMessage = await this.harnessService.budgetUserMessage({
       projectId: params.projectId,
       runId: params.agentRunId ?? null,
-      userMessage: params.userMessage
+      userMessage: turnContext.userMessageForStorage
     });
     const userMessage = budgetedMessage.userMessage;
+    const compactPayload = turnContext.compactPayload;
 
     await this.messagesService.createMessage({
       projectId: params.projectId,
@@ -252,15 +289,22 @@ export class ResearchAgentService {
       contentText: userMessage,
       contentJson: {
         userMessage,
-        artifactIds: budgetedMessage.artifactIds,
-        payload: params.payload ?? {},
+        artifactIds: [...budgetedMessage.artifactIds, ...turnContext.sourceArtifactIds],
+        sourceArtifactIds: turnContext.sourceArtifactIds,
+        sourceSummaries: turnContext.sourceSummaries,
+        payload: compactPayload,
         requestedStep,
         phase
       }
     });
 
     const systemPrompt = await this.buildSystemPrompt(params.projectId, phase, requestedStep);
-    const messages = await this.buildConversation(params.projectId, userMessage, params.payload ?? {});
+    const messages = await this.buildConversation(
+      params.projectId,
+      userMessage,
+      compactPayload,
+      turnContext.sourceContextText
+    );
     const toolExecutions: AgentToolExecution[] = [];
     let currentStep = project.currentStep as WorkflowStep;
 
@@ -294,7 +338,7 @@ export class ResearchAgentService {
             projectId: params.projectId,
             phase,
             userMessage,
-            requestPayload: params.payload ?? {},
+            requestPayload: compactPayload,
             requestedStep,
             toolCall,
             agentRunId: params.agentRunId,
@@ -335,7 +379,7 @@ export class ResearchAgentService {
         userMessage,
         requestedStep,
         phase,
-        payload: params.payload ?? {},
+        payload: compactPayload,
         currentStep,
         agentRunId: params.agentRunId,
         onProgress: params.onProgress,
@@ -345,9 +389,10 @@ export class ResearchAgentService {
   }
 
   private async buildSystemPrompt(projectId: string, phase: AgentPhase, requestedStep: WorkflowStep) {
-    const [basePrompt, profile] = await Promise.all([
+    const [basePrompt, profile, sourceIndex] = await Promise.all([
       this.promptService.getResearchAgentPrompt(),
-      this.researchProfileService.getByProjectId(projectId)
+      this.researchProfileService.getByProjectId(projectId),
+      this.inputSourceService.buildProjectSourceIndex(projectId)
     ]);
 
     return [
@@ -358,6 +403,11 @@ export class ResearchAgentService {
       `当前用户查看模块：${requestedStep}`,
       `当前研究设定：${JSON.stringify(profile ?? {})}`,
       "",
+      "# 历史输入源索引",
+      sourceIndex || "暂无历史输入源。",
+      "",
+      "如果用户问题需要回看历史上传/粘贴材料，且当前研究设定和短历史不足以判断，可以调用 recall_sources。不要把索引当作材料全文。",
+      "",
       "当前可用工具由系统提供。直接回答不需要工具；修改状态或生成工作流必须使用工具。"
     ].join("\n");
   }
@@ -365,14 +415,15 @@ export class ResearchAgentService {
   private async buildConversation(
     projectId: string,
     userMessage: string,
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
+    sourceContextText: string
   ): Promise<LlmChatMessage[]> {
     const recentMessages = await this.messagesService.getRecentMessages(projectId, 12);
     const history = recentMessages.slice(0, -1).map((message) => ({
       role: message.role === "assistant" ? ("assistant" as const) : ("user" as const),
       content: this.trimText(
         message.contentText?.trim() || JSON.stringify(message.contentJson ?? {}),
-        800
+        HISTORY_MESSAGE_LIMIT
       )
     }));
     const payloadText = Object.keys(payload).length > 0
@@ -383,7 +434,12 @@ export class ResearchAgentService {
       ...history,
       {
         role: "user",
-        content: `${userMessage}${payloadText}`
+        content: [
+          "[用户本轮输入]",
+          userMessage,
+          sourceContextText,
+          payloadText.trim()
+        ].filter(Boolean).join("\n\n")
       }
     ];
   }
@@ -467,6 +523,15 @@ export class ResearchAgentService {
     onProgress?: (progress: WorkflowProgressPayload) => void | Promise<void>;
   }): Promise<Record<string, unknown>> {
     const args = params.toolCall.arguments;
+
+    if (params.toolCall.name === "recall_sources") {
+      return this.inputSourceService.recallSources({
+        projectId: params.projectId,
+        sourceIds: args.sourceIds,
+        query: args.query,
+        maxChunks: args.maxChunks
+      });
+    }
 
     if (params.toolCall.name === "update_research_profile") {
       return this.workflowService.updateResearchProfileFromAgent({
@@ -663,6 +728,6 @@ export class ResearchAgentService {
   }
 
   private trimText(value: string, maxLength: number) {
-    return value.length <= maxLength ? value : `${value.slice(0, maxLength)}...`;
+    return trimHeadTail(value, maxLength, 500, 500);
   }
 }

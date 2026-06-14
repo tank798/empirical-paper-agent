@@ -38,7 +38,7 @@ const SUPPORTED_ATTACHMENT_EXTENSIONS = new Set([
 ]);
 
 const SUPPORTED_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "bmp", "gif"]);
-const MAX_ATTACHMENT_CHARACTERS = 20000;
+const MAX_ATTACHMENT_CHARACTERS = 200000;
 const MAX_SPREADSHEET_ROWS = 80;
 const MAX_SPREADSHEET_SHEETS = 4;
 
@@ -277,16 +277,32 @@ export function formatAttachmentSize(size: number) {
   return (size / (1024 * 1024)).toFixed(1) + " MB";
 }
 
-export function buildComposerSubmission(rawMessage: string, attachment: ComposerAttachment | null) {
-  const attachmentExtension = attachment ? getFileExtension(attachment.name) : "";
+function getAttachmentSourceType(attachment: ComposerAttachment) {
+  const extension = getFileExtension(attachment.name);
+  if (attachment.source === "image") {
+    return "image_ocr";
+  }
+  if (["xls", "xlsx", "csv"].includes(extension)) {
+    return "spreadsheet";
+  }
+  if (["pdf", "docx", "txt", "md"].includes(extension)) {
+    return "document";
+  }
+  return "attachment";
+}
+
+export function buildComposerSubmission(rawMessage: string, attachmentInput: ComposerAttachment | ComposerAttachment[] | null) {
+  const attachments = Array.isArray(attachmentInput) ? attachmentInput : attachmentInput ? [attachmentInput] : [];
+  const primaryAttachment = attachments[0] ?? null;
+  const attachmentExtension = primaryAttachment ? getFileExtension(primaryAttachment.name) : "";
   const looksLikeDictionaryAttachment =
-    attachment?.source === "file" && ["csv", "xls", "xlsx", "json", "txt", "md"].includes(attachmentExtension);
+    primaryAttachment?.source === "file" && ["csv", "xls", "xlsx", "json", "txt", "md"].includes(attachmentExtension);
   const looksLikeResearchDocumentAttachment =
-    attachment?.source === "file" && ["pdf", "docx", "txt", "md"].includes(attachmentExtension);
+    primaryAttachment?.source === "file" && ["pdf", "docx", "txt", "md"].includes(attachmentExtension);
   const baseMessage =
     rawMessage.trim() ||
-    (attachment
-      ? attachment.source === "image"
+    (primaryAttachment
+      ? primaryAttachment.source === "image"
         ? "请结合截图识别内容继续处理。"
         : looksLikeDictionaryAttachment
           ? "请判断这个附件是否是数据字典或字段表；如果是，请识别真实字段名、字段含义和候选变量角色。"
@@ -295,31 +311,54 @@ export function buildComposerSubmission(rawMessage: string, attachment: Composer
           : "请结合附件内容继续处理。"
       : "");
 
-  if (!attachment) {
+  if (attachments.length === 0) {
     return {
       userMessage: baseMessage,
-      payload: {} as Record<string, unknown>
+      payload: rawMessage.trim()
+        ? {
+            inputSources: [{
+              sourceType: "user_text",
+              text: rawMessage.trim()
+            }]
+          } as Record<string, unknown>
+        : {} as Record<string, unknown>
     };
   }
 
-  const attachmentLines = [
-    "文件名：" + attachment.name,
-    "类型：" + attachment.mimeType,
-    "大小：" + formatAttachmentSize(attachment.size),
-    attachment.source === "image" ? "来源：截图 / 图片 OCR" : "来源：文件解析",
-    attachment.truncated ? "内容较长，已截断展示" : "内容已完整解析",
-    attachment.content
-  ];
+  const inputSources = [
+    rawMessage.trim()
+      ? {
+          sourceType: "user_text",
+          text: rawMessage.trim()
+        }
+      : null,
+    ...attachments.map((attachment) => ({
+      sourceType: getAttachmentSourceType(attachment),
+      fileName: attachment.name,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+      text: attachment.content,
+      truncated: attachment.truncated,
+      source: attachment.source
+    }))
+  ].filter(Boolean);
 
   return {
-    userMessage: [baseMessage, "[附件内容]", attachmentLines.join("\n")].filter(Boolean).join("\n\n"),
+    userMessage: baseMessage,
     payload: {
       attachment: {
+        name: primaryAttachment?.name,
+        mimeType: primaryAttachment?.mimeType,
+        size: primaryAttachment?.size,
+        truncated: primaryAttachment?.truncated
+      },
+      attachments: attachments.map((attachment) => ({
         name: attachment.name,
         mimeType: attachment.mimeType,
         size: attachment.size,
         truncated: attachment.truncated
-      }
+      })),
+      inputSources
     }
   };
 }

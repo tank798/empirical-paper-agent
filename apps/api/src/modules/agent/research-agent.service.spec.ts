@@ -39,6 +39,21 @@ function createService(options?: {
     recordToolResult: jest.fn().mockResolvedValue({}),
     recordEvent: jest.fn().mockResolvedValue({})
   };
+  const inputSourceService = {
+    prepareTurnContext: jest.fn(async ({ userMessage, payload }) => ({
+      userMessageForModel: userMessage,
+      userMessageForStorage: userMessage,
+      sourceContextText: "",
+      compactPayload: payload ?? {},
+      sourceArtifactIds: [],
+      sourceSummaries: []
+    })),
+    buildProjectSourceIndex: jest.fn().mockResolvedValue(""),
+    recallSources: jest.fn().mockResolvedValue({
+      ok: true,
+      sources: []
+    })
+  };
   const workflowService = {
     updateResearchProfileFromAgent: jest.fn().mockResolvedValue(
       options?.updateResult ?? {
@@ -63,11 +78,13 @@ function createService(options?: {
       promptService as never,
       llmService as never,
       harnessService as never,
+      inputSourceService as never,
       workflowService as never
     ),
     messagesService,
     llmService,
     harnessService,
+    inputSourceService,
     workflowService
   };
 }

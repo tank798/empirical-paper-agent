@@ -4,6 +4,7 @@ import { ProjectsModule } from "../projects/projects.module";
 import { ResearchProfileModule } from "../research-profile/research-profile.module";
 import { SkillsModule } from "../skills/skills.module";
 import { HarnessModule } from "../harness/harness.module";
+import { InputSourceService } from "../agent/input-source.service";
 import { ResearchAgentService } from "../agent/research-agent.service";
 import { WorkflowController } from "./workflow.controller";
 import { WorkflowService } from "./workflow.service";
@@ -11,7 +12,7 @@ import { WorkflowService } from "./workflow.service";
 @Module({
   imports: [ProjectsModule, MessagesModule, ResearchProfileModule, SkillsModule, HarnessModule],
   controllers: [WorkflowController],
-  providers: [WorkflowService, ResearchAgentService],
+  providers: [WorkflowService, ResearchAgentService, InputSourceService],
   exports: [WorkflowService]
 })
 export class WorkflowModule {}

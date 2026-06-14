@@ -737,7 +737,7 @@ function WorkspaceRightPanel({
 function WorkspaceAssistantDrawer({
   messages,
   input,
-  attachment,
+  attachments,
   sending,
   attachmentProcessing,
   listening,
@@ -753,7 +753,7 @@ function WorkspaceAssistantDrawer({
 }: {
   messages: AssistantPanelMessage[];
   input: string;
-  attachment: ComposerAttachment | null;
+  attachments: ComposerAttachment[];
   sending: boolean;
   attachmentProcessing: boolean;
   listening: boolean;
@@ -764,7 +764,7 @@ function WorkspaceAssistantDrawer({
   onAttachClick: () => void;
   onMicClick: () => void;
   onPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
-  onRemoveAttachment: () => void;
+  onRemoveAttachment: (index?: number) => void;
   onStop: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -827,7 +827,7 @@ function WorkspaceAssistantDrawer({
 
       <div className="border-t border-[#E5EAF2] bg-white p-4">
         <ChatComposer
-          attachment={attachment}
+          attachments={attachments}
           attachmentProcessing={attachmentProcessing}
           disabled={confirmProcessing}
           error={composerError}
@@ -889,7 +889,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [composerError, setComposerError] = useState("");
-  const [attachment, setAttachment] = useState<ComposerAttachment | null>(null);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [attachmentProcessing, setAttachmentProcessing] = useState(false);
   const [listening, setListening] = useState(false);
   const [selectedStageId, setSelectedStageId] = useState<StageId>("topic");
@@ -934,7 +934,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
     setError("");
     setComposerError("");
     setInput("");
-    setAttachment(null);
+    setAttachments([]);
     setAttachmentProcessing(false);
     setListening(false);
     setSelectedStageId("topic");
@@ -1182,20 +1182,24 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
 
   const streamMessage = async (
     rawMessage: string,
-    options: { attachment?: ComposerAttachment | null; payload?: Record<string, unknown>; requestedStep?: WorkflowStep } = {}
+    options: { attachment?: ComposerAttachment | ComposerAttachment[] | null; payload?: Record<string, unknown>; requestedStep?: WorkflowStep } = {}
   ) => {
     if (!stored || sending || attachmentProcessing) {
       return null;
     }
 
-    let resolvedAttachment = options.attachment ?? null;
+    let resolvedAttachments = Array.isArray(options.attachment)
+      ? options.attachment
+      : options.attachment
+        ? [options.attachment]
+        : [];
 
-    if (!rawMessage.trim() && !resolvedAttachment) {
+    if (!rawMessage.trim() && resolvedAttachments.length === 0) {
       return null;
     }
 
     try {
-      resolvedAttachment = await resolveAttachmentForSubmission(resolvedAttachment);
+      resolvedAttachments = await resolveAttachmentsForSubmission(resolvedAttachments);
     } catch (attachmentError) {
       setComposerError(
         attachmentError instanceof Error ? attachmentError.message : "\u622a\u56fe\u8bc6\u522b\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002"
@@ -1203,7 +1207,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       return null;
     }
 
-    const submission = buildComposerSubmission(rawMessage, resolvedAttachment);
+    const submission = buildComposerSubmission(rawMessage, resolvedAttachments);
 
     if (!submission.userMessage.trim()) {
       setComposerError("\u622a\u56fe\u4e2d\u6ca1\u6709\u8bc6\u522b\u5230\u53ef\u7528\u6587\u5b57\uff0c\u8bf7\u6362\u4e00\u5f20\u66f4\u6e05\u6670\u7684\u56fe\u7247\u518d\u8bd5\u3002");
@@ -1303,7 +1307,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       setConfirmProcessing(false);
       setWorkflowProgress(null);
       setInput("");
-      setAttachment(null);
+      setAttachments([]);
       return nextMessages[nextMessages.length - 1] ?? null;
     } catch (requestError) {
       const messageText = requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。";
@@ -1363,20 +1367,18 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
 
     if (normalizedFile.type.startsWith("image/")) {
       setComposerError("");
-      setAttachment(buildPendingImageAttachment(normalizedFile));
+      setAttachments((current) => [...current, buildPendingImageAttachment(normalizedFile)]);
       return;
     }
 
     try {
       setComposerError("");
-      setAttachment(null);
       setAttachmentProcessing(true);
       const nextAttachment = await readComposerAttachment(normalizedFile, {
         onStatus: () => {}
       });
-      setAttachment(nextAttachment);
+      setAttachments((current) => [...current, nextAttachment]);
     } catch (attachmentError) {
-      setAttachment(null);
       setComposerError(
         attachmentError instanceof Error ? attachmentError.message : "文件读取失败，请稍后重试。"
       );
@@ -1386,28 +1388,35 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
   };
 
   const handleAttachmentPick = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files ?? []);
     event.target.value = "";
 
-    if (!file) {
+    if (files.length === 0) {
       return;
     }
 
-    await processAttachment(file);
+    for (const file of files) {
+      await processAttachment(file);
+    }
   };
 
-  const resolveAttachmentForSubmission = async (nextAttachment: ComposerAttachment | null) => {
-    if (!nextAttachment || nextAttachment.source !== "image" || !nextAttachment.file || nextAttachment.processed) {
-      return nextAttachment;
-    }
+  const resolveAttachmentsForSubmission = async (nextAttachments: ComposerAttachment[]) => {
+    const resolved: ComposerAttachment[] = [];
+    for (const nextAttachment of nextAttachments) {
+      if (nextAttachment.source !== "image" || !nextAttachment.file || nextAttachment.processed) {
+        resolved.push(nextAttachment);
+        continue;
+      }
 
-    try {
-      setComposerError("");
-      setAttachmentProcessing(true);
-      return await readImageAttachment(nextAttachment.file, () => {});
-    } finally {
-      setAttachmentProcessing(false);
+      try {
+        setComposerError("");
+        setAttachmentProcessing(true);
+        resolved.push(await readImageAttachment(nextAttachment.file, () => {}));
+      } finally {
+        setAttachmentProcessing(false);
+      }
     }
+    return resolved;
   };
 
   const handleComposerPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -1560,14 +1569,14 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
 
   const sendAssistantMessage = async () => {
     const question = input.trim();
-    if (!stored || (!question && !attachment) || sending || confirmProcessing || attachmentProcessing) {
+    if (!stored || (!question && attachments.length === 0) || sending || confirmProcessing || attachmentProcessing) {
       return;
     }
 
     const localId = Date.now().toString(16);
     const assistantMessageId = `${localId}-assistant`;
-    const currentAttachment = attachment;
-    const userDisplayText = question || currentAttachment?.name || "";
+    const currentAttachments = attachments;
+    const userDisplayText = question || currentAttachments.map((item) => item.name).join("、") || "";
     const requestedStep = REQUESTED_STEP_BY_STAGE[selectedStageId] ?? detail?.project.currentStep ?? WorkflowStep.TOPIC_NORMALIZE;
     const controller = new AbortController();
     let assistantPlaceholderInserted = false;
@@ -1576,12 +1585,12 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       setSending(true);
       setComposerError("");
       setInput("");
-      setAttachment(null);
+      setAttachments([]);
       assistantAbortControllerRef.current = controller;
       assistantPlaceholderIdRef.current = assistantMessageId;
 
-      const resolvedAttachment = await resolveAttachmentForSubmission(currentAttachment);
-      const submission = buildComposerSubmission(question, resolvedAttachment);
+      const resolvedAttachments = await resolveAttachmentsForSubmission(currentAttachments);
+      const submission = buildComposerSubmission(question, resolvedAttachments);
       const submittedQuestion = submission.userMessage.trim();
 
       if (!submittedQuestion) {
@@ -1656,7 +1665,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
           setComposerError(messageText);
         }
         setInput(question);
-        setAttachment(currentAttachment);
+        setAttachments(currentAttachments);
       }
     } finally {
       if (assistantAbortControllerRef.current === controller) {
@@ -1825,7 +1834,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
           )}
         >
           <WorkspaceAssistantDrawer
-            attachment={attachment}
+            attachments={attachments}
             attachmentProcessing={attachmentProcessing}
             composerError={composerError}
             confirmProcessing={confirmProcessing}
@@ -1836,7 +1845,9 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
             onChange={setInput}
             onMicClick={handleMicClick}
             onPaste={handleComposerPaste}
-            onRemoveAttachment={() => setAttachment(null)}
+            onRemoveAttachment={(index = 0) =>
+              setAttachments((current) => current.filter((_, currentIndex) => currentIndex !== index))
+            }
             onSend={sendAssistantMessage}
             onStop={stopAssistantMessage}
             sending={sending}
@@ -1847,6 +1858,7 @@ export function ResearchWorkspace({ projectId }: { projectId: string }) {
       <input
         accept={SUPPORTED_ATTACHMENT_ACCEPT}
         className="hidden"
+        multiple
         onChange={handleAttachmentPick}
         ref={fileInputRef}
         type="file"

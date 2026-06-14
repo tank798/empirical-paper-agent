@@ -19,7 +19,8 @@ type ChatComposerProps = {
   onMicClick: () => void;
   onPaste?: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   attachment?: ComposerAttachment | null;
-  onRemoveAttachment?: () => void;
+  attachments?: ComposerAttachment[];
+  onRemoveAttachment?: (index?: number) => void;
   disabled?: boolean;
   sending?: boolean;
   attachmentProcessing?: boolean;
@@ -89,6 +90,7 @@ export function ChatComposer({
   onMicClick,
   onPaste,
   attachment = null,
+  attachments,
   onRemoveAttachment,
   disabled = false,
   sending = false,
@@ -107,6 +109,7 @@ export function ChatComposer({
   const secondaryActionLocked = disabled || sending || attachmentProcessing;
   const actionLocked = disabled || attachmentProcessing;
   const drawerVariant = variant === "assistantDrawer";
+  const attachmentList = attachments ?? (attachment ? [attachment] : []);
 
   useLayoutEffect(() => {
     const element = textAreaRef.current;
@@ -132,7 +135,7 @@ export function ChatComposer({
     }
 
     event.preventDefault();
-    if (!inputLocked && !sending && (value.trim() || attachment)) {
+    if (!inputLocked && !sending && (value.trim() || attachmentList.length > 0)) {
       void onSend();
     }
   };
@@ -146,18 +149,25 @@ export function ChatComposer({
             : "rounded-[30px] border border-slate-200/85 bg-white px-4 py-3 shadow-[0_18px_60px_rgba(15,23,42,0.10),0_2px_10px_rgba(15,23,42,0.04)]"
         )}
       >
-        {attachment ? (
-          <div className="mb-3 flex items-center justify-between gap-3 rounded-[18px] border border-slate-200 bg-slate-50 px-3 py-2">
-            <p className="min-w-0 truncate text-sm font-medium text-slate-800">{attachment.name}</p>
-            <button
-              aria-label="移除附件"
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={secondaryActionLocked}
-              onClick={onRemoveAttachment}
-              type="button"
-            >
-              <CloseIcon />
-            </button>
+        {attachmentList.length > 0 ? (
+          <div className="mb-3 space-y-2">
+            {attachmentList.map((item, index) => (
+              <div
+                className="flex items-center justify-between gap-3 rounded-[18px] border border-slate-200 bg-slate-50 px-3 py-2"
+                key={`${item.name}-${index}`}
+              >
+                <p className="min-w-0 truncate text-sm font-medium text-slate-800">{item.name}</p>
+                <button
+                  aria-label="移除附件"
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={secondaryActionLocked}
+                  onClick={() => onRemoveAttachment?.(index)}
+                  type="button"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+            ))}
           </div>
         ) : null}
 
@@ -213,7 +223,7 @@ export function ChatComposer({
                     ? "bg-[#EEF2FF] text-[#1E3A8A] hover:bg-[#E0E7FF]"
                     : "bg-slate-950 text-white hover:bg-slate-800"
               )}
-              disabled={sending ? actionLocked : actionLocked || (!value.trim() && !attachment)}
+              disabled={sending ? actionLocked : actionLocked || (!value.trim() && attachmentList.length === 0)}
               onClick={() => {
                 if (sending) {
                   onStop?.();

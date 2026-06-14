@@ -529,7 +529,7 @@ export function HomeHero() {
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
   const [attachmentProcessing, setAttachmentProcessing] = useState(false);
-  const [attachment, setAttachment] = useState<ComposerAttachment | null>(null);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [error, setError] = useState("");
   const [handoffReady, setHandoffReady] = useState(false);
   const [setupSession, setSetupSession] = useState<HomeSetupSession | null>(null);
@@ -640,20 +640,18 @@ export function HomeHero() {
 
     if (normalizedFile.type.startsWith("image/")) {
       setError("");
-      setAttachment(buildPendingImageAttachment(normalizedFile));
+      setAttachments((current) => [...current, buildPendingImageAttachment(normalizedFile)]);
       return;
     }
 
     try {
       setError("");
-      setAttachment(null);
       setAttachmentProcessing(true);
       const nextAttachment = await readComposerAttachment(normalizedFile, {
         onStatus: () => {}
       });
-      setAttachment(nextAttachment);
+      setAttachments((current) => [...current, nextAttachment]);
     } catch (attachmentError) {
-      setAttachment(null);
       setError(attachmentError instanceof Error ? attachmentError.message : "文件读取失败，请稍后重试。");
     } finally {
       setAttachmentProcessing(false);
@@ -661,28 +659,35 @@ export function HomeHero() {
   };
 
   const handleAttachmentPick = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files ?? []);
     event.target.value = "";
 
-    if (!file) {
+    if (files.length === 0) {
       return;
     }
 
-    await processAttachment(file);
+    for (const file of files) {
+      await processAttachment(file);
+    }
   };
 
-  const resolveAttachmentForSubmission = async (nextAttachment: ComposerAttachment | null) => {
-    if (!nextAttachment || nextAttachment.source !== "image" || !nextAttachment.file || nextAttachment.processed) {
-      return nextAttachment;
-    }
+  const resolveAttachmentsForSubmission = async (nextAttachments: ComposerAttachment[]) => {
+    const resolved: ComposerAttachment[] = [];
+    for (const nextAttachment of nextAttachments) {
+      if (nextAttachment.source !== "image" || !nextAttachment.file || nextAttachment.processed) {
+        resolved.push(nextAttachment);
+        continue;
+      }
 
-    try {
-      setError("");
-      setAttachmentProcessing(true);
-      return await readImageAttachment(nextAttachment.file, () => {});
-    } finally {
-      setAttachmentProcessing(false);
+      try {
+        setError("");
+        setAttachmentProcessing(true);
+        resolved.push(await readImageAttachment(nextAttachment.file, () => {}));
+      } finally {
+        setAttachmentProcessing(false);
+      }
     }
+    return resolved;
   };
 
   const isAbortError = (value: unknown) => value instanceof DOMException && value.name === "AbortError";
@@ -745,7 +750,7 @@ export function HomeHero() {
     });
 
     saveStoredProject({ id: projectId, token, title });
-    setAttachment(null);
+    setAttachments([]);
     setSetupSession(null);
     setLocalChatMessages([]);
     setupAssistantPlaceholderIdRef.current = null;
@@ -946,7 +951,7 @@ export function HomeHero() {
       setLocalChatMessages([]);
       setupAssistantPlaceholderIdRef.current = null;
       setTopic("");
-      setAttachment(null);
+      setAttachments([]);
       setLoading(false);
       return;
     }
@@ -954,15 +959,15 @@ export function HomeHero() {
     finishAndOpenProject(session.projectId, session.token, session.title, submittedTopic, detail, messages);
   };
 
-  const submitHomeMessage = async (rawMessage = topic, nextAttachment = attachment) => {
+  const submitHomeMessage = async (rawMessage = topic, nextAttachments = attachments) => {
     const nextTopic = rawMessage.trim();
-    if ((!nextTopic && !nextAttachment) || attachmentProcessing) {
+    if ((!nextTopic && nextAttachments.length === 0) || attachmentProcessing) {
       return;
     }
 
-    const userVisibleText = nextTopic || (nextAttachment ? `已上传 ${nextAttachment.name}` : "");
+    const userVisibleText = nextTopic || (nextAttachments.length > 0 ? `已上传 ${nextAttachments.map((item) => item.name).join("、")}` : "");
     setTopic("");
-    setAttachment(null);
+    setAttachments([]);
     setupStickToBottomRef.current = true;
     if (researchSettingComplete) {
       setResearchConfirmCardVisible(false);
@@ -981,8 +986,8 @@ export function HomeHero() {
       setError("");
       setHandoffReady(false);
 
-      const resolvedAttachment = await resolveAttachmentForSubmission(nextAttachment);
-      const submission = buildComposerSubmission(nextTopic, resolvedAttachment);
+      const resolvedAttachments = await resolveAttachmentsForSubmission(nextAttachments);
+      const submission = buildComposerSubmission(nextTopic, resolvedAttachments);
       const submittedTopic = submission.userMessage.trim();
 
       if (!submittedTopic) {
@@ -1013,7 +1018,7 @@ export function HomeHero() {
         return;
       }
 
-      const projectTopic = nextTopic || (resolvedAttachment ? `识别数据字典 ${resolvedAttachment.name}` : submittedTopic);
+      const projectTopic = nextTopic || (resolvedAttachments.length > 0 ? `识别附件 ${resolvedAttachments.map((item) => item.name).join("、")}` : submittedTopic);
       const data = await apiRequest<{ project: { id: string; title: string }; resumeToken: string }>("/projects", {
         method: "POST",
         signal: controller.signal,
@@ -1206,6 +1211,7 @@ export function HomeHero() {
         <input
           accept={SUPPORTED_ATTACHMENT_ACCEPT}
           className="hidden"
+          multiple
           onChange={handleAttachmentPick}
           ref={fileInputRef}
           type="file"
@@ -1295,7 +1301,7 @@ export function HomeHero() {
               )}
             >
               <ChatComposer
-                attachment={attachment}
+                attachments={attachments}
                 attachmentProcessing={attachmentProcessing}
                 disabled={attachmentProcessing}
                 error={error}
@@ -1304,7 +1310,9 @@ export function HomeHero() {
                 onChange={setTopic}
                 onMicClick={handleMicClick}
                 onPaste={handleTopicPaste}
-                onRemoveAttachment={() => setAttachment(null)}
+                onRemoveAttachment={(index = 0) =>
+                  setAttachments((current) => current.filter((_, currentIndex) => currentIndex !== index))
+                }
                 onSend={() => submitHomeMessage()}
                 onStop={stopCurrentRequest}
                 sending={loading}
@@ -1368,19 +1376,26 @@ export function HomeHero() {
             />
           </div>
 
-          {attachment ? (
-            <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-slate-800">{attachment.name}</p>
-              </div>
-              <button
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={loading || attachmentProcessing}
-                onClick={() => setAttachment(null)}
-                type="button"
-              >
-                <CloseIcon />
-              </button>
+          {attachments.length > 0 ? (
+            <div className="mt-3 space-y-2">
+              {attachments.map((item, index) => (
+                <div
+                  className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
+                  key={`${item.name}-${index}`}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-800">{item.name}</p>
+                  </div>
+                  <button
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={loading || attachmentProcessing}
+                    onClick={() => setAttachments((current) => current.filter((_, currentIndex) => currentIndex !== index))}
+                    type="button"
+                  >
+                    <CloseIcon />
+                  </button>
+                </div>
+              ))}
             </div>
           ) : null}
 
@@ -1389,6 +1404,7 @@ export function HomeHero() {
               <input
                 accept={SUPPORTED_ATTACHMENT_ACCEPT}
                 className="hidden"
+                multiple
                 onChange={handleAttachmentPick}
                 ref={fileInputRef}
                 type="file"
@@ -1424,7 +1440,7 @@ export function HomeHero() {
                     ? "w-11 bg-slate-200 text-slate-950 hover:bg-slate-300"
                     : "min-w-[112px] bg-slate-950 px-5 text-white hover:bg-slate-800"
                 }`}
-                disabled={attachmentProcessing || (!loading && !topic.trim() && !attachment)}
+                disabled={attachmentProcessing || (!loading && !topic.trim() && attachments.length === 0)}
                 onClick={() => {
                   if (loading) {
                     stopCurrentRequest();

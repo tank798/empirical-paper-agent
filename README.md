@@ -2,7 +2,7 @@
 
 一个面向经管 / 管理 / 金融实证论文场景的 AI 工作台。用户可以输入研究主题、变量设定、开题报告片段、数据字典或 Stata 问题，系统会先整理成结构化研究设定，再生成可阅读、可复制、可继续追问的 Stata 工作流。
 
-当前版本的重点迭代是：从“WorkflowService 规则分支 + 阶段 Skill 编排”的旧链路，收敛到“一个 Research Agent 统一理解用户输入，并通过工具更新项目状态或生成工作流”的新链路。
+当前版本的重点迭代是：从“WorkflowService 规则分支 + 阶段 Skill 编排”的旧链路，收敛到“一个 Research Agent 统一理解用户输入，并通过工具更新项目状态或生成工作流”的新链路；同时补充了多源上下文处理能力，支持长文本材料、多个附件和历史上传内容的可控回看。
 
 ## 架构迭代
 
@@ -34,20 +34,23 @@ flowchart TD
   O15 -->|"收敛到统一 Agent 决策"| N1
 
   subgraph NEW["新链路：Research Agent + 工具调用"]
-    N1["用户输入\n文本 / 语音转写 / 附件解析文本"] --> N2["WorkflowController\n/next /stream"]
-    N2 --> N3["ResearchAgentService"]
-    N3 --> N4["research-agent.md\n+ 当前运行上下文\n+ 工具定义"]
-    N4 --> N5{"模型决策"}
-    N5 -->|"直接回答"| N6["自然语言回复"]
-    N5 -->|"更新研究设定"| N7["update_research_profile"]
-    N5 -->|"校验设定"| N8["validate_research_setup"]
-    N5 -->|"生成完整工作流"| N9["generate_workflow"]
-    N5 -->|"重生成模块"| N10["regenerate_workflow_module"]
-    N7 --> N11["ResearchProfile / Messages / Harness 记录"]
-    N9 --> N12["WorkflowService + SkillsService"]
-    N10 --> N12
-    N12 --> N13["workflow-output.builder.ts\n确定性生成 Stata 模块"]
-    N13 --> N14["项目工作台\n路径、代码、解读、AI 助手"]
+    N1["用户输入\n文本 / 多附件 / 图片 OCR"] --> N2["WorkflowController\n/next /stream"]
+    N2 --> N3["InputSourceService\n多源拆分、长文本预检、分块召回"]
+    N3 --> N4["ResearchAgentService"]
+    N4 --> N5["research-agent.md\n+ 当前运行上下文\n+ source index\n+ 工具定义"]
+    N5 --> N6{"模型决策"}
+    N6 -->|"直接回答"| N7["自然语言回复"]
+    N6 -->|"回看历史材料"| N8["recall_sources"]
+    N6 -->|"更新研究设定"| N9["update_research_profile"]
+    N6 -->|"校验设定"| N10["validate_research_setup"]
+    N6 -->|"生成完整工作流"| N11["generate_workflow"]
+    N6 -->|"重生成模块"| N12["regenerate_workflow_module"]
+    N8 --> N5
+    N9 --> N13["ResearchProfile / Messages / Harness 记录"]
+    N11 --> N14["WorkflowService + SkillsService"]
+    N12 --> N14
+    N14 --> N15["workflow-output.builder.ts\n确定性生成 Stata 模块"]
+    N15 --> N16["项目工作台\n路径、代码、解读、AI 助手"]
   end
 ```
 
@@ -55,6 +58,8 @@ flowchart TD
 
 - **研究设定抽取**：从自然语言、开题报告、数据字典、图片 OCR 等输入中抽取研究主题、解释变量、被解释变量、研究对象、控制变量、样本区间、固定效应、面板字段和聚类变量。
 - **统一 Agent 调度**：`research-agent.md` 负责判断用户是在闲聊、问科研问题、补充研究设定、要求生成工作流，还是要求重生成某个模块。
+- **多源上下文处理**：用户文本和每个附件都会作为独立 source 保存。短材料全文注入；长材料先做快速相关性预检，再按片段召回，避免把大段无关文本直接塞进模型。
+- **历史材料回看**：系统会为每轮上传或粘贴的材料保存 source index。后续对话中，如果 Agent 判断需要引用此前材料，可以通过 `recall_sources` 工具按问题回看相关片段。
 - **可追踪工作流**：每次对话都会创建 `AgentRun`，并记录事件、工具结果、进度和错误，方便调试和展示 Agent 执行过程。
 - **确定性 Stata 生成**：主工作流的 Stata 代码由后端模板确定性生成，减少模型随机性，保证同一研究设定下输出更稳定。
 - **工作台式 UI**：前端把论文流程拆成主题确认、路径与数据、基准回归、稳健性、内生性、机制、异质性等模块，并支持右侧 AI 助手继续追问。
@@ -66,18 +71,32 @@ flowchart LR
   A["Next.js 前端\napps/web"] --> B["附件解析\nPDF / DOCX / Excel / 图片 OCR"]
   B --> C["/api/proxy"]
   C --> D["NestJS API\napps/api"]
-  D --> E["ResearchAgentService"]
-  E --> F["LlmService\nOpenAI 兼容接口"]
-  E --> G["工具调用"]
-  G --> H["ResearchProfileService\n研究设定入库"]
-  G --> I["WorkflowService\n推进工作流"]
-  I --> J["SkillsService"]
-  J --> K["workflow-output.builder.ts\nStata 模块生成"]
-  H --> L[("Postgres / Prisma")]
-  K --> L
-  L --> M["Messages + Project Detail"]
-  M --> A
+  D --> E["InputSourceService\nsource 拆分 / 预检 / 分块 / index"]
+  E --> F["ResearchAgentService"]
+  F --> G["LlmService\nOpenAI 兼容接口"]
+  F --> H["工具调用"]
+  H --> I["recall_sources\n历史材料回看"]
+  H --> J["ResearchProfileService\n研究设定入库"]
+  H --> K["WorkflowService\n推进工作流"]
+  K --> L["SkillsService"]
+  L --> M["workflow-output.builder.ts\nStata 模块生成"]
+  I --> F
+  J --> N[("Postgres / Prisma")]
+  M --> N
+  E --> N
+  N --> O["Messages + Project Detail"]
+  O --> A
 ```
+
+## 长文本与多附件上下文
+
+本项目不把用户输入和附件简单拼成一段 Prompt，而是先做本地预处理：
+
+1. **独立 source**：用户文本、Word/PDF、Excel、图片 OCR 会分别保存，避免多个附件内容混在一起。
+2. **长度分流**：单个 source 不超过 30000 字符时全文进入上下文；超过后进入快速预检。
+3. **快速预检**：先读取头部和尾部片段，并在有限范围内扫描经管实证关键词。低相关长文本只注入预览和提示，不做全量分块。
+4. **分块召回**：相关长文本按 1500 字符切分，200 字符重叠，最多召回 20 个高分片段。关键词只用于召回材料，不直接决定变量角色。
+5. **历史回看**：每轮 source 都会保存为 artifact。后续用户追问“刚才的附件/开题报告里怎么写的”时，Agent 可以调用 `recall_sources` 回看相关材料，再决定是否回答或更新研究设定。
 
 ## 页面展示
 
@@ -143,6 +162,7 @@ packages/
   shared/                    前后端共享枚举、schema 和 API 类型
 apps/api/src/modules/
   agent/                     当前主 Agent 调度逻辑
+  agent/input-source.*        多源输入、长文本分块召回和历史 source 回看
   workflow/                  工作流推进与批量生成
   skills/                    Skill registry、执行器、确定性 Stata 输出模板
   research-profile/          研究设定、变量映射和数据字典处理
@@ -156,6 +176,8 @@ apps/api/src/modules/
 - `packages/prompts/agent/research-agent.md`：Research Agent 的主行为准则，决定直接回答还是调用工具。
 - `packages/prompts/common/system.md`：Skill 调用时的通用系统约束。
 - `packages/prompts/src/index.ts`：prompt manifest，运行时通过它找到具体 markdown 文件。
+
+运行时会额外注入当前研究设定、历史输入源索引、本轮 source 处理结果和工具定义。长文本材料不会直接完整塞进 Prompt，而是由后端上下文层先压缩成可控片段；需要回看历史材料时，再由 Agent 主动调用 `recall_sources`。
 
 部分旧 Skill prompt 仍保留，用于兼容、测试和直接调用，例如：
 
